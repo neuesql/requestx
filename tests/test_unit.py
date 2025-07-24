@@ -5,8 +5,8 @@ import unittest
 import requestx
 
 
-class TestCoreHTTPClient(unittest.TestCase):
-    """Test cases for the core HTTP client foundation."""
+class TestModuleImport(unittest.TestCase):
+    """Test cases for module import and basic functionality."""
 
     def test_module_import(self):
         """Test that we can import the module successfully."""
@@ -19,6 +19,15 @@ class TestCoreHTTPClient(unittest.TestCase):
         self.assertTrue(hasattr(requestx, 'options'))
         self.assertTrue(hasattr(requestx, 'patch'))
         self.assertTrue(hasattr(requestx, 'request'))
+
+    def test_session_object_creation(self):
+        """Test that Session objects can be created."""
+        session = requestx.Session()
+        self.assertIsNotNone(session)
+
+
+class TestHTTPMethods(unittest.TestCase):
+    """Test cases for HTTP method functionality."""
 
     def test_get_request(self):
         """Test basic GET request functionality."""
@@ -81,10 +90,9 @@ class TestCoreHTTPClient(unittest.TestCase):
         response = requestx.request("POST", "https://httpbin.org/post")
         self.assertEqual(response.status_code, 200)
 
-    def test_invalid_url(self):
-        """Test that invalid URLs raise appropriate errors."""
-        with self.assertRaises(Exception):
-            requestx.get("not-a-valid-url")
+
+class TestResponseObject(unittest.TestCase):
+    """Test cases for Response object functionality."""
 
     def test_response_object_properties(self):
         """Test that Response objects have the expected properties."""
@@ -130,26 +138,25 @@ class TestCoreHTTPClient(unittest.TestCase):
         with self.assertRaises(Exception):
             response.raise_for_status()
 
-    def test_session_object_creation(self):
-        """Test that Session objects can be created."""
-        session = requestx.Session()
-        self.assertIsNotNone(session)
-        # Session methods will be tested in later tasks
-
 
 class TestErrorHandling(unittest.TestCase):
     """Test cases for error handling in the HTTP client."""
+
+    def test_invalid_url(self):
+        """Test that invalid URLs raise appropriate errors."""
+        with self.assertRaises(Exception):
+            requestx.get("not-a-valid-url")
+
+    def test_invalid_method_error(self):
+        """Test handling of invalid HTTP methods."""
+        with self.assertRaises(Exception):
+            requestx.request("INVALID_METHOD", "https://httpbin.org/get")
 
     def test_network_error_handling(self):
         """Test handling of network errors."""
         # Test connection to non-existent domain
         with self.assertRaises(Exception):
             requestx.get("https://this-domain-does-not-exist-12345.com")
-
-    def test_invalid_method_error(self):
-        """Test handling of invalid HTTP methods."""
-        with self.assertRaises(Exception):
-            requestx.request("INVALID_METHOD", "https://httpbin.org/get")
 
 
 if __name__ == '__main__':
