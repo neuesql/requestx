@@ -1,6 +1,6 @@
+use hyper::{Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use hyper::{Method, Uri};
 use std::str::FromStr;
 
 mod core;
@@ -8,7 +8,7 @@ mod error;
 mod response;
 mod session;
 
-use core::client::{RequestxClient, RequestConfig, ResponseData};
+use core::client::{RequestConfig, RequestxClient, ResponseData};
 use error::RequestxError;
 use response::Response;
 use session::Session;
@@ -21,16 +21,12 @@ fn parse_kwargs(_kwargs: Option<&PyDict>) -> PyResult<Option<RequestConfig>> {
 
 /// Convert ResponseData to Python Response object
 fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Response> {
-    let headers = response_data.headers
+    let headers = response_data
+        .headers
         .iter()
-        .map(|(name, value)| {
-            (
-                name.to_string(),
-                value.to_str().unwrap_or("").to_string()
-            )
-        })
+        .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
         .collect();
-    
+
     Ok(Response::new(
         response_data.status_code,
         response_data.url.to_string(),
@@ -45,7 +41,7 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     // Execute synchronously for now - async detection will be added in task 5
     let response_data = client.request_sync(RequestConfig {
         method: Method::GET,
@@ -58,7 +54,7 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -69,7 +65,7 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::POST,
         url: uri,
@@ -81,7 +77,7 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -92,7 +88,7 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::PUT,
         url: uri,
@@ -104,7 +100,7 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -115,7 +111,7 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::DELETE,
         url: uri,
@@ -127,7 +123,7 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -138,7 +134,7 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::HEAD,
         url: uri,
@@ -150,7 +146,7 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -161,7 +157,7 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::OPTIONS,
         url: uri,
@@ -173,7 +169,7 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -184,7 +180,7 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method: Method::PATCH,
         url: uri,
@@ -196,7 +192,7 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -209,7 +205,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
-    
+
     let response_data = client.request_sync(RequestConfig {
         method,
         url: uri,
@@ -221,7 +217,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
         allow_redirects: true,
         verify: true,
     })?;
-    
+
     let response = response_data_to_py_response(response_data)?;
     Ok(response.into_py(py))
 }
@@ -238,10 +234,10 @@ fn _requestx(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(options, m)?)?;
     m.add_function(wrap_pyfunction!(patch, m)?)?;
     m.add_function(wrap_pyfunction!(request, m)?)?;
-    
+
     // Register classes
     m.add_class::<Response>()?;
     m.add_class::<Session>()?;
-    
+
     Ok(())
 }

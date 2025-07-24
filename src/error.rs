@@ -1,5 +1,5 @@
+use pyo3::exceptions::{PyConnectionError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyConnectionError, PyTimeoutError, PyValueError, PyRuntimeError};
 use thiserror::Error;
 
 /// Custom error types for RequestX
@@ -7,28 +7,28 @@ use thiserror::Error;
 pub enum RequestxError {
     #[error("Network error: {0}")]
     NetworkError(#[from] hyper::Error),
-    
+
     #[error("Request timeout: {0}")]
     TimeoutError(#[from] tokio::time::error::Elapsed),
-    
+
     #[error("HTTP error {status}: {message}")]
     HttpError { status: u16, message: String },
-    
+
     #[error("JSON decode error: {0}")]
     JsonDecodeError(#[from] serde_json::Error),
-    
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] hyper::http::uri::InvalidUri),
-    
+
     #[error("HTTP request error: {0}")]
     HttpRequestError(#[from] hyper::http::Error),
-    
+
     #[error("SSL error: {0}")]
     SslError(String),
-    
+
     #[error("Runtime error: {0}")]
     RuntimeError(String),
-    
+
     #[error("Python error: {0}")]
     PythonError(String),
 }
@@ -49,9 +49,7 @@ impl From<RequestxError> for PyErr {
             RequestxError::JsonDecodeError(e) => {
                 PyValueError::new_err(format!("JSON decode error: {}", e))
             }
-            RequestxError::InvalidUrl(e) => {
-                PyValueError::new_err(format!("Invalid URL: {}", e))
-            }
+            RequestxError::InvalidUrl(e) => PyValueError::new_err(format!("Invalid URL: {}", e)),
             RequestxError::HttpRequestError(e) => {
                 PyRuntimeError::new_err(format!("HTTP request error: {}", e))
             }

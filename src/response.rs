@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::error::RequestxError;
 
@@ -10,10 +10,10 @@ use crate::error::RequestxError;
 pub struct Response {
     #[pyo3(get)]
     status_code: u16,
-    
+
     #[pyo3(get)]
     url: String,
-    
+
     headers: HashMap<String, String>,
     text_content: Option<String>,
     binary_content: Option<Vec<u8>>,
@@ -38,20 +38,20 @@ impl Response {
             encoding: None,
         }
     }
-    
+
     /// Get response headers as a dictionary
     #[getter]
     fn headers(&self) -> PyResult<HashMap<String, String>> {
         Ok(self.headers.clone())
     }
-    
+
     /// Get response text content
     #[getter]
     fn text(&mut self) -> PyResult<String> {
         if let Some(ref text) = self.text_content {
             return Ok(text.clone());
         }
-        
+
         if let Some(ref content) = self.binary_content {
             let text = String::from_utf8_lossy(content).to_string();
             self.text_content = Some(text.clone());
@@ -60,7 +60,7 @@ impl Response {
             Ok(String::new())
         }
     }
-    
+
     /// Get response binary content
     #[getter]
     fn content(&self, py: Python) -> PyResult<PyObject> {
@@ -70,19 +70,19 @@ impl Response {
             Ok(PyBytes::new(py, &[]).into())
         }
     }
-    
+
     /// Parse response as JSON
     fn json(&mut self) -> PyResult<PyObject> {
         let text = self.text()?;
-        let value: Value = serde_json::from_str(&text)
-            .map_err(|e| RequestxError::JsonDecodeError(e))?;
-        
+        let value: Value =
+            serde_json::from_str(&text).map_err(|e| RequestxError::JsonDecodeError(e))?;
+
         Python::with_gil(|py| {
             pythonize::pythonize(py, &value)
                 .map_err(|e| RequestxError::PythonError(e.to_string()).into())
         })
     }
-    
+
     /// Raise an exception for HTTP error status codes
     fn raise_for_status(&self) -> PyResult<()> {
         if self.status_code >= 400 {
@@ -94,13 +94,13 @@ impl Response {
         }
         Ok(())
     }
-    
+
     /// Get response encoding
     #[getter]
     fn encoding(&self) -> Option<String> {
         self.encoding.clone()
     }
-    
+
     /// Set response encoding
     #[setter]
     fn set_encoding(&mut self, encoding: Option<String>) {
