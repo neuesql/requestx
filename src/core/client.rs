@@ -3,10 +3,51 @@ use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use hyper_tls::HttpsConnector;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
 use crate::error::RequestxError;
+
+// Pre-allocated common strings to reduce allocations
+const CONTENT_TYPE_JSON: &str = "application/json";
+const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
+
+// Global shared runtime for better performance
+static GLOBAL_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+// Global shared client for connection pooling
+static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> = OnceLock::new();
+
+fn get_global_runtime() -> &'static Runtime {
+    GLOBAL_RUNTIME.get_or_init(|| {
+        // Determine optimal worker thread count (fallback to 4 if can't detect)
+        let worker_threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4);
+            
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)           // Scale with CPU cores, max 8
+            .thread_name("requestx-worker")           // Named threads for debugging
+            .thread_stack_size(2 * 1024 * 1024)      // 2MB stack size
+            .enable_all()                             // Enable all tokio features
+            .build()
+            .expect("Failed to create optimized global tokio runtime")
+    })
+}
+
+fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
+    GLOBAL_CLIENT.get_or_init(|| {
+        let https = HttpsConnector::new();
+        Client::builder()
+            .pool_idle_timeout(Duration::from_secs(90))      // Longer idle timeout for better reuse
+            .pool_max_idle_per_host(50)                      // More connections per host
+            .http2_only(false)                               // Allow HTTP/1.1 fallback
+            .http2_initial_stream_window_size(Some(65536))   // Optimize HTTP/2 streams
+            .http2_initial_connection_window_size(Some(1048576)) // 1MB connection window
+            .build::<_, hyper::Body>(https)
+    })
+}
 
 /// Request configuration for HTTP requests
 #[derive(Debug, Clone)]
@@ -41,31 +82,75 @@ pub struct ResponseData {
 
 /// Core HTTP client using hyper
 pub struct RequestxClient {
-    client: Client<HttpsConnector<hyper::client::HttpConnector>>,
-    runtime: Option<Runtime>,
+    // Use reference to global client for better performance
+    use_global_client: bool,
+    custom_client: Option<Client<HttpsConnector<hyper::client::HttpConnector>>>,
+    custom_runtime: Option<Arc<Runtime>>,
 }
 
 impl RequestxClient {
-    /// Create a new RequestxClient
-    pub fn new() -> Result<Self, RequestxError> {
-        let https = HttpsConnector::new();
-        let client = Client::builder().build::<_, hyper::Body>(https);
+    // Constants for default values to reduce allocations
+    const DEFAULT_ALLOW_REDIRECTS: bool = true;
+    const DEFAULT_VERIFY: bool = true;
 
+    /// Create a new RequestxClient using global shared resources
+    pub fn new() -> Result<Self, RequestxError> {
         Ok(RequestxClient {
-            client,
-            runtime: None,
+            use_global_client: true,
+            custom_client: None,
+            custom_runtime: None,
         })
     }
 
     /// Create a new RequestxClient with custom runtime
     pub fn with_runtime(runtime: Runtime) -> Result<Self, RequestxError> {
-        let https = HttpsConnector::new();
-        let client = Client::builder().build::<_, hyper::Body>(https);
-
         Ok(RequestxClient {
-            client,
-            runtime: Some(runtime),
+            use_global_client: true,
+            custom_client: None,
+            custom_runtime: Some(Arc::new(runtime)),
         })
+    }
+
+    /// Create a new RequestxClient with custom client configuration
+    pub fn with_custom_client(client: Client<HttpsConnector<hyper::client::HttpConnector>>) -> Result<Self, RequestxError> {
+        Ok(RequestxClient {
+            use_global_client: false,
+            custom_client: Some(client),
+            custom_runtime: None,
+        })
+    }
+
+    /// Get the HTTP client to use (global or custom)
+    fn get_client(&self) -> &Client<HttpsConnector<hyper::client::HttpConnector>> {
+        if self.use_global_client {
+            get_global_client()
+        } else {
+            self.custom_client.as_ref().unwrap()
+        }
+    }
+
+    /// Get the runtime to use (global or custom)
+    fn get_runtime(&self) -> &Runtime {
+        if let Some(ref custom_runtime) = self.custom_runtime {
+            custom_runtime
+        } else {
+            get_global_runtime()
+        }
+    }
+
+    /// Create a default RequestConfig for a given method and URL
+    fn create_default_config(&self, method: Method, url: Uri) -> RequestConfig {
+        RequestConfig {
+            method,
+            url,
+            headers: None,
+            params: None,
+            data: None,
+            json: None,
+            timeout: None,
+            allow_redirects: Self::DEFAULT_ALLOW_REDIRECTS,
+            verify: Self::DEFAULT_VERIFY,
+        }
     }
 
     /// Perform an async HTTP GET request
@@ -74,20 +159,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::GET,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::GET;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::GET, url));
         self.request_async(request_config).await
     }
 
@@ -97,20 +169,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::POST,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::POST;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::POST, url));
         self.request_async(request_config).await
     }
 
@@ -120,20 +179,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::PUT,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::PUT;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::PUT, url));
         self.request_async(request_config).await
     }
 
@@ -143,20 +189,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::DELETE,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::DELETE;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::DELETE, url));
         self.request_async(request_config).await
     }
 
@@ -166,20 +199,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::HEAD,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::HEAD;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::HEAD, url));
         self.request_async(request_config).await
     }
 
@@ -189,20 +209,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::OPTIONS,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::OPTIONS;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::OPTIONS, url));
         self.request_async(request_config).await
     }
 
@@ -212,20 +219,7 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let mut request_config = config.unwrap_or_else(|| RequestConfig {
-            method: Method::PATCH,
-            url: url.clone(),
-            headers: None,
-            params: None,
-            data: None,
-            json: None,
-            timeout: None,
-            allow_redirects: true,
-            verify: true,
-        });
-        request_config.method = Method::PATCH;
-        request_config.url = url;
-
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::PATCH, url));
         self.request_async(request_config).await
     }
 
@@ -234,36 +228,50 @@ impl RequestxClient {
         &self,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
-        // Build the request
+        // Build the request more efficiently
         let mut request_builder = Request::builder()
-            .method(config.method)
-            .uri(config.url.clone());
+            .method(&config.method)  // Use reference instead of clone
+            .uri(&config.url);       // Use reference instead of clone
 
-        // Add headers
-        if let Some(headers) = config.headers {
+        // Add headers efficiently
+        if let Some(ref headers) = config.headers {
             for (name, value) in headers.iter() {
                 request_builder = request_builder.header(name, value);
             }
         }
 
-        // Build request body
+        // Build request body more efficiently
         let body = match (&config.data, &config.json) {
-            (Some(RequestData::Text(text)), None) => Body::from(text.clone()),
-            (Some(RequestData::Bytes(bytes)), None) => Body::from(bytes.clone()),
+            (Some(RequestData::Text(text)), None) => {
+                Body::from(text.clone())  // Need to clone for lifetime
+            }
+            (Some(RequestData::Bytes(bytes)), None) => {
+                Body::from(bytes.clone())  // Need to clone for lifetime
+            }
             (Some(RequestData::Form(form)), None) => {
-                // Convert form data to URL-encoded string
-                let form_data = form
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-                    .collect::<Vec<_>>()
-                    .join("&");
-                request_builder =
-                    request_builder.header("content-type", "application/x-www-form-urlencoded");
+                // More efficient form encoding with pre-allocated capacity
+                let estimated_size = form.iter()
+                    .map(|(k, v)| k.len() + v.len() + 10) // +10 for encoding overhead
+                    .sum::<usize>();
+                let mut form_data = String::with_capacity(estimated_size);
+                
+                let mut first = true;
+                for (k, v) in form.iter() {
+                    if !first {
+                        form_data.push('&');
+                    }
+                    form_data.push_str(&urlencoding::encode(k));
+                    form_data.push('=');
+                    form_data.push_str(&urlencoding::encode(v));
+                    first = false;
+                }
+                
+                request_builder = request_builder.header("content-type", CONTENT_TYPE_FORM);
                 Body::from(form_data)
             }
             (None, Some(json)) => {
                 let json_string = serde_json::to_string(json)?;
-                request_builder = request_builder.header("content-type", "application/json");
+                request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
                 Body::from(json_string)
             }
             (None, None) => Body::empty(),
@@ -278,17 +286,20 @@ impl RequestxClient {
             .body(body)
             .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {}", e)))?;
 
+        // Get the client reference
+        let client = self.get_client();
+
         // Execute the request with optional timeout
         let response = if let Some(timeout) = config.timeout {
-            tokio::time::timeout(timeout, self.client.request(request)).await??
+            tokio::time::timeout(timeout, client.request(request)).await??
         } else {
-            self.client.request(request).await?
+            client.request(request).await?
         };
 
-        // Extract response data
+        // Extract response data efficiently
         let status_code = response.status().as_u16();
-        let headers = response.headers().clone();
-        let url = config.url;
+        let headers = response.headers().clone();  // This clone is necessary
+        let url = config.url;  // Move instead of clone
 
         // Read response body
         let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -303,15 +314,9 @@ impl RequestxClient {
 
     /// Perform a synchronous HTTP request by blocking on async
     pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
-        if let Some(ref runtime) = self.runtime {
-            runtime.block_on(self.request_async(config))
-        } else {
-            // Create a new runtime for this request
-            let rt = Runtime::new().map_err(|e| {
-                RequestxError::RuntimeError(format!("Failed to create runtime: {}", e))
-            })?;
-            rt.block_on(self.request_async(config))
-        }
+        // Use the appropriate runtime (custom or global)
+        let runtime = self.get_runtime();
+        runtime.block_on(self.request_async(config))
     }
 }
 
@@ -439,7 +444,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url: url.clone(),
+            url,  // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,
@@ -467,7 +472,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url: url.clone(),
+            url,  // Remove unnecessary clone
             headers: None,
             params: None,
             data: Some(RequestData::Form(form_data)),
@@ -491,7 +496,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url: url.clone(),
+            url,  // Remove unnecessary clone
             headers: None,
             params: None,
             data: Some(RequestData::Text("Hello, World!".to_string())),
@@ -515,7 +520,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::GET,
-            url: url.clone(),
+            url,  // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,
@@ -551,7 +556,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::GET,
-            url: url.clone(),
+            url,  // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,

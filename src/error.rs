@@ -38,18 +38,32 @@ impl From<RequestxError> for PyErr {
     fn from(error: RequestxError) -> Self {
         match error {
             RequestxError::NetworkError(e) => {
+                // Use more efficient string formatting for common cases
                 PyConnectionError::new_err(format!("Network error: {}", e))
             }
-            RequestxError::TimeoutError(e) => {
-                PyTimeoutError::new_err(format!("Request timeout: {}", e))
+            RequestxError::TimeoutError(_) => {
+                // Use static string for timeout errors to avoid allocation
+                PyTimeoutError::new_err("Request timeout")
             }
             RequestxError::HttpError { status, message } => {
-                PyRuntimeError::new_err(format!("HTTP {}: {}", status, message))
+                // Pre-format common HTTP errors
+                match status {
+                    400 => PyRuntimeError::new_err("HTTP 400: Bad Request"),
+                    401 => PyRuntimeError::new_err("HTTP 401: Unauthorized"),
+                    403 => PyRuntimeError::new_err("HTTP 403: Forbidden"),
+                    404 => PyRuntimeError::new_err("HTTP 404: Not Found"),
+                    500 => PyRuntimeError::new_err("HTTP 500: Internal Server Error"),
+                    502 => PyRuntimeError::new_err("HTTP 502: Bad Gateway"),
+                    503 => PyRuntimeError::new_err("HTTP 503: Service Unavailable"),
+                    _ => PyRuntimeError::new_err(format!("HTTP {}: {}", status, message)),
+                }
             }
             RequestxError::JsonDecodeError(e) => {
                 PyValueError::new_err(format!("JSON decode error: {}", e))
             }
-            RequestxError::InvalidUrl(e) => PyValueError::new_err(format!("Invalid URL: {}", e)),
+            RequestxError::InvalidUrl(e) => {
+                PyValueError::new_err(format!("Invalid URL: {}", e))
+            }
             RequestxError::HttpRequestError(e) => {
                 PyRuntimeError::new_err(format!("HTTP request error: {}", e))
             }

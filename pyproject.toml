@@ -27,7 +27,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = ["http", "requests", "client", "async", "performance"]
-dependencies = []
+dependencies = [
+    "maturin>=1.9.1",
+]
 
 [project.optional-dependencies]
 dev = [

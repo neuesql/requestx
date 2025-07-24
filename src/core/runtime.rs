@@ -12,12 +12,17 @@ impl RuntimeManager {
         RuntimeManager { runtime: None }
     }
 
-    /// Get or create a tokio runtime
+    /// Get or create a tokio runtime with optimized settings
     pub fn get_or_create_runtime(&mut self) -> &Runtime {
-        if self.runtime.is_none() {
-            self.runtime = Some(Runtime::new().expect("Failed to create tokio runtime"));
-        }
-        self.runtime.as_ref().unwrap()
+        self.runtime.get_or_insert_with(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)                    // Optimize for typical workloads
+                .thread_name("requestx-worker")       // Named threads for debugging
+                .thread_stack_size(2 * 1024 * 1024)  // 2MB stack size
+                .enable_all()                         // Enable all tokio features
+                .build()
+                .expect("Failed to create optimized tokio runtime")
+        })
     }
 
     /// Check if we're in an async context
