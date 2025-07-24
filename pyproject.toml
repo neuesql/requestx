@@ -50,7 +50,7 @@ Documentation = "https://requestx.readthedocs.io"
 
 [tool.maturin]
 python-source = "python"
-module-name = "requestx"
+module-name = "requestx._requestx"
 features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
