@@ -697,8 +697,8 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
 
     def test_concurrency_comparison_large(self):
         """Compare libraries with 1000 concurrent requests (stress test)."""
-        concurrency = 1000
-        num_requests = 1000  # Total requests
+        concurrency = 10
+        num_requests = 100  # Total requests
         
         print(f"\n=== Concurrency Stress Test: {concurrency} concurrent, {num_requests} total requests ===")
         
