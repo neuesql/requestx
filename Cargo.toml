@@ -1,0 +1,31 @@
+[package]
+name = "requestx"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance HTTP client for Python with requests-compatible API"
+authors = ["RequestX Team"]
+license = "MIT"
+repository = "https://github.com/neuesql/requestx"
+homepage = "https://github.com/neuesql/requestx"
+readme = "README.md"
+
+[lib]
+name = "requestx"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+hyper = { version = "0.14", features = ["full"] }
+hyper-tls = "0.5"
+tokio = { version = "1.0", features = ["full"] }
+cookie_store = "0.20"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bytes = "1.0"
+url = "2.0"
+thiserror = "1.0"
+pythonize = "0.20"
+
+[build-dependencies]
+pyo3-build-config = "0.20"
