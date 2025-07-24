@@ -1,7 +1,6 @@
 use hyper::{Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::str::FromStr;
 
 mod core;
 mod error;
@@ -200,8 +199,21 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
 /// Generic HTTP request
 #[pyfunction]
 fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let method: Method = Method::from_str(&method.to_uppercase())
-        .map_err(|_| RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)))?;
+    // Validate HTTP method - only allow standard methods
+    let method_upper = method.to_uppercase();
+    let method: Method = match method_upper.as_str() {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "DELETE" => Method::DELETE,
+        "HEAD" => Method::HEAD,
+        "OPTIONS" => Method::OPTIONS,
+        "PATCH" => Method::PATCH,
+        "TRACE" => Method::TRACE,
+        "CONNECT" => Method::CONNECT,
+        _ => return Err(RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into()),
+    };
+    
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
     let client = RequestxClient::new()?;
