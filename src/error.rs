@@ -20,6 +20,9 @@ pub enum RequestxError {
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] hyper::http::uri::InvalidUri),
     
+    #[error("HTTP request error: {0}")]
+    HttpRequestError(#[from] hyper::http::Error),
+    
     #[error("SSL error: {0}")]
     SslError(String),
     
@@ -48,6 +51,9 @@ impl From<RequestxError> for PyErr {
             }
             RequestxError::InvalidUrl(e) => {
                 PyValueError::new_err(format!("Invalid URL: {}", e))
+            }
+            RequestxError::HttpRequestError(e) => {
+                PyRuntimeError::new_err(format!("HTTP request error: {}", e))
             }
             RequestxError::SslError(msg) => {
                 PyConnectionError::new_err(format!("SSL error: {}", msg))

@@ -4,10 +4,6 @@ use hyper::{Client, HeaderMap};
 use hyper_tls::HttpsConnector;
 use cookie_store::CookieStore;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-
-use crate::error::RequestxError;
-use crate::response::Response;
 
 /// Session object for persistent HTTP connections
 #[pyclass]
@@ -34,43 +30,43 @@ impl Session {
     }
     
     /// HTTP GET request using session
-    fn get(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn get(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session GET implementation")
     }
     
     /// HTTP POST request using session
-    fn post(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn post(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session POST implementation")
     }
     
     /// HTTP PUT request using session
-    fn put(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn put(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session PUT implementation")
     }
     
     /// HTTP DELETE request using session
-    fn delete(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn delete(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session DELETE implementation")
     }
     
     /// HTTP HEAD request using session
-    fn head(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn head(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session HEAD implementation")
     }
     
     /// HTTP OPTIONS request using session
-    fn options(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn options(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session OPTIONS implementation")
     }
     
     /// HTTP PATCH request using session
-    fn patch(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn patch(&self, _py: Python, _url: String, _kwargs: Option<&PyDict>) -> PyResult<PyObject> {
         // Placeholder implementation - will be implemented in task 6
         todo!("Session PATCH implementation")
     }

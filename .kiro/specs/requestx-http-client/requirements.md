@@ -8,7 +8,7 @@ The requestx project aims to create a high-performance HTTP client library for P
 
 ### Requirement 1
 
-**User Story:** As a Python developer, I want to make HTTP requests using a familiar requests-like API, so that I can easily adopt and migrate requests into requestx without big effort. 
+**User Story:** As a Python developer, I want to make HTTP requests using a familiar requests-like API, so that I can easily adopt and migrate requests into requestx without  effort. 
 
 #### Acceptance Criteria
 

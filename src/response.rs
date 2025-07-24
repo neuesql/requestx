@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyBytes};
+use pyo3::types::PyBytes;
 use std::collections::HashMap;
 use serde_json::Value;
 
@@ -23,7 +23,7 @@ pub struct Response {
 #[pymethods]
 impl Response {
     #[new]
-    fn new(
+    pub fn new(
         status_code: u16,
         url: String,
         headers: HashMap<String, String>,

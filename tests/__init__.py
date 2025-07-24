@@ -1,1 +1,1 @@
-# Test package for requestx
+# Tests package for RequestX
