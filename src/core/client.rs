@@ -21,15 +21,16 @@ static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnecto
 
 fn get_global_runtime() -> &'static Runtime {
     GLOBAL_RUNTIME.get_or_init(|| {
-        // Determine optimal worker thread count (fallback to 4 if can't detect)
+        // Determine optimal worker thread count for concurrent operations
         let worker_threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4);
+            .map(|n| (n.get() * 2).min(16).max(4))  // 2x CPU cores, min 4, max 16
+            .unwrap_or(8);  // Default to 8 if can't detect
             
         tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads)           // Scale with CPU cores, max 8
+            .worker_threads(worker_threads)           // More threads for better concurrency
+            .max_blocking_threads(512)                // High blocking thread limit
             .thread_name("requestx-worker")           // Named threads for debugging
-            .thread_stack_size(2 * 1024 * 1024)      // 2MB stack size
+            .thread_stack_size(1024 * 1024)          // 1MB stack size (smaller for more threads)
             .enable_all()                             // Enable all tokio features
             .build()
             .expect("Failed to create optimized global tokio runtime")

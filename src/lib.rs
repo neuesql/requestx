@@ -1,6 +1,7 @@
 use hyper::{Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::sync::OnceLock;
 
 mod core;
 mod error;
@@ -11,6 +12,16 @@ use core::client::{RequestConfig, RequestxClient, ResponseData};
 use error::RequestxError;
 use response::Response;
 use session::Session;
+
+// Global shared client instance for optimal performance
+static GLOBAL_CLIENT: OnceLock<RequestxClient> = OnceLock::new();
+
+/// Get the global RequestxClient instance
+fn get_global_client() -> &'static RequestxClient {
+    GLOBAL_CLIENT.get_or_init(|| {
+        RequestxClient::new().expect("Failed to create global RequestxClient")
+    })
+}
 
 /// Parse kwargs into RequestConfig (basic implementation for now)
 fn parse_kwargs(_kwargs: Option<&PyDict>) -> PyResult<Option<RequestConfig>> {
@@ -39,7 +50,7 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
 fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     // Execute synchronously for now - async detection will be added in task 5
     let response_data = client.request_sync(RequestConfig {
@@ -63,7 +74,7 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::POST,
@@ -86,7 +97,7 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::PUT,
@@ -109,7 +120,7 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::DELETE,
@@ -132,7 +143,7 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
 fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::HEAD,
@@ -155,7 +166,7 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::OPTIONS,
@@ -178,7 +189,7 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
 fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method: Method::PATCH,
@@ -216,7 +227,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
     
     let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
     let _config = parse_kwargs(kwargs)?;
-    let client = RequestxClient::new()?;
+    let client = get_global_client();
 
     let response_data = client.request_sync(RequestConfig {
         method,
