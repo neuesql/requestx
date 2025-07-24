@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Performance tests and benchmarks using unittest."""
 
-import unittest
-import time
-import gc
-import sys
 import asyncio
-import psutil
-import os
-from typing import Dict, Any, Optional
-from dataclasses import dataclass, asdict
+import gc
+import time
+import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from dataclasses import dataclass, asdict
+from typing import Dict, Any
+
+import psutil
 
 # Import HTTP clients for comparison
 import requestx
@@ -34,7 +32,6 @@ try:
     HAS_AIOHTTP = True
 except ImportError:
     HAS_AIOHTTP = False
-
 
 @dataclass
 class PerformanceMetrics:
@@ -315,7 +312,7 @@ class TestPerformanceBasics(unittest.TestCase):
     def test_request_response_time(self):
         """Test that requests complete within reasonable time."""
         start_time = time.time()
-        response = requestx.get("https://httpbin.org/get")
+        response = requestx.get("http://0.0.0.0/get")
         end_time = time.time()
         
         # Should complete within 10 seconds (generous timeout for CI)
@@ -328,7 +325,7 @@ class TestPerformanceBasics(unittest.TestCase):
         
         responses = []
         for i in range(5):
-            response = requestx.get("https://httpbin.org/get")
+            response = requestx.get("http://0.0.0.0/get")
             responses.append(response)
         
         end_time = time.time()
@@ -346,7 +343,7 @@ class TestPerformanceBasics(unittest.TestCase):
         """Test handling of large responses."""
         # Request a large JSON response (100 items)
         start_time = time.time()
-        response = requestx.get("https://httpbin.org/json")
+        response = requestx.get("http://0.0.0.0/json")
         end_time = time.time()
         
         self.assertEqual(response.status_code, 200)
@@ -361,7 +358,7 @@ class TestPerformanceBasics(unittest.TestCase):
         # This test would need timeout support to be implemented
         # For now, just test that delayed requests work
         start_time = time.time()
-        response = requestx.get("https://httpbin.org/delay/2")
+        response = requestx.get("http://0.0.0.0/delay/2")
         end_time = time.time()
         
         # Should take at least 2 seconds
@@ -382,7 +379,7 @@ class TestMemoryUsage(unittest.TestCase):
         
         # Create and discard multiple responses
         for i in range(10):
-            response = requestx.get("https://httpbin.org/get")
+            response = requestx.get("http://0.0.0.0/get")
             self.assertEqual(response.status_code, 200)
             # Access response data to ensure it's loaded
             _ = response.text
@@ -404,7 +401,7 @@ class TestMemoryUsage(unittest.TestCase):
         gc.collect()
         
         # Make request for potentially large response
-        response = requestx.get("https://httpbin.org/json")
+        response = requestx.get("http://0.0.0.0/json")
         self.assertEqual(response.status_code, 200)
         
         # Access the content
@@ -427,7 +424,7 @@ class TestBenchmarkComparison(unittest.TestCase):
 
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
-        self.test_urls = ["https://httpbin.org/get"] * 10  # Reduced for faster testing
+        self.test_urls = ["http://0.0.0.0/get"] * 10  # Reduced for faster testing
 
     def test_sync_libraries_comparison(self):
         """Compare synchronous HTTP libraries performance."""
@@ -524,7 +521,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         """Compare performance of first request vs subsequent requests."""
         # Cold request (first one)
         start_time = time.time()
-        response1 = requestx.get("https://httpbin.org/get")
+        response1 = requestx.get("http://0.0.0.0/get")
         cold_time = time.time() - start_time
         
         self.assertEqual(response1.status_code, 200)
@@ -533,7 +530,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         warm_times = []
         for i in range(3):
             start_time = time.time()
-            response = requestx.get("https://httpbin.org/get")
+            response = requestx.get("http://0.0.0.0/get")
             warm_time = time.time() - start_time
             warm_times.append(warm_time)
             self.assertEqual(response.status_code, 200)
@@ -550,11 +547,11 @@ class TestBenchmarkComparison(unittest.TestCase):
     def test_different_http_methods_performance(self):
         """Compare performance of different HTTP methods with RequestX."""
         methods_and_funcs = [
-            ("GET", requestx.get, "https://httpbin.org/get"),
-            ("POST", requestx.post, "https://httpbin.org/post"),
-            ("PUT", requestx.put, "https://httpbin.org/put"),
-            ("DELETE", requestx.delete, "https://httpbin.org/delete"),
-            ("PATCH", requestx.patch, "https://httpbin.org/patch"),
+            ("GET", requestx.get, "http://0.0.0.0/get"),
+            ("POST", requestx.post, "http://0.0.0.0/post"),
+            ("PUT", requestx.put, "http://0.0.0.0/put"),
+            ("DELETE", requestx.delete, "http://0.0.0.0/delete"),
+            ("PATCH", requestx.patch, "http://0.0.0.0/patch"),
         ]
         
         results = {}
@@ -577,7 +574,7 @@ class TestBenchmarkComparison(unittest.TestCase):
 
     def test_memory_efficiency_comparison(self):
         """Compare memory efficiency across different libraries."""
-        test_urls = ["https://httpbin.org/json"] * 5  # JSON responses for memory testing
+        test_urls = ["http://0.0.0.0/json"] * 5  # JSON responses for memory testing
         results = {}
         
         # Test RequestX memory usage
@@ -609,7 +606,7 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
 
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
-        self.test_url = "https://httpbin.org/get"
+        self.test_url = "http://0.0.0.0/get"
         self.concurrency_levels = [10, 100, 1000]  # Different concurrency levels to test
 
     def test_concurrency_comparison_small(self):

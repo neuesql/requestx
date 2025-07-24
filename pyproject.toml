@@ -29,6 +29,7 @@ classifiers = [
 keywords = ["http", "requests", "client", "async", "performance"]
 dependencies = [
     "maturin>=1.9.1",
+    "psutil>=7.0.0",
 ]
 
 [project.optional-dependencies]
