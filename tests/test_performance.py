@@ -10,6 +10,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, Any
 
 import psutil
+from tabulate import tabulate
 
 # Import HTTP clients for comparison
 import requestx
@@ -271,36 +272,59 @@ class BenchmarkRunner:
         )
     
     def print_comparison_table(self, results: Dict[str, PerformanceMetrics], title: str):
-        """Print a formatted comparison table."""
+        """Print a formatted comparison table using tabulate."""
         print(f"\n{title}")
         print("=" * len(title))
-        
-        # Table header with concurrency
-        print(f"{'Library':<12} {'Concur':<7} {'RPS':<8} {'Avg Time':<10} {'Memory':<10} {'CPU':<8} {'Success':<8} {'Errors':<8}")
-        print(f"{'':=<12} {'':=<7} {'':=<8} {'':=<10} {'':=<10} {'':=<8} {'':=<8} {'':=<8}")
         
         # Sort by RPS (descending)
         sorted_results = sorted(results.items(), key=lambda x: x[1].requests_per_second, reverse=True)
         
+        # Prepare table data
+        table_data = []
+        headers = ["Library", "Concurrency", "RPS", "Avg Time (ms)", "Memory (MB)", "CPU %", "Success %", "Errors"]
+        
         for name, metrics in sorted_results:
-            print(f"{name:<12} {metrics.concurrency_level:<7} {metrics.requests_per_second:<8.1f} {metrics.average_response_time:<10.1f}ms "
-                  f"{metrics.memory_usage_mb:<10.1f}MB {metrics.cpu_usage_percent:<8.1f}% "
-                  f"{metrics.success_rate:<8.1%} {metrics.error_count:<8}")
+            table_data.append([
+                name,
+                metrics.concurrency_level,
+                f"{metrics.requests_per_second:.1f}",
+                f"{metrics.average_response_time:.1f}",
+                f"{metrics.memory_usage_mb:.1f}",
+                f"{metrics.cpu_usage_percent:.1f}",
+                f"{metrics.success_rate:.1%}",
+                metrics.error_count
+            ])
+        
+        # Print the table
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
         
         # Performance comparison (relative to requestx)
-        if 'requestx' in results:
-            requestx_rps = results['requestx'].requests_per_second
-            requestx_memory = results['requestx'].memory_usage_mb
-            requestx_time = results['requestx'].average_response_time
+        requestx_results = [result for name, result in results.items() if 'requestx' in name.lower()]
+        if requestx_results:
+            requestx_metrics = requestx_results[0]  # Use first requestx result as baseline
+            requestx_rps = requestx_metrics.requests_per_second
+            requestx_memory = requestx_metrics.memory_usage_mb
+            requestx_time = requestx_metrics.average_response_time
             
-            print(f"\nPerformance vs RequestX:")
+            print(f"\nPerformance vs RequestX Baseline:")
+            comparison_data = []
+            comparison_headers = ["Library", "RPS Diff %", "Memory Diff %", "Time Diff %"]
+            
             for name, metrics in sorted_results:
-                if name != 'requestx':
+                if 'requestx' not in name.lower():
                     rps_diff = ((metrics.requests_per_second - requestx_rps) / requestx_rps * 100) if requestx_rps > 0 else 0
                     memory_diff = ((metrics.memory_usage_mb - requestx_memory) / requestx_memory * 100) if requestx_memory > 0 else 0
                     time_diff = ((metrics.average_response_time - requestx_time) / requestx_time * 100) if requestx_time > 0 else 0
                     
-                    print(f"  {name}: RPS {rps_diff:+.1f}%, Memory {memory_diff:+.1f}%, Time {time_diff:+.1f}%")
+                    comparison_data.append([
+                        name,
+                        f"{rps_diff:+.1f}%",
+                        f"{memory_diff:+.1f}%",
+                        f"{time_diff:+.1f}%"
+                    ])
+            
+            if comparison_data:
+                print(tabulate(comparison_data, headers=comparison_headers, tablefmt="simple"))
 
 
 class TestPerformanceBasics(unittest.TestCase):
@@ -312,7 +336,7 @@ class TestPerformanceBasics(unittest.TestCase):
     def test_request_response_time(self):
         """Test that requests complete within reasonable time."""
         start_time = time.time()
-        response = requestx.get("http://0.0.0.0/get")
+        response = requestx.get("http://localhost:8000/get")
         end_time = time.time()
         
         # Should complete within 10 seconds (generous timeout for CI)
@@ -325,7 +349,7 @@ class TestPerformanceBasics(unittest.TestCase):
         
         responses = []
         for i in range(5):
-            response = requestx.get("http://0.0.0.0/get")
+            response = requestx.get("http://localhost:8000/get")
             responses.append(response)
         
         end_time = time.time()
@@ -343,7 +367,7 @@ class TestPerformanceBasics(unittest.TestCase):
         """Test handling of large responses."""
         # Request a large JSON response (100 items)
         start_time = time.time()
-        response = requestx.get("http://0.0.0.0/json")
+        response = requestx.get("http://localhost:8000/json")
         end_time = time.time()
         
         self.assertEqual(response.status_code, 200)
@@ -358,7 +382,7 @@ class TestPerformanceBasics(unittest.TestCase):
         # This test would need timeout support to be implemented
         # For now, just test that delayed requests work
         start_time = time.time()
-        response = requestx.get("http://0.0.0.0/delay/2")
+        response = requestx.get("http://localhost:8000/delay/2")
         end_time = time.time()
         
         # Should take at least 2 seconds
@@ -379,7 +403,7 @@ class TestMemoryUsage(unittest.TestCase):
         
         # Create and discard multiple responses
         for i in range(10):
-            response = requestx.get("http://0.0.0.0/get")
+            response = requestx.get("http://localhost:8000/get")
             self.assertEqual(response.status_code, 200)
             # Access response data to ensure it's loaded
             _ = response.text
@@ -401,7 +425,7 @@ class TestMemoryUsage(unittest.TestCase):
         gc.collect()
         
         # Make request for potentially large response
-        response = requestx.get("http://0.0.0.0/json")
+        response = requestx.get("http://localhost:8000/json")
         self.assertEqual(response.status_code, 200)
         
         # Access the content
@@ -424,7 +448,7 @@ class TestBenchmarkComparison(unittest.TestCase):
 
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
-        self.test_urls = ["http://0.0.0.0/get"] * 10  # Reduced for faster testing
+        self.test_urls = ["http://localhost:8000/get"] * 10  # Reduced for faster testing
 
     def test_sync_libraries_comparison(self):
         """Compare synchronous HTTP libraries performance."""
@@ -460,18 +484,9 @@ class TestBenchmarkComparison(unittest.TestCase):
         async def run_async_benchmarks():
             results = {}
             
-            # Test RequestX async (same function with await)
-            async def requestx_async_get(url):
-                return await requestx.get(url)
-            
-            # Note: RequestX doesn't have native async support yet, so this will fail
-            # This is a placeholder for future async implementation
-            try:
-                results['requestx_async'] = await self.benchmark_runner.measure_async_performance(
-                    requestx_async_get, 'requestx_async', self.test_urls[:5]  # Smaller test set
-                )
-            except Exception as e:
-                print(f"RequestX async not yet implemented: {e}")
+            # Note: RequestX doesn't have native async support yet
+            # Skipping RequestX async test as it's a synchronous library
+            print("RequestX async not yet implemented - skipping async test for RequestX")
             
             # Test httpx async (if available)
             if HAS_HTTPX:
@@ -521,7 +536,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         """Compare performance of first request vs subsequent requests."""
         # Cold request (first one)
         start_time = time.time()
-        response1 = requestx.get("http://0.0.0.0/get")
+        response1 = requestx.get("http://localhost:8000/get")
         cold_time = time.time() - start_time
         
         self.assertEqual(response1.status_code, 200)
@@ -530,7 +545,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         warm_times = []
         for i in range(3):
             start_time = time.time()
-            response = requestx.get("http://0.0.0.0/get")
+            response = requestx.get("http://localhost:8000/get")
             warm_time = time.time() - start_time
             warm_times.append(warm_time)
             self.assertEqual(response.status_code, 200)
@@ -547,11 +562,11 @@ class TestBenchmarkComparison(unittest.TestCase):
     def test_different_http_methods_performance(self):
         """Compare performance of different HTTP methods with RequestX."""
         methods_and_funcs = [
-            ("GET", requestx.get, "http://0.0.0.0/get"),
-            ("POST", requestx.post, "http://0.0.0.0/post"),
-            ("PUT", requestx.put, "http://0.0.0.0/put"),
-            ("DELETE", requestx.delete, "http://0.0.0.0/delete"),
-            ("PATCH", requestx.patch, "http://0.0.0.0/patch"),
+            ("GET", requestx.get, "http://localhost:8000/get"),
+            ("POST", requestx.post, "http://localhost:8000/post"),
+            ("PUT", requestx.put, "http://localhost:8000/put"),
+            ("DELETE", requestx.delete, "http://localhost:8000/delete"),
+            ("PATCH", requestx.patch, "http://localhost:8000/patch"),
         ]
         
         results = {}
@@ -574,7 +589,7 @@ class TestBenchmarkComparison(unittest.TestCase):
 
     def test_memory_efficiency_comparison(self):
         """Compare memory efficiency across different libraries."""
-        test_urls = ["http://0.0.0.0/json"] * 5  # JSON responses for memory testing
+        test_urls = ["http://localhost:8000/json"] * 5  # JSON responses for memory testing
         results = {}
         
         # Test RequestX memory usage
@@ -606,7 +621,7 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
 
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
-        self.test_url = "http://0.0.0.0/get"
+        self.test_url = "http://localhost:8000/get"
         self.concurrency_levels = [10, 100, 1000]  # Different concurrency levels to test
 
     def test_concurrency_comparison_small(self):
@@ -789,69 +804,93 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
                                   f"{metrics.success_rate:.1%} success")
 
     def test_concurrent_vs_sequential_comparison(self):
-        """Compare concurrent vs sequential performance for the same total requests."""
-        num_requests = 50
+        """Compare concurrent vs sequential performance across multiple concurrency levels."""
+        num_requests = 100
+        concurrency_levels = [1, 10, 20, 30, 40, 50, 100]
         
         print(f"\n=== Concurrent vs Sequential Comparison ({num_requests} total requests) ===")
         
         results = {}
         
-        # Sequential RequestX
-        try:
-            sequential_metrics = self.benchmark_runner.measure_concurrent_performance(
-                requestx.get, 'requestx_seq', self.test_url, num_requests, 1  # Concurrency = 1
-            )
-            results['requestx_sequential'] = sequential_metrics
-        except Exception as e:
-            print(f"RequestX sequential test failed: {e}")
-        
-        # Concurrent RequestX (10 threads)
-        try:
-            concurrent_metrics = self.benchmark_runner.measure_concurrent_performance(
-                requestx.get, 'requestx_conc', self.test_url, num_requests, 10
-            )
-            results['requestx_concurrent'] = concurrent_metrics
-        except Exception as e:
-            print(f"RequestX concurrent test failed: {e}")
-        
-        # Sequential requests (if available)
-        if HAS_REQUESTS:
-            try:
-                requests_sequential = self.benchmark_runner.measure_concurrent_performance(
-                    requests.get, 'requests_seq', self.test_url, num_requests, 1
-                )
-                results['requests_sequential'] = requests_sequential
-            except Exception as e:
-                print(f"Requests sequential test failed: {e}")
+        # Test each concurrency level for each library
+        for concurrency in concurrency_levels:
+            print(f"\nTesting concurrency level: {concurrency}")
             
+            # Test RequestX
             try:
-                requests_concurrent = self.benchmark_runner.measure_concurrent_performance(
-                    requests.get, 'requests_conc', self.test_url, num_requests, 10
+                requestx_metrics = self.benchmark_runner.measure_concurrent_performance(
+                    requestx.get, f'requestx_c{concurrency}', self.test_url, num_requests, concurrency
                 )
-                results['requests_concurrent'] = requests_concurrent
+                results[f'requestx_c{concurrency}'] = requestx_metrics
             except Exception as e:
-                print(f"Requests concurrent test failed: {e}")
+                print(f"RequestX concurrency {concurrency} test failed: {e}")
+            
+            # Test requests (if available)
+            if HAS_REQUESTS:
+                try:
+                    requests_metrics = self.benchmark_runner.measure_concurrent_performance(
+                        requests.get, f'requests_c{concurrency}', self.test_url, num_requests, concurrency
+                    )
+                    results[f'requests_c{concurrency}'] = requests_metrics
+                except Exception as e:
+                    print(f"Requests concurrency {concurrency} test failed: {e}")
+            
+            # Test httpx (if available)
+            if HAS_HTTPX:
+                try:
+                    httpx_metrics = self.benchmark_runner.measure_concurrent_performance(
+                        httpx.get, f'httpx_c{concurrency}', self.test_url, num_requests, concurrency
+                    )
+                    results[f'httpx_c{concurrency}'] = httpx_metrics
+                except Exception as e:
+                    print(f"HTTPX concurrency {concurrency} test failed: {e}")
         
         if results:
             self.benchmark_runner.print_comparison_table(results, "Sequential vs Concurrent Performance")
             
-            # Analyze concurrency benefits
-            print(f"\nConcurrency Benefits Analysis:")
-            for library in ['requestx', 'requests']:
-                seq_key = f'{library}_sequential'
-                conc_key = f'{library}_concurrent'
-                
-                if seq_key in results and conc_key in results:
-                    seq_metrics = results[seq_key]
-                    conc_metrics = results[conc_key]
+            # Analyze concurrency scaling for each library
+            print(f"\nConcurrency Scaling Analysis:")
+            for library in ['requestx', 'requests', 'httpx']:
+                if (library == 'requests' and not HAS_REQUESTS) or (library == 'httpx' and not HAS_HTTPX):
+                    continue
                     
-                    rps_improvement = ((conc_metrics.requests_per_second - seq_metrics.requests_per_second) / 
-                                     seq_metrics.requests_per_second * 100)
-                    time_improvement = ((seq_metrics.total_time - conc_metrics.total_time) / 
-                                      seq_metrics.total_time * 100)
+                library_results = {k: v for k, v in results.items() if k.startswith(f'{library}_c')}
+                if library_results:
+                    sorted_by_concurrency = sorted(library_results.items(), 
+                                                 key=lambda x: x[1].concurrency_level)
                     
-                    print(f"  {library.upper()}: RPS improvement {rps_improvement:+.1f}%, "
-                          f"Total time improvement {time_improvement:+.1f}%")
+                    print(f"\n{library.upper()} Performance by Concurrency:")
+                    
+                    # Prepare table data for this library
+                    library_table_data = []
+                    library_headers = ["Concurrency", "RPS", "Avg Time (ms)", "CPU %", "Success %"]
+                    
+                    for name, metrics in sorted_by_concurrency:
+                        library_table_data.append([
+                            metrics.concurrency_level,
+                            f"{metrics.requests_per_second:.1f}",
+                            f"{metrics.average_response_time:.1f}",
+                            f"{metrics.cpu_usage_percent:.1f}",
+                            f"{metrics.success_rate:.1%}"
+                        ])
+                    
+                    print(tabulate(library_table_data, headers=library_headers, tablefmt="simple"))
+                    
+                    # Calculate optimal concurrency level
+                    best_rps = max(sorted_by_concurrency, key=lambda x: x[1].requests_per_second)
+                    print(f"Best RPS for {library.upper()}: {best_rps[1].requests_per_second:.1f} at concurrency {best_rps[1].concurrency_level}")
+            
+            # Compare libraries at specific concurrency levels
+            print(f"\nLibrary Comparison at Key Concurrency Levels:")
+            for concurrency in [1, 10, 50, 100]:
+                print(f"\nConcurrency {concurrency}:")
+                level_results = {k: v for k, v in results.items() if v.concurrency_level == concurrency}
+                if level_results:
+                    sorted_results = sorted(level_results.items(), key=lambda x: x[1].requests_per_second, reverse=True)
+                    for name, metrics in sorted_results:
+                        library_name = name.split('_c')[0]
+                        print(f"  {library_name:<10}: {metrics.requests_per_second:>8.1f} RPS, "
+                              f"{metrics.average_response_time:>6.1f}ms, {metrics.success_rate:>6.1%} success")
 
 
 if __name__ == '__main__':

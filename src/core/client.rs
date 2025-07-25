@@ -229,6 +229,34 @@ impl RequestxClient {
         &self,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
+        let client = self.get_client().clone();
+        Self::execute_request_async(client, config).await
+    }
+
+    /// Perform a synchronous HTTP request by spawning on async runtime
+    pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
+        // Use the appropriate runtime (custom or global)
+        let runtime = self.get_runtime();
+        
+        // Clone necessary data for the spawned task
+        let client = self.get_client().clone();
+        
+        // Spawn the async task with cloned client
+        let handle = runtime.spawn(async move {
+            Self::execute_request_async(client, config).await
+        });
+        
+        // Block on the spawned task handle instead of the runtime directly
+        runtime.block_on(handle).map_err(|e| {
+            RequestxError::RuntimeError(format!("Task execution failed: {}", e))
+        })?
+    }
+    
+    /// Static method to execute async request with a given client
+    async fn execute_request_async(
+        client: Client<HttpsConnector<hyper::client::HttpConnector>>,
+        config: RequestConfig,
+    ) -> Result<ResponseData, RequestxError> {
         // Build the request more efficiently
         let mut request_builder = Request::builder()
             .method(&config.method)  // Use reference instead of clone
@@ -287,9 +315,6 @@ impl RequestxClient {
             .body(body)
             .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {}", e)))?;
 
-        // Get the client reference
-        let client = self.get_client();
-
         // Execute the request with optional timeout
         let response = if let Some(timeout) = config.timeout {
             tokio::time::timeout(timeout, client.request(request)).await??
@@ -311,13 +336,6 @@ impl RequestxClient {
             body: body_bytes,
             url,
         })
-    }
-
-    /// Perform a synchronous HTTP request by blocking on async
-    pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
-        // Use the appropriate runtime (custom or global)
-        let runtime = self.get_runtime();
-        runtime.block_on(self.request_async(config))
     }
 }
 
