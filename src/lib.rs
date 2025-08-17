@@ -1,14 +1,18 @@
-use hyper::{Method, Uri};
+use hyper::{HeaderMap, Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_asyncio::tokio::future_into_py;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 mod core;
 mod error;
 mod response;
 mod session;
 
-use core::client::{RequestConfig, RequestxClient, ResponseData};
+use core::client::{RequestConfig, RequestData, RequestxClient, ResponseData};
 use error::RequestxError;
 use response::Response;
 use session::Session;
@@ -23,10 +27,204 @@ fn get_global_client() -> &'static RequestxClient {
     })
 }
 
-/// Parse kwargs into RequestConfig (basic implementation for now)
-fn parse_kwargs(_kwargs: Option<&PyDict>) -> PyResult<Option<RequestConfig>> {
-    // For now, return None - will be expanded in later tasks
-    Ok(None)
+/// Parse kwargs into RequestConfig with comprehensive parameter support
+fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBuilder> {
+    let mut builder = RequestConfigBuilder::new();
+    
+    if let Some(kwargs) = kwargs {
+        // Parse headers
+        if let Some(headers_obj) = kwargs.get_item("headers")? {
+            let headers = parse_headers(headers_obj)?;
+            builder.headers = Some(headers);
+        }
+        
+        // Parse params (query parameters)
+        if let Some(params_obj) = kwargs.get_item("params")? {
+            let params = parse_params(params_obj)?;
+            builder.params = Some(params);
+        }
+        
+        // Parse data
+        if let Some(data_obj) = kwargs.get_item("data")? {
+            let data = parse_data(data_obj)?;
+            builder.data = Some(data);
+        }
+        
+        // Parse json
+        if let Some(json_obj) = kwargs.get_item("json")? {
+            let json = parse_json(py, json_obj)?;
+            builder.json = Some(json);
+        }
+        
+        // Parse timeout
+        if let Some(timeout_obj) = kwargs.get_item("timeout")? {
+            let timeout = parse_timeout(timeout_obj)?;
+            builder.timeout = Some(timeout);
+        }
+        
+        // Parse allow_redirects
+        if let Some(redirects_obj) = kwargs.get_item("allow_redirects")? {
+            builder.allow_redirects = redirects_obj.is_true()?;
+        }
+        
+        // Parse verify
+        if let Some(verify_obj) = kwargs.get_item("verify")? {
+            builder.verify = verify_obj.is_true()?;
+        }
+    }
+    
+    Ok(builder)
+}
+
+/// Helper struct for building RequestConfig
+#[derive(Debug, Clone)]
+struct RequestConfigBuilder {
+    pub headers: Option<HeaderMap>,
+    pub params: Option<HashMap<String, String>>,
+    pub data: Option<RequestData>,
+    pub json: Option<Value>,
+    pub timeout: Option<Duration>,
+    pub allow_redirects: bool,
+    pub verify: bool,
+}
+
+impl RequestConfigBuilder {
+    fn new() -> Self {
+        Self {
+            headers: None,
+            params: None,
+            data: None,
+            json: None,
+            timeout: None,
+            allow_redirects: true,
+            verify: true,
+        }
+    }
+    
+    fn build(self, method: Method, url: Uri) -> RequestConfig {
+        RequestConfig {
+            method,
+            url,
+            headers: self.headers,
+            params: self.params,
+            data: self.data,
+            json: self.json,
+            timeout: self.timeout,
+            allow_redirects: self.allow_redirects,
+            verify: self.verify,
+        }
+    }
+}
+
+/// Parse headers from Python object
+fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    
+    if let Ok(dict) = headers_obj.downcast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let value_str = value.extract::<String>()?;
+            
+            let header_name = key_str.parse::<hyper::header::HeaderName>()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Invalid header name '{}': {}", key_str, e)
+                ))?;
+            
+            let header_value = value_str.parse::<hyper::header::HeaderValue>()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Invalid header value '{}': {}", value_str, e)
+                ))?;
+            
+            headers.insert(header_name, header_value);
+        }
+    }
+    
+    Ok(headers)
+}
+
+/// Parse query parameters from Python object
+fn parse_params(params_obj: &PyAny) -> PyResult<HashMap<String, String>> {
+    let mut params = HashMap::new();
+    
+    if let Ok(dict) = params_obj.downcast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let value_str = value.extract::<String>()?;
+            params.insert(key_str, value_str);
+        }
+    }
+    
+    Ok(params)
+}
+
+/// Parse request data from Python object
+fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
+    // Try string first
+    if let Ok(text) = data_obj.extract::<String>() {
+        return Ok(RequestData::Text(text));
+    }
+    
+    // Try bytes
+    if let Ok(bytes) = data_obj.extract::<Vec<u8>>() {
+        return Ok(RequestData::Bytes(bytes));
+    }
+    
+    // Try dict (form data)
+    if let Ok(dict) = data_obj.downcast::<PyDict>() {
+        let mut form_data = HashMap::new();
+        for (key, value) in dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let value_str = value.extract::<String>()?;
+            form_data.insert(key_str, value_str);
+        }
+        return Ok(RequestData::Form(form_data));
+    }
+    
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "Data must be string, bytes, or dict"
+    ))
+}
+
+/// Parse JSON data from Python object
+fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
+    // Use Python's json module to serialize the object
+    let json_module = py.import("json")?;
+    let json_str = json_module.call_method1("dumps", (json_obj,))?.extract::<String>()?;
+    
+    // Parse the JSON string into serde_json::Value
+    serde_json::from_str(&json_str).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Failed to parse JSON: {}", e)
+        )
+    })
+}
+
+/// Parse timeout from Python object
+fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
+    if let Ok(seconds) = timeout_obj.extract::<f64>() {
+        if seconds < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Timeout must be non-negative"
+            ));
+        }
+        Ok(Duration::from_secs_f64(seconds))
+    } else if let Ok(seconds) = timeout_obj.extract::<u64>() {
+        Ok(Duration::from_secs(seconds))
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Timeout must be a number"
+        ))
+    }
+}
+
+/// Check if we're in an async context by looking for a running event loop
+fn is_async_context(py: Python) -> PyResult<bool> {
+    // Try to get the running event loop
+    let asyncio = py.import("asyncio")?;
+    match asyncio.call_method0("get_running_loop") {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
 }
 
 /// Convert ResponseData to Python Response object
@@ -45,170 +243,204 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
     ))
 }
 
-/// HTTP GET request
-#[pyfunction]
+/// HTTP GET request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    // Execute synchronously for now - async detection will be added in task 5
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::GET,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::GET, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP POST request
-#[pyfunction]
+/// HTTP POST request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::POST,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::POST, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP PUT request
-#[pyfunction]
+/// HTTP PUT request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::PUT,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::PUT, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP DELETE request
-#[pyfunction]
+/// HTTP DELETE request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::DELETE,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::DELETE, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP HEAD request
-#[pyfunction]
+/// HTTP HEAD request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::HEAD,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::HEAD, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP OPTIONS request
-#[pyfunction]
+/// HTTP OPTIONS request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::OPTIONS,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::OPTIONS, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// HTTP PATCH request
-#[pyfunction]
+/// HTTP PATCH request with async/sync context detection
+#[pyfunction(signature = (url, /, **kwargs))]
 fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method: Method::PATCH,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(Method::PATCH, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
-/// Generic HTTP request
-#[pyfunction]
+/// Generic HTTP request with async/sync context detection
+#[pyfunction(signature = (method, url, /, **kwargs))]
 fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     // Validate HTTP method - only allow standard methods
     let method_upper = method.to_uppercase();
@@ -225,24 +457,29 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
         _ => return Err(RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into()),
     };
     
-    let uri: Uri = url.parse().map_err(RequestxError::InvalidUrl)?;
-    let _config = parse_kwargs(kwargs)?;
-    let client = get_global_client();
-
-    let response_data = client.request_sync(RequestConfig {
-        method,
-        url: uri,
-        headers: None,
-        params: None,
-        data: None,
-        json: None,
-        timeout: None,
-        allow_redirects: true,
-        verify: true,
+    let uri: Uri = url.parse().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
     })?;
-
-    let response = response_data_to_py_response(response_data)?;
-    Ok(response.into_py(py))
+    let config_builder = parse_kwargs(py, kwargs)?;
+    let config = config_builder.build(method, uri);
+    
+    // Check if we're in an async context
+    if is_async_context(py)? {
+        // Return a coroutine for async usage
+        let future = async move {
+            let client = RequestxClient::new()?;
+            let response_data = client.request_async(config).await?;
+            response_data_to_py_response(response_data)
+        };
+        
+        Ok(future_into_py(py, future)?.into())
+    } else {
+        // Execute synchronously
+        let client = get_global_client();
+        let response_data = client.request_sync(config)?;
+        let response = response_data_to_py_response(response_data)?;
+        Ok(response.into_py(py))
+    }
 }
 
 /// RequestX Python module

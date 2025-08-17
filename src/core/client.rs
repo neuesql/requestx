@@ -257,10 +257,32 @@ impl RequestxClient {
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
+        // Build URL with query parameters if provided
+        let final_url = if let Some(ref params) = config.params {
+            let mut url_with_params = config.url.to_string();
+            if !params.is_empty() {
+                let query_string = params
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                    .collect::<Vec<_>>()
+                    .join("&");
+                
+                if config.url.query().is_some() {
+                    url_with_params.push('&');
+                } else {
+                    url_with_params.push('?');
+                }
+                url_with_params.push_str(&query_string);
+            }
+            url_with_params.parse::<Uri>().map_err(RequestxError::InvalidUrl)?
+        } else {
+            config.url.clone()
+        };
+        
         // Build the request more efficiently
         let mut request_builder = Request::builder()
             .method(&config.method)  // Use reference instead of clone
-            .uri(&config.url);       // Use reference instead of clone
+            .uri(&final_url);        // Use the final URL with params
 
         // Add headers efficiently
         if let Some(ref headers) = config.headers {
@@ -316,11 +338,78 @@ impl RequestxClient {
             .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {}", e)))?;
 
         // Execute the request with optional timeout
-        let response = if let Some(timeout) = config.timeout {
-            tokio::time::timeout(timeout, client.request(request)).await??
+        let mut response = if let Some(timeout) = config.timeout {
+            tokio::time::timeout(timeout, client.request(request)).await?
         } else {
-            client.request(request).await?
+            client.request(request).await
         };
+
+        // Handle specific hyper errors and convert them to appropriate RequestxError types
+        let mut response = match response {
+            Ok(resp) => resp,
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("absolute-form URIs") || error_msg.contains("invalid uri") {
+                    return Err(RequestxError::RuntimeError(format!("Invalid URL: {}", error_msg)));
+                }
+                return Err(RequestxError::NetworkError(e));
+            }
+        };
+
+        // Handle redirects
+        if config.allow_redirects && response.status().is_redirection() {
+            // Follow redirects (up to 10 redirects max)
+            let mut redirect_count = 0;
+            const MAX_REDIRECTS: u8 = 10;
+            
+            while response.status().is_redirection() && redirect_count < MAX_REDIRECTS {
+                if let Some(location) = response.headers().get("location") {
+                    let location_str = location.to_str().map_err(|_| {
+                        RequestxError::RuntimeError("Invalid redirect location header".to_string())
+                    })?;
+                    
+                    // Parse the redirect URL
+                    let redirect_url: Uri = if location_str.starts_with("http") {
+                        // Absolute URL
+                        location_str.parse().map_err(|e| {
+                            RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
+                        })?
+                    } else {
+                        // Relative URL - construct absolute URL
+                        let base_scheme = final_url.scheme_str().unwrap_or("https");
+                        let base_host = final_url.host().unwrap_or("");
+                        let base_port = if let Some(port) = final_url.port_u16() {
+                            format!(":{}", port)
+                        } else {
+                            String::new()
+                        };
+                        
+                        format!("{}://{}{}{}", base_scheme, base_host, base_port, location_str)
+                            .parse().map_err(|e| {
+                                RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
+                            })?
+                    };
+                    
+                    // Create new request for redirect
+                    let redirect_request = Request::builder()
+                        .method(Method::GET) // Redirects typically use GET
+                        .uri(&redirect_url)
+                        .body(Body::empty())
+                        .map_err(|e| RequestxError::RuntimeError(format!("Failed to build redirect request: {}", e)))?;
+                    
+                    // Execute redirect request
+                    response = client.request(redirect_request).await?;
+                    redirect_count += 1;
+                } else {
+                    // No location header, break out of redirect loop
+                    break;
+                }
+            }
+            
+            if redirect_count >= MAX_REDIRECTS {
+                return Err(RequestxError::RuntimeError("Too many redirects".to_string()));
+            }
+        }
 
         // Extract response data efficiently
         let status_code = response.status().as_u16();

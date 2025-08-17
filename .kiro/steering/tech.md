@@ -194,7 +194,7 @@ The CI/CD pipeline should follow this sequence for comprehensive testing and rel
 ```
 
 ### Environment Variables
-- `MATURIN_PYPI_TOKEN` - PyPI authentication
+- `PYPI_TOKEN` - PyPI authentication
 - `GITHUB_TOKEN` - GitHub releases
 - `CODECOV_TOKEN` - Code coverage reporting
 

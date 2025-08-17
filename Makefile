@@ -195,13 +195,13 @@ release-tag: ## Create and push release tag
 		exit 1; \
 	fi
 
-publish-pypi: ## Publish to PyPI (requires MATURIN_PYPI_TOKEN)
+publish-pypi: ## Publish to PyPI (requires PYPI_TOKEN)
 	@echo "$(BLUE)Publishing to PyPI...$(RESET)"
-	@if [ -z "$$MATURIN_PYPI_TOKEN" ]; then \
-		echo "$(RED)Error: MATURIN_PYPI_TOKEN environment variable not set$(RESET)"; \
+	@if [ -z "$$PYPI_TOKEN" ]; then \
+		echo "$(RED)Error: PYPI_TOKEN environment variable not set$(RESET)"; \
 		exit 1; \
 	fi
-	uv run maturin publish
+	PYPI_TOKEN=$$PYPI_TOKEN uv run maturin publish --username __token__ --password $$PYPI_TOKEN
 	@echo "$(GREEN)Published to PyPI successfully!$(RESET)"
 
 github-release: ## Create GitHub release (requires gh CLI and GITHUB_TOKEN)

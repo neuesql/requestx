@@ -71,7 +71,12 @@ impl From<RequestxError> for PyErr {
                 PyConnectionError::new_err(format!("SSL error: {}", msg))
             }
             RequestxError::RuntimeError(msg) => {
-                PyRuntimeError::new_err(format!("Runtime error: {}", msg))
+                // Check if this is an invalid URL error and map it to ValueError
+                if msg.contains("Invalid URL:") {
+                    PyValueError::new_err(msg)
+                } else {
+                    PyRuntimeError::new_err(format!("Runtime error: {}", msg))
+                }
             }
             RequestxError::PythonError(msg) => {
                 PyRuntimeError::new_err(format!("Python error: {}", msg))
