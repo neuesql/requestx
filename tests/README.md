@@ -22,7 +22,7 @@ The test suite provides comprehensive coverage of all RequestX functionality, en
 
 - **`test_comprehensive.py`** - Extended comprehensive tests (some features not yet implemented)
 - **`test_integration_comprehensive.py`** - Detailed integration tests with httpbin.org
-- **`test_benchmarks.py`** - Performance benchmarking framework
+
 - **`test_coverage.py`** - Test coverage measurement and reporting
 
 ### Test Runners
@@ -229,10 +229,7 @@ make test-all          # All tests including comprehensive
 
 While Task 9 is fully complete, potential future enhancements include:
 
-1. **Extended Performance Benchmarking**
-   - Comparison with requests, httpx, aiohttp
-   - Memory profiling and leak detection
-   - Throughput and latency measurements
+
 
 2. **Advanced Integration Testing**
    - Proxy server testing

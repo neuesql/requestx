@@ -129,19 +129,7 @@ test-integration: build-dev ## Run integration tests (CI stage 5)
 	fi
 	@echo "$(GREEN)Integration tests complete!$(RESET)"
 
-test-performance: build-dev ## Run performance tests (CI stage 6)
-	@echo "$(BLUE)Running performance tests...$(RESET)"
-	@if [ -f tests/test_benchmarks.py ]; then \
-		uv run python -m unittest tests.test_benchmarks -v; \
-	else \
-		echo "$(YELLOW)Benchmark tests not yet implemented$(RESET)"; \
-	fi
-	@if [ -f tests/test_performance.py ]; then \
-		uv run python -m unittest tests.test_performance -v; \
-	else \
-		echo "$(YELLOW)Performance tests not yet implemented$(RESET)"; \
-	fi
-	@echo "$(GREEN)Performance tests complete!$(RESET)"
+
 
 test-comprehensive: build-dev ## Run comprehensive test suite (Task 9)
 	@echo "$(BLUE)Running comprehensive test suite...$(RESET)"
@@ -223,7 +211,7 @@ task12: docs-build ## Complete Task 12: Create documentation and examples
 	@echo "  ✓ User guide with examples"
 	@echo "  ✓ Migration guide from requests"
 	@echo "  ✓ Async/await usage guide"
-	@echo "  ✓ Performance benchmarks"
+
 	@echo "  ✓ Contributing guidelines"
 
 # =============================================================================

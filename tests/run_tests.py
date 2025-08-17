@@ -5,8 +5,7 @@ Test runner script for RequestX following CI/CD pipeline structure.
 This script runs the complete test suite in the order specified by the CI/CD pipeline:
 1. Unit tests for core functionality
 2. Integration tests for requests compatibility
-3. Performance tests and benchmarks
-4. Coverage measurement and reporting
+3. Coverage measurement and reporting
 
 Requirements: 6.1, 7.1, 7.2, 7.3, 7.4
 """

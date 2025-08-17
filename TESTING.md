@@ -48,19 +48,7 @@ Requests library compatibility and real-world usage tests:
 uv run python -m unittest tests.test_integration -v
 ```
 
-### Stage 6: Performance Tests
-**File:** `tests/test_performance.py`
 
-Performance benchmarks and memory usage validation:
-
-- **Performance Basics**: Request timing and throughput
-- **Memory Usage**: Memory efficiency and leak detection
-- **Benchmark Comparisons**: Cold vs warm requests, method comparisons
-
-**Command:**
-```bash
-uv run python -m unittest tests.test_performance -v
-```
 
 ## Running Tests
 

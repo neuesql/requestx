@@ -28,15 +28,7 @@ uv run python -m unittest tests.test_integration -v
 echo "Testing async/sync behavior..."
 uv run python -m unittest tests.test_integration -v
 
-# Stage 6: Performance Tests
-echo ""
-echo "Stage 6: Performance Tests"
-echo "----------------------------------------"
-echo "Benchmark against requests library..."
-uv run python -m unittest tests.test_performance -v
 
-echo "Memory usage tests..."
-uv run python -m unittest tests.test_performance -v
 
 # Run all tests using the custom runner
 echo ""

@@ -19,7 +19,7 @@ There are many ways to contribute to RequestX:
 - Bug reports
 - Feature requests
 - Documentation feedback
-- Performance benchmarks
+
 - Usage examples
 - Community support
 

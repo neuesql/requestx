@@ -254,7 +254,7 @@ Now that you've learned the basics, explore more advanced features:
 * :doc:`async-guide` - Deep dive into async/await usage
 * :doc:`examples/index` - More code examples
 * :doc:`api/index` - Complete API reference
-* :doc:`performance` - Performance benchmarks and optimization tips
+
 
 Performance Tips
 ~~~~~~~~~~~~~~~

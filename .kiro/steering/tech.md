@@ -22,7 +22,6 @@
 ### Python Dependencies
 - Development tools: `black`, `ruff`, `mypy`
 - Testing: Python built-in `unittest` framework (no external dependencies)
-- Benchmarking: `httpx`, `aiohttp`, `requests` for comparisons
 
 ## Build System
 - **Primary**: `maturin` for building Python extensions
@@ -134,14 +133,7 @@ The CI/CD pipeline should follow this sequence for comprehensive testing and rel
    uv run python -m unittest tests.test_async -v
    ```
 
-6. **Performance Tests**
-   ```bash
-   # Benchmark against requests library
-   uv run python -m unittest tests.test_benchmarks -v
-   
-   # Memory usage tests
-   uv run python -m unittest tests.test_performance -v
-   ```
+
 
 7. **Cross-Platform Testing**
    - Test on Linux (Ubuntu latest)

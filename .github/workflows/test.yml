@@ -55,9 +55,7 @@ jobs:
     - name: Run comprehensive tests
       run: uv run python tests/run_all_tests.py
 
-    - name: Run performance benchmarks
-      run: uv run python tests/test_benchmarks.py
-      continue-on-error: true  # Benchmarks may vary by environment
+
 
   test-coverage:
     name: Test Coverage
