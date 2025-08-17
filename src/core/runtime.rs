@@ -41,6 +41,7 @@ impl RuntimeManager {
     }
 
     /// Create a RuntimeManager with a custom runtime
+    #[allow(dead_code)]
     pub fn with_runtime(runtime: Runtime) -> Self {
         RuntimeManager {
             custom_runtime: Some(Arc::new(runtime)),
@@ -74,6 +75,7 @@ impl RuntimeManager {
     }
 
     /// Detect the current event loop and return its handle if available
+    #[allow(dead_code)]
     pub fn get_event_loop_handle(py: Python) -> PyResult<Option<PyObject>> {
         let asyncio = py.import("asyncio")?;
         match asyncio.call_method0("get_running_loop") {
@@ -100,6 +102,7 @@ impl RuntimeManager {
     }
 
     /// Create a coroutine from a future for async contexts
+    #[allow(dead_code)]
     pub fn create_coroutine<F, T>(py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
@@ -109,6 +112,7 @@ impl RuntimeManager {
     }
 
     /// Block on a future in sync context
+    #[allow(dead_code)]
     pub fn block_on_future<F, T>(&self, future: F) -> PyResult<T>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
@@ -118,16 +122,19 @@ impl RuntimeManager {
     }
 
     /// Check if we're currently inside a tokio runtime
+    #[allow(dead_code)]
     pub fn is_in_tokio_runtime() -> bool {
         Handle::try_current().is_ok()
     }
 
     /// Get the current tokio runtime handle if available
+    #[allow(dead_code)]
     pub fn get_tokio_handle() -> Option<Handle> {
         Handle::try_current().ok()
     }
 
     /// Spawn a task on the tokio runtime
+    #[allow(dead_code)]
     pub fn spawn_task<F, T>(&self, future: F) -> tokio::task::JoinHandle<T>
     where
         F: Future<Output = T> + Send + 'static,

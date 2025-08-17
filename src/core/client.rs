@@ -14,30 +14,9 @@ use crate::error::RequestxError;
 const CONTENT_TYPE_JSON: &str = "application/json";
 const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 
-// Global shared runtime for better performance
-static GLOBAL_RUNTIME: OnceLock<Runtime> = OnceLock::new();
-
 // Global shared client for connection pooling
 static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
     OnceLock::new();
-
-fn get_global_runtime() -> &'static Runtime {
-    GLOBAL_RUNTIME.get_or_init(|| {
-        // Determine optimal worker thread count for concurrent operations
-        let worker_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() * 2).min(16).max(4)) // 2x CPU cores, min 4, max 16
-            .unwrap_or(8); // Default to 8 if can't detect
-
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads) // More threads for better concurrency
-            .max_blocking_threads(512) // High blocking thread limit
-            .thread_name("requestx-worker") // Named threads for debugging
-            .thread_stack_size(1024 * 1024) // 1MB stack size (smaller for more threads)
-            .enable_all() // Enable all tokio features
-            .build()
-            .expect("Failed to create optimized global tokio runtime")
-    })
-}
 
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
     GLOBAL_CLIENT.get_or_init(|| {
@@ -103,9 +82,12 @@ pub struct RequestConfig {
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
     pub verify: bool,
+    #[allow(dead_code)]
     pub cert: Option<String>,
+    #[allow(dead_code)]
     pub proxies: Option<HashMap<String, String>>,
     pub auth: Option<(String, String)>,
+    #[allow(dead_code)]
     pub stream: bool,
 }
 
@@ -131,12 +113,16 @@ pub struct RequestxClient {
     // Use reference to global client for better performance
     use_global_client: bool,
     custom_client: Option<Client<HttpsConnector<hyper::client::HttpConnector>>>,
+    #[allow(dead_code)]
     custom_runtime: Option<Arc<Runtime>>,
 }
 
+#[allow(dead_code)]
 impl RequestxClient {
     // Constants for default values to reduce allocations
+    #[allow(dead_code)]
     const DEFAULT_ALLOW_REDIRECTS: bool = true;
+    #[allow(dead_code)]
     const DEFAULT_VERIFY: bool = true;
 
     /// Create a new RequestxClient using global shared resources
@@ -149,6 +135,7 @@ impl RequestxClient {
     }
 
     /// Create a new RequestxClient with custom runtime
+    #[allow(dead_code)]
     pub fn with_runtime(runtime: Runtime) -> Result<Self, RequestxError> {
         Ok(RequestxClient {
             use_global_client: true,
@@ -169,6 +156,7 @@ impl RequestxClient {
     }
 
     /// Get the HTTP client to use (global or custom)
+    #[allow(dead_code)]
     fn get_client(&self) -> &Client<HttpsConnector<hyper::client::HttpConnector>> {
         if self.use_global_client {
             get_global_client()
@@ -178,15 +166,17 @@ impl RequestxClient {
     }
 
     /// Get the runtime to use (global or custom)
+    #[allow(dead_code)]
     fn get_runtime(&self) -> &Runtime {
         if let Some(ref custom_runtime) = self.custom_runtime {
             custom_runtime
         } else {
-            get_global_runtime()
+            crate::core::runtime::get_global_runtime_manager().get_runtime()
         }
     }
 
     /// Create a default RequestConfig for a given method and URL
+    #[allow(dead_code)]
     fn create_default_config(&self, method: Method, url: Uri) -> RequestConfig {
         RequestConfig {
             method,
@@ -409,7 +399,7 @@ impl RequestxClient {
             .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {}", e)))?;
 
         // Execute the request with optional timeout
-        let mut response = if let Some(timeout) = config.timeout {
+        let response = if let Some(timeout) = config.timeout {
             match tokio::time::timeout(timeout, actual_client.request(request)).await {
                 Ok(result) => result,
                 Err(_) => return Err(RequestxError::ReadTimeout), // Timeout elapsed
