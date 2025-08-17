@@ -9,14 +9,6 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.11"
-  jobs:
-    pre_install:
-      # Install system dependencies if needed
-      - apt-get update
-      - apt-get install -y build-essential
-    post_install:
-      # Install documentation-specific dependencies
-      - pip install --upgrade pip setuptools wheel
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
@@ -25,9 +17,9 @@ sphinx:
    fail_on_warning: false
 
 # Declare the Python requirements required to build your documentation
-# python:
-#    install:
-#    - requirements: docs/requirements.txt
+python:
+   install:
+   - requirements: docs/requirements.txt
    # Note: We don't install the main package since it requires Rust compilation
    # The documentation will focus on API reference from source code inspection
         
