@@ -82,8 +82,13 @@ build-release: ## Build release version
 
 build-wheels: ## Build wheels for distribution
 	@echo "$(BLUE)Building distribution wheels...$(RESET)"
-	uv run maturin build --release --strip
+	uv run maturin build --release --strip --out dist
 	@echo "$(GREEN)Wheel build complete!$(RESET)"
+
+build-wheels-ci: ## Build wheels for CI (platform-specific)
+	@echo "$(BLUE)Building wheels for CI...$(RESET)"
+	uv run maturin build --release --strip --out dist --find-interpreter
+	@echo "$(GREEN)CI wheel build complete!$(RESET)"
 
 build-sdist: ## Build source distribution
 	@echo "$(BLUE)Building source distribution...$(RESET)"
@@ -282,6 +287,12 @@ github-release: ## Create GitHub release (requires gh CLI and GITHUB_TOKEN)
 
 release: pre-release release-tag publish-pypi github-release ## Full release process
 	@echo "$(GREEN)🎉 Release v$(VERSION) completed successfully!$(RESET)"
+
+release-pipeline: ## GitHub Actions release pipeline entry point
+	@echo "$(BLUE)Starting release pipeline...$(RESET)"
+	@echo "$(YELLOW)Platform: $(shell uname -s) $(shell uname -m)$(RESET)"
+	@echo "$(YELLOW)Version: $(VERSION)$(RESET)"
+	@echo "$(GREEN)Release pipeline ready!$(RESET)"
 
 # =============================================================================
 # Utility Commands
