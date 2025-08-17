@@ -61,8 +61,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
 
-    - name: Install maturin
+    - name: Install maturin (Linux)
+      if: runner.os == 'Linux'
       run: uv tool install maturin[patchelf]
+
+    - name: Install maturin (Non-Linux)
+      if: runner.os != 'Linux'
+      run: uv tool install maturin
 
     - name: Build wheels for all Python versions
       run: |

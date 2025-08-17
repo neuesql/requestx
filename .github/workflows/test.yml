@@ -76,8 +76,13 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-    - name: Install maturin
+    - name: Install maturin (Linux)
+      if: runner.os == 'Linux'
       run: uv tool install maturin[patchelf]
+
+    - name: Install maturin (Non-Linux)
+      if: runner.os != 'Linux'
+      run: uv tool install maturin
 
     - name: Build wheel
       run: uv run maturin build --release --strip
