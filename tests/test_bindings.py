@@ -146,7 +146,7 @@ class TestParameterConversion(unittest.TestCase):
     def test_headers_parameter(self):
         """Test headers parameter conversion."""
         headers = {
-            "User-Agent": "RequestX/0.1.0",
+            "User-Agent": "RequestX/0.2.0",
             "Accept": "application/json",
             "Custom-Header": "test-value",
         }
@@ -157,7 +157,7 @@ class TestParameterConversion(unittest.TestCase):
         # Verify headers were sent by checking the response
         response_data = response.json()
         sent_headers = response_data.get("headers", {})
-        self.assertEqual(sent_headers.get("User-Agent"), "RequestX/0.1.0")
+        self.assertEqual(sent_headers.get("User-Agent"), "RequestX/0.2.0")
         self.assertEqual(sent_headers.get("Accept"), "application/json")
         self.assertEqual(sent_headers.get("Custom-Header"), "test-value")
 

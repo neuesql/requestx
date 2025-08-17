@@ -183,7 +183,7 @@ python scripts/release.py release 1.0.0-alpha.1
 
 ### Semantic Versioning
 - **Major** (1.0.0): Breaking changes
-- **Minor** (0.1.0): New features, backward compatible
+- **Minor** (0.2.0): New features, backward compatible
 - **Patch** (0.0.1): Bug fixes, backward compatible
 
 ### Prerelease Versions

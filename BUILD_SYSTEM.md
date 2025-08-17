@@ -187,9 +187,9 @@ requestx-{version}-cp{python_version}-abi3-{platform}.whl
 
 Example:
 ```
-requestx-0.1.0-cp38-abi3-macosx_11_0_arm64.whl
-requestx-0.1.0-cp38-abi3-linux_x86_64.whl
-requestx-0.1.0-cp38-abi3-win_amd64.whl
+requestx-0.2.0-cp38-abi3-macosx_11_0_arm64.whl
+requestx-0.2.0-cp38-abi3-linux_x86_64.whl
+requestx-0.2.0-cp38-abi3-win_amd64.whl
 ```
 
 ### Dependency Bundling

@@ -10,18 +10,38 @@ and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0
 ------------
 
 **Added**
-- Comprehensive documentation with Read the Docs integration
-- Performance benchmarking suite
-- Advanced async/await examples
-- Migration guide from requests library
+- Enhanced async/await functionality
+- Improved error handling
+- Advanced session management features
 
 **Changed**
-- Improved error messages for better debugging
-- Enhanced connection pooling performance
+- Optimized memory usage
+- Improved connection pooling
+
+**Fixed**
+- Various bug fixes and improvements
+
+[0.2.0] - 2025-02-XX
+--------------------
+
+**Added**
+- Enhanced async/await support with improved context detection
+- Advanced session management with persistent connections
+- Comprehensive documentation with Read the Docs integration
+- Advanced async/await examples and usage patterns
+- Migration guide from requests library
+- Performance benchmarking and optimization tools
+
+**Changed**
+- Improved error messages for better debugging experience
+- Enhanced connection pooling performance and stability
+- Optimized memory usage and resource management
+- Updated API documentation and examples
 
 **Fixed**
 - Minor memory leaks in session management
 - Edge cases in async context detection
+- Various bug fixes and stability improvements
 
 [0.1.0] - 2025-01-XX
 --------------------

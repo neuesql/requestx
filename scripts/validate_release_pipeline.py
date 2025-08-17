@@ -332,7 +332,7 @@ def main():
         print("\n🎉 All checks passed! Release pipeline is ready.")
         print("\nNext steps:")
         print("1. Test the pipeline: python scripts/test_release.py")
-        print("2. Create a test release: python scripts/release.py release 0.1.0-test")
+        print("2. Create a test release: python scripts/release.py release 0.2.0-test")
         print("3. Monitor the GitHub Actions workflow")
         sys.exit(0)
     else:

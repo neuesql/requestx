@@ -187,7 +187,7 @@ You should see output similar to:
 
 .. code-block:: text
 
-   RequestX version: 0.1.0
+   RequestX version: 0.2.0
    Status: 200
    Installation successful!
 

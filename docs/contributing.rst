@@ -369,7 +369,7 @@ When reporting bugs, please include:
    **Environment**
    - OS: [e.g. Windows 10, macOS 12, Ubuntu 20.04]
    - Python version: [e.g. 3.9.7]
-   - RequestX version: [e.g. 0.1.0]
+   - RequestX version: [e.g. 0.2.0]
    
    **Additional context**
    Add any other context about the problem here.
@@ -413,7 +413,7 @@ For maintainers, the release process is:
    - List all changes since last release
 
 3. **Create Release**
-   - Create and push git tag: ``git tag v0.1.0 && git push origin v0.1.0``
+   - Create and push git tag: ``git tag v0.2.0 && git push origin v0.2.0``
    - GitHub Actions will automatically build and publish to PyPI
 
 4. **Post-Release**
