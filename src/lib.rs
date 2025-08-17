@@ -23,12 +23,12 @@ fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
     if url.is_empty() {
         return Err(RequestxError::UrlRequired.into());
     }
-    
+
     // Check for missing schema
     if !url.contains("://") {
         return Err(RequestxError::MissingSchema.into());
     }
-    
+
     // Parse the URL
     let uri: Uri = url.parse().map_err(|e: hyper::http::uri::InvalidUri| {
         let error_str = e.to_string();
@@ -38,7 +38,7 @@ fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
             RequestxError::InvalidUrl(e)
         }
     })?;
-    
+
     // Validate schema
     match uri.scheme_str() {
         Some("http") | Some("https") => Ok(uri),
@@ -47,37 +47,35 @@ fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
     }
 }
 
-
-
 /// Parse kwargs into RequestConfig with comprehensive parameter support
 fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBuilder> {
     let mut builder = RequestConfigBuilder::new();
-    
+
     if let Some(kwargs) = kwargs {
         // Parse headers
         if let Some(headers_obj) = kwargs.get_item("headers")? {
             let headers = parse_headers(headers_obj)?;
             builder.headers = Some(headers);
         }
-        
+
         // Parse params (query parameters)
         if let Some(params_obj) = kwargs.get_item("params")? {
             let params = parse_params(params_obj)?;
             builder.params = Some(params);
         }
-        
+
         // Parse data
         if let Some(data_obj) = kwargs.get_item("data")? {
             let data = parse_data(data_obj)?;
             builder.data = Some(data);
         }
-        
+
         // Parse json
         if let Some(json_obj) = kwargs.get_item("json")? {
             let json = parse_json(py, json_obj)?;
             builder.json = Some(json);
         }
-        
+
         // Parse timeout
         if let Some(timeout_obj) = kwargs.get_item("timeout")? {
             if !timeout_obj.is_none() {
@@ -85,17 +83,17 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
                 builder.timeout = Some(timeout);
             }
         }
-        
+
         // Parse allow_redirects
         if let Some(redirects_obj) = kwargs.get_item("allow_redirects")? {
             builder.allow_redirects = redirects_obj.is_true()?;
         }
-        
+
         // Parse verify
         if let Some(verify_obj) = kwargs.get_item("verify")? {
             builder.verify = verify_obj.is_true()?;
         }
-        
+
         // Parse cert
         if let Some(cert_obj) = kwargs.get_item("cert")? {
             if !cert_obj.is_none() {
@@ -103,7 +101,7 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
                 builder.cert = Some(cert);
             }
         }
-        
+
         // Parse proxies
         if let Some(proxies_obj) = kwargs.get_item("proxies")? {
             if !proxies_obj.is_none() {
@@ -111,7 +109,7 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
                 builder.proxies = Some(proxies);
             }
         }
-        
+
         // Parse auth
         if let Some(auth_obj) = kwargs.get_item("auth")? {
             if !auth_obj.is_none() {
@@ -119,13 +117,13 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
                 builder.auth = Some(auth);
             }
         }
-        
+
         // Parse stream
         if let Some(stream_obj) = kwargs.get_item("stream")? {
             builder.stream = stream_obj.is_true()?;
         }
     }
-    
+
     Ok(builder)
 }
 
@@ -161,7 +159,7 @@ impl RequestConfigBuilder {
             stream: false,
         }
     }
-    
+
     fn build(self, method: Method, url: Uri) -> RequestConfig {
         RequestConfig {
             method,
@@ -184,35 +182,33 @@ impl RequestConfigBuilder {
 /// Parse headers from Python object with comprehensive error handling
 fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
     let mut headers = HeaderMap::new();
-    
+
     if let Ok(dict) = headers_obj.downcast::<PyDict>() {
         for (key, value) in dict.iter() {
             let key_str = key.extract::<String>()?;
             let value_str = value.extract::<String>()?;
-            
+
             // Validate header name
-            let header_name = key_str.parse::<hyper::header::HeaderName>()
-                .map_err(|e| {
-                    RequestxError::InvalidHeader(format!("Invalid header name '{}': {}", key_str, e))
-                })?;
-            
+            let header_name = key_str.parse::<hyper::header::HeaderName>().map_err(|e| {
+                RequestxError::InvalidHeader(format!("Invalid header name '{}': {}", key_str, e))
+            })?;
+
             // Validate header value - ensure proper UTF-8 encoding
-            let header_value = hyper::header::HeaderValue::from_str(&value_str)
-                .map_err(|e| {
-                    RequestxError::InvalidHeader(format!("Invalid header value '{}': {}", value_str, e))
-                })?;
-            
+            let header_value = hyper::header::HeaderValue::from_str(&value_str).map_err(|e| {
+                RequestxError::InvalidHeader(format!("Invalid header value '{}': {}", value_str, e))
+            })?;
+
             headers.insert(header_name, header_value);
         }
     }
-    
+
     Ok(headers)
 }
 
 /// Parse query parameters from Python object
 fn parse_params(params_obj: &PyAny) -> PyResult<HashMap<String, String>> {
     let mut params = HashMap::new();
-    
+
     if let Ok(dict) = params_obj.downcast::<PyDict>() {
         for (key, value) in dict.iter() {
             let key_str = key.extract::<String>()?;
@@ -220,7 +216,7 @@ fn parse_params(params_obj: &PyAny) -> PyResult<HashMap<String, String>> {
             params.insert(key_str, value_str);
         }
     }
-    
+
     Ok(params)
 }
 
@@ -230,12 +226,12 @@ fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
     if let Ok(text) = data_obj.extract::<String>() {
         return Ok(RequestData::Text(text));
     }
-    
+
     // Try bytes
     if let Ok(bytes) = data_obj.extract::<Vec<u8>>() {
         return Ok(RequestData::Bytes(bytes));
     }
-    
+
     // Try dict (form data)
     if let Ok(dict) = data_obj.downcast::<PyDict>() {
         let mut form_data = HashMap::new();
@@ -246,9 +242,9 @@ fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
         }
         return Ok(RequestData::Form(form_data));
     }
-    
+
     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-        "Data must be string, bytes, or dict"
+        "Data must be string, bytes, or dict",
     ))
 }
 
@@ -256,13 +252,13 @@ fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
 fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
     // Use Python's json module to serialize the object
     let json_module = py.import("json")?;
-    let json_str = json_module.call_method1("dumps", (json_obj,))?.extract::<String>()?;
-    
+    let json_str = json_module
+        .call_method1("dumps", (json_obj,))?
+        .extract::<String>()?;
+
     // Parse the JSON string into serde_json::Value
     serde_json::from_str(&json_str).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            format!("Failed to parse JSON: {}", e)
-        )
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse JSON: {}", e))
     })
 }
 
@@ -270,15 +266,25 @@ fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
 fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
     if let Ok(seconds) = timeout_obj.extract::<f64>() {
         if seconds < 0.0 {
-            return Err(RequestxError::RuntimeError("Timeout must be non-negative".to_string()).into());
+            return Err(
+                RequestxError::RuntimeError("Timeout must be non-negative".to_string()).into(),
+            );
         }
-        if seconds > 3600.0 {  // 1 hour max
-            return Err(RequestxError::RuntimeError("Timeout too large (max 3600 seconds)".to_string()).into());
+        if seconds > 3600.0 {
+            // 1 hour max
+            return Err(RequestxError::RuntimeError(
+                "Timeout too large (max 3600 seconds)".to_string(),
+            )
+            .into());
         }
         Ok(Duration::from_secs_f64(seconds))
     } else if let Ok(seconds) = timeout_obj.extract::<u64>() {
-        if seconds > 3600 {  // 1 hour max
-            return Err(RequestxError::RuntimeError("Timeout too large (max 3600 seconds)".to_string()).into());
+        if seconds > 3600 {
+            // 1 hour max
+            return Err(RequestxError::RuntimeError(
+                "Timeout too large (max 3600 seconds)".to_string(),
+            )
+            .into());
         }
         Ok(Duration::from_secs(seconds))
     } else {
@@ -292,7 +298,7 @@ fn parse_cert(cert_obj: &PyAny) -> PyResult<String> {
         Ok(cert_path)
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Certificate must be a string path"
+            "Certificate must be a string path",
         ))
     }
 }
@@ -300,27 +306,28 @@ fn parse_cert(cert_obj: &PyAny) -> PyResult<String> {
 /// Parse proxies from Python object
 fn parse_proxies(proxies_obj: &PyAny) -> PyResult<HashMap<String, String>> {
     let mut proxies = HashMap::new();
-    
+
     if let Ok(dict) = proxies_obj.downcast::<PyDict>() {
         for (key, value) in dict.iter() {
             let protocol = key.extract::<String>()?;
             let proxy_url = value.extract::<String>()?;
-            
+
             // Validate proxy URL format
             if !proxy_url.contains("://") {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Invalid proxy URL format: {}", proxy_url)
-                ));
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Invalid proxy URL format: {}",
+                    proxy_url
+                )));
             }
-            
+
             proxies.insert(protocol, proxy_url);
         }
     } else {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Proxies must be a dictionary"
+            "Proxies must be a dictionary",
         ));
     }
-    
+
     Ok(proxies)
 }
 
@@ -330,7 +337,7 @@ fn parse_auth(auth_obj: &PyAny) -> PyResult<(String, String)> {
     if let Ok(tuple) = auth_obj.extract::<(String, String)>() {
         return Ok(tuple);
     }
-    
+
     // Try list
     if let Ok(list) = auth_obj.downcast::<pyo3::types::PyList>() {
         if list.len() == 2 {
@@ -339,13 +346,11 @@ fn parse_auth(auth_obj: &PyAny) -> PyResult<(String, String)> {
             return Ok((username, password));
         }
     }
-    
+
     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-        "Auth must be a tuple or list of (username, password)"
+        "Auth must be a tuple or list of (username, password)",
     ))
 }
-
-
 
 /// Convert ResponseData to Python Response object
 fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Response> {
@@ -369,16 +374,16 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::GET, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -388,16 +393,16 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::POST, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -407,16 +412,16 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PUT, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -426,16 +431,16 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::DELETE, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -445,16 +450,16 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::HEAD, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -464,16 +469,16 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::OPTIONS, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -483,16 +488,16 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PATCH, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 
@@ -511,22 +516,26 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
         "PATCH" => Method::PATCH,
         "TRACE" => Method::TRACE,
         "CONNECT" => Method::CONNECT,
-        _ => return Err(RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into()),
+        _ => {
+            return Err(
+                RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into(),
+            )
+        }
     };
-    
+
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(method, uri);
-    
+
     // Use enhanced runtime management for context detection and execution
     let runtime_manager = core::runtime::get_global_runtime_manager();
-    
+
     let future = async move {
         let client = RequestxClient::new()?;
         let response_data = client.request_async(config).await?;
         response_data_to_py_response(response_data)
     };
-    
+
     runtime_manager.execute_future(py, future)
 }
 

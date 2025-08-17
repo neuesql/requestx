@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
-use pyo3_asyncio::tokio::{get_current_loop, future_into_py};
-use std::sync::{Arc, OnceLock};
-use tokio::runtime::{Runtime, Handle};
+use pyo3_asyncio::tokio::{future_into_py, get_current_loop};
 use std::future::Future;
+use std::sync::{Arc, OnceLock};
+use tokio::runtime::{Handle, Runtime};
 
 /// Global shared runtime for optimal performance and resource management
 static GLOBAL_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
@@ -13,7 +13,7 @@ fn get_global_runtime() -> &'static Arc<Runtime> {
         let worker_threads = std::thread::available_parallelism()
             .map(|n| (n.get() * 2).min(16).max(4))
             .unwrap_or(8);
-            
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(worker_threads)
             .max_blocking_threads(512)
@@ -22,7 +22,7 @@ fn get_global_runtime() -> &'static Arc<Runtime> {
             .enable_all()
             .build()
             .expect("Failed to create optimized global tokio runtime");
-            
+
         Arc::new(runtime)
     })
 }
@@ -35,21 +35,23 @@ pub struct RuntimeManager {
 impl RuntimeManager {
     /// Create a new RuntimeManager using the global runtime
     pub fn new() -> Self {
-        RuntimeManager { 
-            custom_runtime: None 
+        RuntimeManager {
+            custom_runtime: None,
         }
     }
 
     /// Create a RuntimeManager with a custom runtime
     pub fn with_runtime(runtime: Runtime) -> Self {
         RuntimeManager {
-            custom_runtime: Some(Arc::new(runtime))
+            custom_runtime: Some(Arc::new(runtime)),
         }
     }
 
     /// Get the runtime to use (custom or global)
     pub fn get_runtime(&self) -> &Arc<Runtime> {
-        self.custom_runtime.as_ref().unwrap_or_else(|| get_global_runtime())
+        self.custom_runtime
+            .as_ref()
+            .unwrap_or_else(|| get_global_runtime())
     }
 
     /// Enhanced async context detection using pyo3-asyncio
@@ -59,12 +61,12 @@ impl RuntimeManager {
             Ok(_) => return Ok(true),
             Err(_) => {}
         }
-        
+
         // Method 2: Fallback to checking asyncio directly
-        let asyncio = py.import("asyncio").map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err("Failed to import asyncio")
-        })?;
-        
+        let asyncio = py
+            .import("asyncio")
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to import asyncio"))?;
+
         match asyncio.call_method0("get_running_loop") {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
@@ -81,11 +83,7 @@ impl RuntimeManager {
     }
 
     /// Execute a future in the appropriate context (sync or async)
-    pub fn execute_future<F, T>(
-        &self,
-        py: Python,
-        future: F,
-    ) -> PyResult<PyObject>
+    pub fn execute_future<F, T>(&self, py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
         T: IntoPy<PyObject>,
@@ -102,10 +100,7 @@ impl RuntimeManager {
     }
 
     /// Create a coroutine from a future for async contexts
-    pub fn create_coroutine<F, T>(
-        py: Python,
-        future: F,
-    ) -> PyResult<PyObject>
+    pub fn create_coroutine<F, T>(py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
         T: IntoPy<PyObject>,
@@ -179,7 +174,7 @@ mod tests {
     fn test_global_runtime_manager() {
         let manager1 = get_global_runtime_manager();
         let manager2 = get_global_runtime_manager();
-        
+
         // Should be the same instance
         assert!(std::ptr::eq(manager1, manager2));
     }
@@ -188,7 +183,7 @@ mod tests {
     fn test_tokio_runtime_detection() {
         // Outside of tokio runtime
         assert!(!RuntimeManager::is_in_tokio_runtime());
-        
+
         // Inside tokio runtime
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -209,11 +204,9 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_task() {
         let manager = RuntimeManager::new();
-        
-        let handle = manager.spawn_task(async {
-            42
-        });
-        
+
+        let handle = manager.spawn_task(async { 42 });
+
         let result = handle.await.unwrap();
         assert_eq!(result, 42);
     }

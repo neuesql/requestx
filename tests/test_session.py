@@ -9,7 +9,7 @@ import sys
 import os
 
 # Add the project root to the path so we can import requestx
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 import requestx
 
@@ -68,7 +68,7 @@ class TestSessionHTTPMethods(unittest.TestCase):
         data = {"key": "value", "test": "session"}
         response = self.session.post("https://httpbin.org/post", json=data)
         self.assertEqual(response.status_code, 200)
-        
+
         # Verify data was sent
         response_data = response.json()
         sent_json = response_data.get("json", {})
@@ -144,7 +144,7 @@ class TestSessionHeaders(unittest.TestCase):
         self.session.update_header("Test-Header", "test-value")
         headers = self.session.headers
         self.assertIn("test-header", headers)
-        
+
         # Remove the header
         self.session.remove_header("Test-Header")
         headers = self.session.headers
@@ -157,7 +157,7 @@ class TestSessionHeaders(unittest.TestCase):
         self.session.update_header("Header2", "value2")
         headers = self.session.headers
         self.assertEqual(len(headers), 2)
-        
+
         # Clear all headers
         self.session.clear_headers()
         headers = self.session.headers
@@ -167,20 +167,20 @@ class TestSessionHeaders(unittest.TestCase):
         """Test that session headers persist across multiple requests."""
         # Set a session header
         self.session.update_header("User-Agent", "RequestX-Persistent-Test")
-        
+
         # Make first request
         response1 = self.session.get("https://httpbin.org/get")
         self.assertEqual(response1.status_code, 200)
-        
+
         # Verify header was sent
         response1_data = response1.json()
         sent_headers1 = response1_data.get("headers", {})
         self.assertEqual(sent_headers1.get("User-Agent"), "RequestX-Persistent-Test")
-        
+
         # Make second request
         response2 = self.session.get("https://httpbin.org/user-agent")
         self.assertEqual(response2.status_code, 200)
-        
+
         # Verify header was sent again
         response2_data = response2.json()
         self.assertEqual(response2_data.get("user-agent"), "RequestX-Persistent-Test")
@@ -189,12 +189,12 @@ class TestSessionHeaders(unittest.TestCase):
         """Test that session headers merge with request-specific headers."""
         # Set a session header
         self.session.update_header("Session-Header", "session-value")
-        
+
         # Make request with additional headers
         request_headers = {"Request-Header": "request-value"}
         response = self.session.get("https://httpbin.org/get", headers=request_headers)
         self.assertEqual(response.status_code, 200)
-        
+
         # Verify both headers were sent
         response_data = response.json()
         sent_headers = response_data.get("headers", {})
@@ -205,12 +205,12 @@ class TestSessionHeaders(unittest.TestCase):
         """Test that request headers override session headers with same name."""
         # Set a session header
         self.session.update_header("User-Agent", "Session-Agent")
-        
+
         # Make request with overriding header
         request_headers = {"User-Agent": "Request-Agent"}
         response = self.session.get("https://httpbin.org/get", headers=request_headers)
         self.assertEqual(response.status_code, 200)
-        
+
         # Verify request header took precedence
         response_data = response.json()
         sent_headers = response_data.get("headers", {})
@@ -221,12 +221,12 @@ class TestSessionHeaders(unittest.TestCase):
         headers_dict = {
             "Authorization": "Bearer token123",
             "Content-Type": "application/json",
-            "Custom-Header": "custom-value"
+            "Custom-Header": "custom-value",
         }
-        
+
         self.session.headers = headers_dict
         headers = self.session.headers
-        
+
         self.assertEqual(len(headers), 3)
         self.assertEqual(headers.get("authorization"), "Bearer token123")
         self.assertEqual(headers.get("content-type"), "application/json")
@@ -286,84 +286,95 @@ class TestSessionAsync(unittest.TestCase):
 
     def test_session_async_get(self):
         """Test Session async GET request."""
+
         async def run_test():
             response = await self.session.get("https://httpbin.org/get")
             self.assertEqual(response.status_code, 200)
-        
+
         self.loop.run_until_complete(run_test())
 
     def test_session_async_post(self):
         """Test Session async POST request."""
+
         async def run_test():
             data = {"async": True, "session": "test"}
             response = await self.session.post("https://httpbin.org/post", json=data)
             self.assertEqual(response.status_code, 200)
-            
+
             # Verify data was sent
             response_data = response.json()
             sent_json = response_data.get("json", {})
             self.assertEqual(sent_json.get("async"), True)
             self.assertEqual(sent_json.get("session"), "test")
-        
+
         self.loop.run_until_complete(run_test())
 
     def test_session_async_headers_persist(self):
         """Test that session headers persist in async requests."""
+
         async def run_test():
             # Set a session header
             self.session.update_header("Async-Session", "async-test")
-            
+
             # Make async request
             response = await self.session.get("https://httpbin.org/get")
             self.assertEqual(response.status_code, 200)
-            
+
             # Verify header was sent
             response_data = response.json()
             sent_headers = response_data.get("headers", {})
             self.assertEqual(sent_headers.get("Async-Session"), "async-test")
-        
+
         self.loop.run_until_complete(run_test())
 
     def test_session_async_concurrent_requests(self):
         """Test multiple concurrent async requests with session."""
+
         async def run_test():
             # Set a session header
             self.session.update_header("Concurrent-Test", "session-value")
-            
+
             # Create multiple concurrent requests
             urls = [
                 "https://httpbin.org/get",
                 "https://httpbin.org/user-agent",
-                "https://httpbin.org/headers"
+                "https://httpbin.org/headers",
             ]
-            
+
             tasks = [self.session.get(url) for url in urls]
             responses = await asyncio.gather(*tasks)
-            
+
             # All should be successful
             for i, response in enumerate(responses):
                 self.assertEqual(response.status_code, 200)
-                
+
                 # Verify session header was sent in all requests
                 response_data = response.json()
                 sent_headers = response_data.get("headers", {})
-                
+
                 # Headers are case-insensitive, check for lowercase version
-                header_value = sent_headers.get("Concurrent-Test") or sent_headers.get("concurrent-test")
-                
+                header_value = sent_headers.get("Concurrent-Test") or sent_headers.get(
+                    "concurrent-test"
+                )
+
                 # Some endpoints might not return all headers, so we'll be more lenient
                 # At least one request should have the session header
                 if header_value:
                     self.assertEqual(header_value, "session-value")
-            
+
             # Verify at least one response had our session header
             has_session_header = any(
-                response.json().get("headers", {}).get("Concurrent-Test") == "session-value" or
-                response.json().get("headers", {}).get("concurrent-test") == "session-value"
+                response.json().get("headers", {}).get("Concurrent-Test")
+                == "session-value"
+                or response.json().get("headers", {}).get("concurrent-test")
+                == "session-value"
                 for response in responses
             )
-            self.assertTrue(has_session_header, "At least one request should have the session header")
-        
+            self.assertTrue(
+                has_session_header,
+                "At least one request should have the session header",
+            )
+
         self.loop.run_until_complete(run_test())
 
 
@@ -382,26 +393,26 @@ class TestSessionStateManagement(unittest.TestCase):
         """Test that different sessions have isolated state."""
         session1 = requestx.Session()
         session2 = requestx.Session()
-        
+
         try:
             # Set different headers for each session
             session1.update_header("Session-ID", "session-1")
             session2.update_header("Session-ID", "session-2")
-            
+
             # Make requests with each session
             response1 = session1.get("https://httpbin.org/get")
             response2 = session2.get("https://httpbin.org/get")
-            
+
             # Verify each session sent its own header
             response1_data = response1.json()
             response2_data = response2.json()
-            
+
             sent_headers1 = response1_data.get("headers", {})
             sent_headers2 = response2_data.get("headers", {})
-            
+
             self.assertEqual(sent_headers1.get("Session-Id"), "session-1")
             self.assertEqual(sent_headers2.get("Session-Id"), "session-2")
-            
+
         finally:
             session1.close()
             session2.close()
@@ -410,7 +421,7 @@ class TestSessionStateManagement(unittest.TestCase):
         """Test that session state persists across different HTTP methods."""
         # Set session headers
         self.session.update_header("Persistent-Header", "persistent-value")
-        
+
         # Test different HTTP methods
         methods_and_urls = [
             ("GET", "https://httpbin.org/get"),
@@ -419,7 +430,7 @@ class TestSessionStateManagement(unittest.TestCase):
             ("DELETE", "https://httpbin.org/delete"),
             ("PATCH", "https://httpbin.org/patch"),
         ]
-        
+
         for method, url in methods_and_urls:
             if method == "GET":
                 response = self.session.get(url)
@@ -431,9 +442,9 @@ class TestSessionStateManagement(unittest.TestCase):
                 response = self.session.delete(url)
             elif method == "PATCH":
                 response = self.session.patch(url, json={"test": "data"})
-            
+
             self.assertEqual(response.status_code, 200)
-            
+
             # Verify session header was sent
             response_data = response.json()
             sent_headers = response_data.get("headers", {})

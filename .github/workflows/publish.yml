@@ -17,30 +17,64 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        include:
+          # Linux builds
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            arch: aarch64
+          # macOS builds (universal2 for both x86_64 and arm64)
+          - os: macos-latest
+            target: universal2-apple-darwin
+            arch: universal2
+          # Windows builds
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x86_64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            arch: aarch64
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.11'
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      shell: bash
+
+    - name: Install cross-compilation tools (Linux aarch64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
 
     - name: Install maturin
-      run: pip install maturin[patchelf]
+      run: uv tool install maturin[patchelf]
 
     - name: Build wheels
-      run: maturin build --release --out dist --find-interpreter
+      run: |
+        uv run maturin build --release --strip --target ${{ matrix.target }} --out dist
+      env:
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
     - name: Upload wheels
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: wheels-${{ matrix.os }}-${{ matrix.python-version }}
+        name: wheels-${{ matrix.os }}-${{ matrix.arch }}
         path: dist
 
   build-sdist:
@@ -57,11 +91,16 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
     - name: Install maturin
-      run: pip install maturin[patchelf]
+      run: uv tool install maturin[patchelf]
 
     - name: Build sdist
-      run: maturin sdist --out dist
+      run: uv run maturin sdist --out dist
 
     - name: Upload sdist
       uses: actions/upload-artifact@v3
@@ -79,7 +118,7 @@ jobs:
 
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         path: dist
 
@@ -89,6 +128,10 @@ jobs:
         find dist -name '*.whl' -exec cp {} final-dist/ \;
         find dist -name '*.tar.gz' -exec cp {} final-dist/ \;
         ls -la final-dist/
+        echo "Built wheels:"
+        ls -la final-dist/*.whl || echo "No wheels found"
+        echo "Built source distributions:"
+        ls -la final-dist/*.tar.gz || echo "No source distributions found"
 
     - name: Publish to Test PyPI
       if: github.event.inputs.test_pypi == 'true'

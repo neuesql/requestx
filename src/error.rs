@@ -83,15 +83,15 @@ impl From<RequestxError> for PyErr {
                     PyConnectionError::new_err(format!("Network error: {}", e))
                 }
             }
-            RequestxError::TimeoutError(_) => {
-                PyTimeoutError::new_err("The server did not send any data in the allotted amount of time")
-            }
-            RequestxError::ConnectTimeout => {
-                PyTimeoutError::new_err("The request timed out while trying to connect to the remote server")
-            }
-            RequestxError::ReadTimeout => {
-                PyTimeoutError::new_err("The server did not send any data in the allotted amount of time")
-            }
+            RequestxError::TimeoutError(_) => PyTimeoutError::new_err(
+                "The server did not send any data in the allotted amount of time",
+            ),
+            RequestxError::ConnectTimeout => PyTimeoutError::new_err(
+                "The request timed out while trying to connect to the remote server",
+            ),
+            RequestxError::ReadTimeout => PyTimeoutError::new_err(
+                "The server did not send any data in the allotted amount of time",
+            ),
             RequestxError::HttpError { status, message } => {
                 // Create HTTPError with status code information
                 PyRuntimeError::new_err(format!("{} Client Error: {} for url", status, message))
@@ -99,9 +99,7 @@ impl From<RequestxError> for PyErr {
             RequestxError::JsonDecodeError(e) => {
                 PyValueError::new_err(format!("Failed to decode JSON response: {}", e))
             }
-            RequestxError::InvalidUrl(e) => {
-                PyValueError::new_err(format!("Invalid URL: {}", e))
-            }
+            RequestxError::InvalidUrl(e) => PyValueError::new_err(format!("Invalid URL: {}", e)),
             RequestxError::UrlRequired => {
                 PyValueError::new_err("A valid URL is required to make a request")
             }

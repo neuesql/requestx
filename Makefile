@@ -171,6 +171,24 @@ test-all: test test-integration test-performance test-comprehensive ## Run all t
 test-task9: test-comprehensive test-all-modules ## Run Task 9 comprehensive test suite
 	@echo "$(GREEN)Task 9 comprehensive test suite complete!$(RESET)"
 
+test-installation: build-dev ## Test installation process and bundled dependencies (Task 10)
+	@echo "$(BLUE)Testing installation process...$(RESET)"
+	uv run python scripts/test_installation.py
+	@echo "$(GREEN)Installation tests complete!$(RESET)"
+
+test-wheel-installation: build-wheels ## Test wheel installation in clean environment
+	@echo "$(BLUE)Testing wheel installation...$(RESET)"
+	uv run python scripts/test_installation.py --test-wheel
+	@echo "$(GREEN)Wheel installation tests complete!$(RESET)"
+
+task10: quality-check build-wheels build-sdist test-installation ## Complete Task 10: Set up build system and packaging
+	@echo "$(GREEN)🎉 Task 10 completed successfully!$(RESET)"
+	@echo "$(YELLOW)Build system and packaging setup complete:$(RESET)"
+	@echo "  ✓ Maturin configured for cross-platform wheel building"
+	@echo "  ✓ GitHub Actions CI/CD pipeline set up"
+	@echo "  ✓ Cross-platform wheel building configured"
+	@echo "  ✓ Installation process tested and verified"
+
 # =============================================================================
 # Documentation
 # =============================================================================

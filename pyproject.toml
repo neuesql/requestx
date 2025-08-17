@@ -55,6 +55,12 @@ Documentation = "https://requestx.readthedocs.io"
 python-source = "python"
 module-name = "requestx._requestx"
 features = ["pyo3/extension-module"]
+# Cross-platform wheel building configuration
+strip = true
+# Ensure compatibility with older glibc versions on Linux
+compatibility = "linux"
+# Build universal2 wheels on macOS for both x86_64 and arm64
+universal2 = true
 
 # Using Python's built-in unittest framework instead of pytest
 # Test discovery: python -m unittest discover tests/ -v
@@ -116,6 +122,9 @@ strict_equality = true
 [dependency-groups]
 dev = [
     "aiohttp>=3.10.11",
+    "black>=24.8.0",
     "httpx>=0.28.1",
+    "mypy>=1.14.1",
     "requests>=2.32.4",
+    "ruff>=0.12.5",
 ]

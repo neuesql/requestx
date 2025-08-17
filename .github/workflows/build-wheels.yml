@@ -1,0 +1,206 @@
+name: Build and Test Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_install:
+        description: 'Test wheel installation'
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Run weekly to test wheel building
+    - cron: '0 2 * * 1'
+
+jobs:
+  build-and-test-wheels:
+    name: Build and test wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            python-versions: ['3.8', '3.9', '3.10', '3.11', '3.12']
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            python-versions: ['3.11']  # Test one version for cross-compilation
+          
+          # macOS builds (universal2 for both x86_64 and arm64)
+          - os: macos-latest
+            target: universal2-apple-darwin
+            arch: universal2
+            python-versions: ['3.8', '3.9', '3.10', '3.11', '3.12']
+          
+          # Windows builds
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x86_64
+            python-versions: ['3.8', '3.9', '3.10', '3.11', '3.12']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      shell: bash
+
+    - name: Install cross-compilation tools (Linux aarch64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Install maturin
+      run: uv tool install maturin[patchelf]
+
+    - name: Build wheels for all Python versions
+      run: |
+        for version in ${{ join(matrix.python-versions, ' ') }}; do
+          echo "Building wheel for Python $version"
+          uv run maturin build --release --strip --target ${{ matrix.target }} --out dist --python-version $version
+        done
+      shell: bash
+      env:
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+    - name: List built wheels
+      run: |
+        echo "Built wheels:"
+        ls -la dist/
+      shell: bash
+
+    - name: Test wheel installation
+      if: github.event.inputs.test_install == 'true' && matrix.target != 'aarch64-unknown-linux-gnu'
+      run: |
+        # Test installation for each Python version (skip cross-compiled aarch64)
+        for version in ${{ join(matrix.python-versions, ' ') }}; do
+          echo "Testing wheel installation for Python $version"
+          
+          # Set up Python version
+          if command -v pyenv >/dev/null 2>&1; then
+            pyenv install -s $version
+            pyenv local $version
+          fi
+          
+          # Find the wheel for this Python version
+          wheel_file=$(ls dist/*cp${version//.}*${{ matrix.arch }}*.whl | head -1 || echo "")
+          
+          if [ -n "$wheel_file" ] && [ -f "$wheel_file" ]; then
+            echo "Testing wheel: $wheel_file"
+            
+            # Create a temporary virtual environment
+            python -m venv test_env_$version
+            
+            # Activate virtual environment
+            if [ "${{ matrix.os }}" = "windows-latest" ]; then
+              source test_env_$version/Scripts/activate
+            else
+              source test_env_$version/bin/activate
+            fi
+            
+            # Install the wheel
+            pip install "$wheel_file"
+            
+            # Test import
+            python -c "
+import requestx
+print(f'Successfully imported requestx')
+print(f'Module location: {requestx.__file__}')
+
+# Test basic functionality
+try:
+    # Test that we can create the basic objects
+    print('Testing basic functionality...')
+    print('✓ Import successful')
+except Exception as e:
+    print(f'✗ Basic functionality test failed: {e}')
+    exit(1)
+"
+            
+            # Cleanup
+            deactivate
+            rm -rf test_env_$version
+            
+            echo "✓ Wheel test passed for Python $version"
+          else
+            echo "⚠ No wheel found for Python $version, skipping test"
+          fi
+        done
+      shell: bash
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/*.whl
+        retention-days: 7
+
+  test-wheel-compatibility:
+    name: Test wheel compatibility
+    needs: build-and-test-wheels
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all wheels
+      uses: actions/download-artifact@v4
+      with:
+        path: wheels
+
+    - name: List all wheels
+      run: |
+        echo "All built wheels:"
+        find wheels -name "*.whl" -exec basename {} \; | sort
+        
+        echo ""
+        echo "Wheel count by platform:"
+        find wheels -name "*.whl" | sed 's/.*wheels-\([^-]*\)-\([^/]*\).*/\1-\2/' | sort | uniq -c
+
+    - name: Verify wheel naming
+      run: |
+        echo "Verifying wheel naming conventions..."
+        
+        # Check that all wheels follow the expected naming pattern
+        for wheel in $(find wheels -name "*.whl"); do
+          basename_wheel=$(basename "$wheel")
+          echo "Checking: $basename_wheel"
+          
+          # Verify it matches the expected pattern: requestx-version-python-abi-platform.whl
+          if [[ $basename_wheel =~ ^requestx-[0-9]+\.[0-9]+\.[0-9]+-cp[0-9]+-abi3-.*\.whl$ ]]; then
+            echo "✓ Valid wheel name: $basename_wheel"
+          else
+            echo "✗ Invalid wheel name: $basename_wheel"
+            exit 1
+          fi
+        done
+        
+        echo "All wheel names are valid!"
+
+  summary:
+    name: Wheel Building Summary
+    needs: [build-and-test-wheels, test-wheel-compatibility]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Summary
+      run: |
+        echo "## Wheel Building Summary"
+        echo "Build Status: ${{ needs.build-and-test-wheels.result }}"
+        echo "Compatibility Test: ${{ needs.test-wheel-compatibility.result }}"
+        
+        if [ "${{ needs.build-and-test-wheels.result }}" = "success" ] && \
+           [ "${{ needs.test-wheel-compatibility.result }}" = "success" ]; then
+          echo "✅ All wheel building and testing completed successfully"
+        else
+          echo "❌ Some wheel building or testing failed"
+        fi

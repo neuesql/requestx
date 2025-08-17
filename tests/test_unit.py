@@ -11,14 +11,14 @@ class TestModuleImport(unittest.TestCase):
     def test_module_import(self):
         """Test that we can import the module successfully."""
         # If we get here, the import worked
-        self.assertTrue(hasattr(requestx, 'get'))
-        self.assertTrue(hasattr(requestx, 'post'))
-        self.assertTrue(hasattr(requestx, 'put'))
-        self.assertTrue(hasattr(requestx, 'delete'))
-        self.assertTrue(hasattr(requestx, 'head'))
-        self.assertTrue(hasattr(requestx, 'options'))
-        self.assertTrue(hasattr(requestx, 'patch'))
-        self.assertTrue(hasattr(requestx, 'request'))
+        self.assertTrue(hasattr(requestx, "get"))
+        self.assertTrue(hasattr(requestx, "post"))
+        self.assertTrue(hasattr(requestx, "put"))
+        self.assertTrue(hasattr(requestx, "delete"))
+        self.assertTrue(hasattr(requestx, "head"))
+        self.assertTrue(hasattr(requestx, "options"))
+        self.assertTrue(hasattr(requestx, "patch"))
+        self.assertTrue(hasattr(requestx, "request"))
 
     def test_session_object_creation(self):
         """Test that Session objects can be created."""
@@ -35,7 +35,7 @@ class TestHTTPMethods(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(response.url)
         self.assertIsInstance(response.headers, dict)
-        
+
         # Test that we can access response content
         text = response.text
         self.assertIsInstance(text, str)
@@ -85,7 +85,7 @@ class TestHTTPMethods(unittest.TestCase):
         # Test GET via generic request method
         response = requestx.request("GET", "https://httpbin.org/get")
         self.assertEqual(response.status_code, 200)
-        
+
         # Test POST via generic request method
         response = requestx.request("POST", "https://httpbin.org/post")
         self.assertEqual(response.status_code, 200)
@@ -97,24 +97,24 @@ class TestResponseObject(unittest.TestCase):
     def test_response_object_properties(self):
         """Test that Response objects have the expected properties."""
         response = requestx.get("https://httpbin.org/get")
-        
+
         # Test status_code property
         self.assertIsInstance(response.status_code, int)
         self.assertEqual(response.status_code, 200)
-        
+
         # Test url property
         self.assertIsInstance(response.url, str)
         self.assertTrue(response.url.startswith("https://"))
-        
+
         # Test headers property
         self.assertIsInstance(response.headers, dict)
         self.assertGreater(len(response.headers), 0)
-        
+
         # Test text property
         text = response.text
         self.assertIsInstance(text, str)
         self.assertGreater(len(text), 0)
-        
+
         # Test content property
         content = response.content
         self.assertIsNotNone(content)
@@ -123,7 +123,7 @@ class TestResponseObject(unittest.TestCase):
         """Test JSON response parsing functionality."""
         response = requestx.get("https://httpbin.org/json")
         self.assertEqual(response.status_code, 200)
-        
+
         # Test that we can parse JSON
         json_data = response.json()
         self.assertIsInstance(json_data, dict)
@@ -133,7 +133,7 @@ class TestResponseObject(unittest.TestCase):
         # Test 404 error
         response = requestx.get("https://httpbin.org/status/404")
         self.assertEqual(response.status_code, 404)
-        
+
         # Test raise_for_status method
         with self.assertRaises(Exception):
             response.raise_for_status()
@@ -159,6 +159,6 @@ class TestErrorHandling(unittest.TestCase):
             requestx.get("https://this-domain-does-not-exist-12345.com")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run the tests
     unittest.main(verbosity=2)

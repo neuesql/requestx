@@ -18,11 +18,11 @@ pub struct Response {
     text_content: Option<String>,
     binary_content: Option<Vec<u8>>,
     encoding: Option<String>,
-    
+
     // Additional fields for requests compatibility
     #[pyo3(get)]
     ok: bool,
-    
+
     #[pyo3(get)]
     reason: String,
 }
@@ -38,7 +38,7 @@ impl Response {
     ) -> Self {
         let ok = status_code < 400;
         let reason = Self::status_code_to_reason(status_code);
-        
+
         Response {
             status_code,
             url,
@@ -71,7 +71,7 @@ impl Response {
         if let Some(ref content) = self.binary_content {
             // Try to detect encoding from headers
             let encoding = self.detect_encoding();
-            
+
             let text = match encoding.as_deref() {
                 Some("utf-8") | None => String::from_utf8_lossy(content).to_string(),
                 Some("latin-1") | Some("iso-8859-1") => {
@@ -83,7 +83,7 @@ impl Response {
                     String::from_utf8_lossy(content).to_string()
                 }
             };
-            
+
             self.text_content = Some(text.clone());
             Ok(text)
         } else {
@@ -289,12 +289,17 @@ impl Response {
             510 => "Not Extended",
             511 => "Network Authentication Required",
             _ => "Unknown",
-        }.to_string()
+        }
+        .to_string()
     }
 
     /// Detect encoding from Content-Type header
     fn detect_encoding(&self) -> Option<String> {
-        if let Some(content_type) = self.headers.get("content-type").or_else(|| self.headers.get("Content-Type")) {
+        if let Some(content_type) = self
+            .headers
+            .get("content-type")
+            .or_else(|| self.headers.get("Content-Type"))
+        {
             // Look for charset parameter in Content-Type header
             if let Some(charset_start) = content_type.find("charset=") {
                 let charset_value = &content_type[charset_start + 8..];
@@ -305,13 +310,13 @@ impl Response {
                     .trim()
                     .trim_matches('"')
                     .to_lowercase();
-                
+
                 if !charset.is_empty() {
                     return Some(charset);
                 }
             }
         }
-        
+
         // Return the explicitly set encoding or None
         self.encoding.clone()
     }

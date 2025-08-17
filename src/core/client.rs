@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use bytes::Bytes;
 use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use hyper_tls::HttpsConnector;
@@ -6,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use base64::prelude::*;
 
 use crate::error::RequestxError;
 
@@ -18,21 +18,22 @@ const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 static GLOBAL_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 // Global shared client for connection pooling
-static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> = OnceLock::new();
+static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
+    OnceLock::new();
 
 fn get_global_runtime() -> &'static Runtime {
     GLOBAL_RUNTIME.get_or_init(|| {
         // Determine optimal worker thread count for concurrent operations
         let worker_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() * 2).min(16).max(4))  // 2x CPU cores, min 4, max 16
-            .unwrap_or(8);  // Default to 8 if can't detect
-            
+            .map(|n| (n.get() * 2).min(16).max(4)) // 2x CPU cores, min 4, max 16
+            .unwrap_or(8); // Default to 8 if can't detect
+
         tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads)           // More threads for better concurrency
-            .max_blocking_threads(512)                // High blocking thread limit
-            .thread_name("requestx-worker")           // Named threads for debugging
-            .thread_stack_size(1024 * 1024)          // 1MB stack size (smaller for more threads)
-            .enable_all()                             // Enable all tokio features
+            .worker_threads(worker_threads) // More threads for better concurrency
+            .max_blocking_threads(512) // High blocking thread limit
+            .thread_name("requestx-worker") // Named threads for debugging
+            .thread_stack_size(1024 * 1024) // 1MB stack size (smaller for more threads)
+            .enable_all() // Enable all tokio features
             .build()
             .expect("Failed to create optimized global tokio runtime")
     })
@@ -42,17 +43,19 @@ fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConn
     GLOBAL_CLIENT.get_or_init(|| {
         let https = HttpsConnector::new();
         Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90))      // Longer idle timeout for better reuse
-            .pool_max_idle_per_host(50)                      // More connections per host
-            .http2_only(false)                               // Allow HTTP/1.1 fallback
-            .http2_initial_stream_window_size(Some(65536))   // Optimize HTTP/2 streams
+            .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for better reuse
+            .pool_max_idle_per_host(50) // More connections per host
+            .http2_only(false) // Allow HTTP/1.1 fallback
+            .http2_initial_stream_window_size(Some(65536)) // Optimize HTTP/2 streams
             .http2_initial_connection_window_size(Some(1048576)) // 1MB connection window
             .build::<_, hyper::Body>(https)
     })
 }
 
 /// Create a custom client with specific SSL verification settings
-fn create_custom_client(verify: bool) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+fn create_custom_client(
+    verify: bool,
+) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
     if verify {
         // For verify=true, just use the default HTTPS connector
         let https = HttpsConnector::new();
@@ -64,20 +67,21 @@ fn create_custom_client(verify: bool) -> Result<Client<HttpsConnector<hyper::cli
             .http2_initial_connection_window_size(Some(1048576))
             .build::<_, hyper::Body>(https));
     }
-    
+
     // For verify=false, create a custom TLS connector that accepts invalid certs
     let mut https_builder = hyper_tls::native_tls::TlsConnector::builder();
     https_builder.danger_accept_invalid_certs(true);
     https_builder.danger_accept_invalid_hostnames(true);
-    
-    let tls_connector = https_builder.build()
+
+    let tls_connector = https_builder
+        .build()
         .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {}", e)))?;
-    
+
     let mut http_connector = hyper::client::HttpConnector::new();
     http_connector.enforce_http(false);
-    
+
     let https_connector = HttpsConnector::from((http_connector, tls_connector.into()));
-    
+
     Ok(Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(50)
@@ -154,7 +158,9 @@ impl RequestxClient {
     }
 
     /// Create a new RequestxClient with custom client configuration
-    pub fn with_custom_client(client: Client<HttpsConnector<hyper::client::HttpConnector>>) -> Result<Self, RequestxError> {
+    pub fn with_custom_client(
+        client: Client<HttpsConnector<hyper::client::HttpConnector>>,
+    ) -> Result<Self, RequestxError> {
         Ok(RequestxClient {
             use_global_client: false,
             custom_client: Some(client),
@@ -215,7 +221,8 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::POST, url));
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::POST, url));
         self.request_async(request_config).await
     }
 
@@ -235,7 +242,8 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::DELETE, url));
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::DELETE, url));
         self.request_async(request_config).await
     }
 
@@ -245,7 +253,8 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::HEAD, url));
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::HEAD, url));
         self.request_async(request_config).await
     }
 
@@ -255,7 +264,8 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::OPTIONS, url));
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::OPTIONS, url));
         self.request_async(request_config).await
     }
 
@@ -265,7 +275,8 @@ impl RequestxClient {
         url: Uri,
         config: Option<RequestConfig>,
     ) -> Result<ResponseData, RequestxError> {
-        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::PATCH, url));
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::PATCH, url));
         self.request_async(request_config).await
     }
 
@@ -282,21 +293,20 @@ impl RequestxClient {
     pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
         // Use the appropriate runtime (custom or global)
         let runtime = self.get_runtime();
-        
+
         // Clone necessary data for the spawned task
         let client = self.get_client().clone();
-        
+
         // Spawn the async task with cloned client
-        let handle = runtime.spawn(async move {
-            Self::execute_request_async(client, config).await
-        });
-        
+        let handle =
+            runtime.spawn(async move { Self::execute_request_async(client, config).await });
+
         // Block on the spawned task handle instead of the runtime directly
-        runtime.block_on(handle).map_err(|e| {
-            RequestxError::RuntimeError(format!("Task execution failed: {}", e))
-        })?
+        runtime
+            .block_on(handle)
+            .map_err(|e| RequestxError::RuntimeError(format!("Task execution failed: {}", e)))?
     }
-    
+
     /// Static method to execute async request with a given client
     async fn execute_request_async(
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
@@ -317,7 +327,7 @@ impl RequestxClient {
                     .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
                     .collect::<Vec<_>>()
                     .join("&");
-                
+
                 if config.url.query().is_some() {
                     url_with_params.push('&');
                 } else {
@@ -325,15 +335,17 @@ impl RequestxClient {
                 }
                 url_with_params.push_str(&query_string);
             }
-            url_with_params.parse::<Uri>().map_err(RequestxError::InvalidUrl)?
+            url_with_params
+                .parse::<Uri>()
+                .map_err(RequestxError::InvalidUrl)?
         } else {
             config.url.clone()
         };
-        
+
         // Build the request more efficiently
         let mut request_builder = Request::builder()
-            .method(&config.method)  // Use reference instead of clone
-            .uri(&final_url);        // Use the final URL with params
+            .method(&config.method) // Use reference instead of clone
+            .uri(&final_url); // Use the final URL with params
 
         // Add headers efficiently
         if let Some(ref headers) = config.headers {
@@ -341,7 +353,7 @@ impl RequestxClient {
                 request_builder = request_builder.header(name, value);
             }
         }
-        
+
         // Add authentication header if provided
         if let Some(ref auth) = config.auth {
             let credentials = format!("{}:{}", auth.0, auth.1);
@@ -352,18 +364,19 @@ impl RequestxClient {
         // Build request body more efficiently
         let body = match (&config.data, &config.json) {
             (Some(RequestData::Text(text)), None) => {
-                Body::from(text.clone())  // Need to clone for lifetime
+                Body::from(text.clone()) // Need to clone for lifetime
             }
             (Some(RequestData::Bytes(bytes)), None) => {
-                Body::from(bytes.clone())  // Need to clone for lifetime
+                Body::from(bytes.clone()) // Need to clone for lifetime
             }
             (Some(RequestData::Form(form)), None) => {
                 // More efficient form encoding with pre-allocated capacity
-                let estimated_size = form.iter()
+                let estimated_size = form
+                    .iter()
                     .map(|(k, v)| k.len() + v.len() + 10) // +10 for encoding overhead
                     .sum::<usize>();
                 let mut form_data = String::with_capacity(estimated_size);
-                
+
                 let mut first = true;
                 for (k, v) in form.iter() {
                     if !first {
@@ -374,7 +387,7 @@ impl RequestxClient {
                     form_data.push_str(&urlencoding::encode(v));
                     first = false;
                 }
-                
+
                 request_builder = request_builder.header("content-type", CONTENT_TYPE_FORM);
                 Body::from(form_data)
             }
@@ -410,18 +423,27 @@ impl RequestxClient {
             Ok(resp) => resp,
             Err(e) => {
                 let error_msg = e.to_string().to_lowercase();
-                
+
                 // Map specific hyper errors to appropriate RequestxError types
                 if error_msg.contains("dns") || error_msg.contains("resolve") {
                     return Err(RequestxError::NetworkError(e));
-                } else if error_msg.contains("connect") || error_msg.contains("connection refused") {
+                } else if error_msg.contains("connect") || error_msg.contains("connection refused")
+                {
                     return Err(RequestxError::NetworkError(e));
                 } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
                     return Err(RequestxError::ConnectTimeout);
-                } else if error_msg.contains("ssl") || error_msg.contains("tls") || error_msg.contains("certificate") {
+                } else if error_msg.contains("ssl")
+                    || error_msg.contains("tls")
+                    || error_msg.contains("certificate")
+                {
                     return Err(RequestxError::SslError(error_msg));
-                } else if error_msg.contains("absolute-form uris") || error_msg.contains("invalid uri") {
-                    return Err(RequestxError::RuntimeError(format!("Invalid URL: {}", error_msg)));
+                } else if error_msg.contains("absolute-form uris")
+                    || error_msg.contains("invalid uri")
+                {
+                    return Err(RequestxError::RuntimeError(format!(
+                        "Invalid URL: {}",
+                        error_msg
+                    )));
                 } else if error_msg.contains("proxy") {
                     return Err(RequestxError::ProxyError(error_msg));
                 } else {
@@ -435,13 +457,13 @@ impl RequestxClient {
             // Follow redirects (up to 10 redirects max)
             let mut redirect_count = 0;
             const MAX_REDIRECTS: u8 = 10;
-            
+
             while response.status().is_redirection() && redirect_count < MAX_REDIRECTS {
                 if let Some(location) = response.headers().get("location") {
                     let location_str = location.to_str().map_err(|_| {
                         RequestxError::RuntimeError("Invalid redirect location header".to_string())
                     })?;
-                    
+
                     // Parse the redirect URL
                     let redirect_url: Uri = if location_str.starts_with("http") {
                         // Absolute URL
@@ -457,20 +479,29 @@ impl RequestxClient {
                         } else {
                             String::new()
                         };
-                        
-                        format!("{}://{}{}{}", base_scheme, base_host, base_port, location_str)
-                            .parse().map_err(|e| {
-                                RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
-                            })?
+
+                        format!(
+                            "{}://{}{}{}",
+                            base_scheme, base_host, base_port, location_str
+                        )
+                        .parse()
+                        .map_err(|e| {
+                            RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
+                        })?
                     };
-                    
+
                     // Create new request for redirect
                     let redirect_request = Request::builder()
                         .method(Method::GET) // Redirects typically use GET
                         .uri(&redirect_url)
                         .body(Body::empty())
-                        .map_err(|e| RequestxError::RuntimeError(format!("Failed to build redirect request: {}", e)))?;
-                    
+                        .map_err(|e| {
+                            RequestxError::RuntimeError(format!(
+                                "Failed to build redirect request: {}",
+                                e
+                            ))
+                        })?;
+
                     // Execute redirect request
                     response = actual_client.request(redirect_request).await?;
                     redirect_count += 1;
@@ -479,7 +510,7 @@ impl RequestxClient {
                     break;
                 }
             }
-            
+
             if redirect_count >= MAX_REDIRECTS {
                 return Err(RequestxError::TooManyRedirects);
             }
@@ -487,8 +518,8 @@ impl RequestxClient {
 
         // Extract response data efficiently
         let status_code = response.status().as_u16();
-        let headers = response.headers().clone();  // This clone is necessary
-        let url = config.url;  // Move instead of clone
+        let headers = response.headers().clone(); // This clone is necessary
+        let url = config.url; // Move instead of clone
 
         // Read response body
         let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -642,7 +673,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url,  // Remove unnecessary clone
+            url, // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,
@@ -674,7 +705,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url,  // Remove unnecessary clone
+            url, // Remove unnecessary clone
             headers: None,
             params: None,
             data: Some(RequestData::Form(form_data)),
@@ -702,7 +733,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::POST,
-            url,  // Remove unnecessary clone
+            url, // Remove unnecessary clone
             headers: None,
             params: None,
             data: Some(RequestData::Text("Hello, World!".to_string())),
@@ -730,7 +761,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::GET,
-            url,  // Remove unnecessary clone
+            url, // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,
@@ -770,7 +801,7 @@ mod tests {
 
         let config = RequestConfig {
             method: Method::GET,
-            url,  // Remove unnecessary clone
+            url, // Remove unnecessary clone
             headers: None,
             params: None,
             data: None,
