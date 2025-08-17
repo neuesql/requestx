@@ -51,10 +51,9 @@ jobs:
         targets: ${{ matrix.target }}
 
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      shell: bash
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
 
     - name: Install cross-compilation tools (Linux aarch64)
       if: matrix.target == 'aarch64-unknown-linux-gnu'
