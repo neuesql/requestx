@@ -1,0 +1,330 @@
+name: Test Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of release test to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+        - full
+        - build-only
+        - validation-only
+  schedule:
+    # Run weekly to ensure release pipeline stays healthy
+    - cron: '0 3 * * 1'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-release-validation:
+    name: Test Release Validation
+    runs-on: ubuntu-latest
+    outputs:
+      can_release: ${{ steps.validation.outputs.can_release }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run release validation tests
+      id: validation
+      run: |
+        echo "Running release pipeline validation tests..."
+        
+        # Run the test script
+        if python scripts/test_release.py --test all; then
+          echo "can_release=true" >> $GITHUB_OUTPUT
+          echo "✅ Release validation passed"
+        else
+          echo "can_release=false" >> $GITHUB_OUTPUT
+          echo "❌ Release validation failed"
+          exit 1
+        fi
+
+  test-wheel-building:
+    name: Test Wheel Building
+    needs: test-release-validation
+    if: github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'build-only'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Test key platforms and architectures
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - os: macos-latest
+            target: universal2-apple-darwin
+            arch: universal2
+            rust_targets: "aarch64-apple-darwin x86_64-apple-darwin"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x86_64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.rust_targets || matrix.target }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install maturin (Linux)
+      if: runner.os == 'Linux'
+      run: uv tool install maturin[patchelf]
+
+    - name: Install maturin (Non-Linux)
+      if: runner.os != 'Linux'
+      run: uv tool install maturin
+
+    - name: Test wheel building
+      run: |
+        echo "Testing wheel building for ${{ matrix.target }}..."
+        
+        # Build wheel
+        uv run maturin build --release --strip --target ${{ matrix.target }} --out dist
+        
+        # Verify wheel was created
+        if ls dist/*.whl 1> /dev/null 2>&1; then
+          echo "✅ Wheel built successfully"
+          ls -la dist/
+        else
+          echo "❌ No wheel file found"
+          exit 1
+        fi
+
+    - name: Test wheel installation
+      if: matrix.target != 'aarch64-unknown-linux-gnu'  # Skip cross-compiled wheels
+      run: |
+        echo "Testing wheel installation..."
+        
+        # Find the wheel file
+        wheel_file=$(ls dist/*.whl | head -1)
+        
+        if [ -n "$wheel_file" ]; then
+          echo "Installing wheel: $wheel_file"
+          
+          # Install in current environment
+          uv run pip install "$wheel_file"
+          
+          # Test import
+          uv run python -c "
+import requestx
+print('✅ Wheel installation test successful')
+print(f'Module location: {requestx.__file__}')
+"
+        else
+          echo "❌ No wheel file to test"
+          exit 1
+        fi
+
+    - name: Upload test wheels
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-wheels-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/*.whl
+        retention-days: 1
+
+  test-source-distribution:
+    name: Test Source Distribution
+    needs: test-release-validation
+    if: github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'build-only'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install maturin
+      run: uv tool install maturin[patchelf]
+
+    - name: Test source distribution building
+      run: |
+        echo "Testing source distribution building..."
+        
+        # Build sdist
+        uv run maturin sdist --out dist
+        
+        # Verify sdist was created
+        if ls dist/*.tar.gz 1> /dev/null 2>&1; then
+          echo "✅ Source distribution built successfully"
+          ls -la dist/
+        else
+          echo "❌ No source distribution file found"
+          exit 1
+        fi
+
+    - name: Upload test sdist
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-sdist
+        path: dist/*.tar.gz
+        retention-days: 1
+
+  test-version-management:
+    name: Test Version Management
+    needs: test-release-validation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Test version consistency
+      run: |
+        echo "Testing version consistency..."
+        
+        # Get versions from both files
+        PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+        
+        echo "pyproject.toml version: $PYPROJECT_VERSION"
+        echo "Cargo.toml version: $CARGO_VERSION"
+        
+        if [ "$PYPROJECT_VERSION" = "$CARGO_VERSION" ]; then
+          echo "✅ Version consistency check passed"
+        else
+          echo "❌ Version mismatch between pyproject.toml and Cargo.toml"
+          exit 1
+        fi
+
+    - name: Test release script functionality
+      run: |
+        echo "Testing release script..."
+        
+        # Test version command
+        python scripts/release.py version
+        
+        # Test changelog generation
+        python scripts/release.py changelog 1.0.0-test
+        
+        echo "✅ Release script tests passed"
+
+  test-github-actions-syntax:
+    name: Test GitHub Actions Syntax
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install actionlint
+      run: |
+        bash <(curl https://raw.githubusercontent.com/rhymond/actionlint/main/scripts/download-actionlint.bash)
+        sudo mv actionlint /usr/local/bin/
+
+    - name: Lint GitHub Actions workflows
+      run: |
+        echo "Linting GitHub Actions workflows..."
+        
+        # Lint all workflow files
+        actionlint .github/workflows/*.yml
+        
+        echo "✅ All workflow files passed syntax validation"
+
+  test-summary:
+    name: Test Summary
+    needs: [test-release-validation, test-wheel-building, test-source-distribution, test-version-management, test-github-actions-syntax]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Download all test artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: test-artifacts
+
+    - name: Generate test summary
+      run: |
+        echo "## 🧪 Release Pipeline Test Summary"
+        echo ""
+        echo "### Test Results:"
+        echo "- **Release Validation**: ${{ needs.test-release-validation.result }}"
+        echo "- **Wheel Building**: ${{ needs.test-wheel-building.result }}"
+        echo "- **Source Distribution**: ${{ needs.test-source-distribution.result }}"
+        echo "- **Version Management**: ${{ needs.test-version-management.result }}"
+        echo "- **GitHub Actions Syntax**: ${{ needs.test-github-actions-syntax.result }}"
+        echo ""
+        
+        # Count artifacts
+        if [ -d "test-artifacts" ]; then
+          wheel_count=$(find test-artifacts -name "*.whl" | wc -l)
+          sdist_count=$(find test-artifacts -name "*.tar.gz" | wc -l)
+          echo "### Build Artifacts:"
+          echo "- **Wheels built**: $wheel_count"
+          echo "- **Source distributions**: $sdist_count"
+          echo ""
+        fi
+        
+        # Overall status
+        if [ "${{ needs.test-release-validation.result }}" = "success" ] && \
+           [ "${{ needs.test-wheel-building.result }}" = "success" ] && \
+           [ "${{ needs.test-source-distribution.result }}" = "success" ] && \
+           [ "${{ needs.test-version-management.result }}" = "success" ] && \
+           [ "${{ needs.test-github-actions-syntax.result }}" = "success" ]; then
+          echo "### ✅ Overall Status: PASS"
+          echo ""
+          echo "The release pipeline is ready for production use!"
+        else
+          echo "### ❌ Overall Status: FAIL"
+          echo ""
+          echo "Some tests failed. Please review the logs and fix issues before releasing."
+          exit 1
+        fi
+
+  # Cleanup test artifacts
+  cleanup:
+    name: Cleanup Test Artifacts
+    needs: test-summary
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Cleanup
+      run: |
+        echo "🧹 Test artifacts will be automatically cleaned up after retention period"
+        echo "This workflow completed at $(date)"
