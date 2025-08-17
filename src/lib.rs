@@ -17,6 +17,36 @@ use error::RequestxError;
 use response::Response;
 use session::Session;
 
+/// Parse and validate URL with comprehensive error handling
+fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
+    // Check for empty URL
+    if url.is_empty() {
+        return Err(RequestxError::UrlRequired.into());
+    }
+    
+    // Check for missing schema
+    if !url.contains("://") {
+        return Err(RequestxError::MissingSchema.into());
+    }
+    
+    // Parse the URL
+    let uri: Uri = url.parse().map_err(|e: hyper::http::uri::InvalidUri| {
+        let error_str = e.to_string();
+        if error_str.contains("scheme") {
+            RequestxError::InvalidSchema(url.to_string())
+        } else {
+            RequestxError::InvalidUrl(e)
+        }
+    })?;
+    
+    // Validate schema
+    match uri.scheme_str() {
+        Some("http") | Some("https") => Ok(uri),
+        Some(scheme) => Err(RequestxError::InvalidSchema(scheme.to_string()).into()),
+        None => Err(RequestxError::MissingSchema.into()),
+    }
+}
+
 
 
 /// Parse kwargs into RequestConfig with comprehensive parameter support
@@ -108,7 +138,7 @@ impl RequestConfigBuilder {
     }
 }
 
-/// Parse headers from Python object
+/// Parse headers from Python object with comprehensive error handling
 fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
     let mut headers = HeaderMap::new();
     
@@ -117,15 +147,17 @@ fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
             let key_str = key.extract::<String>()?;
             let value_str = value.extract::<String>()?;
             
+            // Validate header name
             let header_name = key_str.parse::<hyper::header::HeaderName>()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Invalid header name '{}': {}", key_str, e)
-                ))?;
+                .map_err(|e| {
+                    RequestxError::InvalidHeader(format!("Invalid header name '{}': {}", key_str, e))
+                })?;
             
+            // Validate header value
             let header_value = value_str.parse::<hyper::header::HeaderValue>()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Invalid header value '{}': {}", value_str, e)
-                ))?;
+                .map_err(|e| {
+                    RequestxError::InvalidHeader(format!("Invalid header value '{}': {}", value_str, e))
+                })?;
             
             headers.insert(header_name, header_value);
         }
@@ -191,21 +223,23 @@ fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
     })
 }
 
-/// Parse timeout from Python object
+/// Parse timeout from Python object with comprehensive validation
 fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
     if let Ok(seconds) = timeout_obj.extract::<f64>() {
         if seconds < 0.0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Timeout must be non-negative"
-            ));
+            return Err(RequestxError::RuntimeError("Timeout must be non-negative".to_string()).into());
+        }
+        if seconds > 3600.0 {  // 1 hour max
+            return Err(RequestxError::RuntimeError("Timeout too large (max 3600 seconds)".to_string()).into());
         }
         Ok(Duration::from_secs_f64(seconds))
     } else if let Ok(seconds) = timeout_obj.extract::<u64>() {
+        if seconds > 3600 {  // 1 hour max
+            return Err(RequestxError::RuntimeError("Timeout too large (max 3600 seconds)".to_string()).into());
+        }
         Ok(Duration::from_secs(seconds))
     } else {
-        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Timeout must be a number"
-        ))
+        Err(RequestxError::RuntimeError("Timeout must be a number".to_string()).into())
     }
 }
 
@@ -230,9 +264,7 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
 /// HTTP GET request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::GET, uri);
     
@@ -251,9 +283,7 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 /// HTTP POST request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::POST, uri);
     
@@ -272,9 +302,7 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 /// HTTP PUT request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PUT, uri);
     
@@ -293,9 +321,7 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 /// HTTP DELETE request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::DELETE, uri);
     
@@ -314,9 +340,7 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
 /// HTTP HEAD request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::HEAD, uri);
     
@@ -335,9 +359,7 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 /// HTTP OPTIONS request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::OPTIONS, uri);
     
@@ -356,9 +378,7 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
 /// HTTP PATCH request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PATCH, uri);
     
@@ -392,9 +412,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
         _ => return Err(RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into()),
     };
     
-    let uri: Uri = url.parse().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
-    })?;
+    let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(method, uri);
     
@@ -412,7 +430,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
 
 /// RequestX Python module
 #[pymodule]
-fn _requestx(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _requestx(py: Python, m: &PyModule) -> PyResult<()> {
     // Register HTTP method functions
     m.add_function(wrap_pyfunction!(get, m)?)?;
     m.add_function(wrap_pyfunction!(post, m)?)?;
@@ -426,6 +444,9 @@ fn _requestx(_py: Python, m: &PyModule) -> PyResult<()> {
     // Register classes
     m.add_class::<Response>()?;
     m.add_class::<Session>()?;
+
+    // Register custom exceptions
+    error::register_exceptions(py, m)?;
 
     Ok(())
 }

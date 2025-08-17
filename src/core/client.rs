@@ -339,7 +339,10 @@ impl RequestxClient {
 
         // Execute the request with optional timeout
         let mut response = if let Some(timeout) = config.timeout {
-            tokio::time::timeout(timeout, client.request(request)).await?
+            match tokio::time::timeout(timeout, client.request(request)).await {
+                Ok(result) => result,
+                Err(_) => return Err(RequestxError::ReadTimeout), // Timeout elapsed
+            }
         } else {
             client.request(request).await
         };
@@ -348,11 +351,24 @@ impl RequestxClient {
         let mut response = match response {
             Ok(resp) => resp,
             Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("absolute-form URIs") || error_msg.contains("invalid uri") {
+                let error_msg = e.to_string().to_lowercase();
+                
+                // Map specific hyper errors to appropriate RequestxError types
+                if error_msg.contains("dns") || error_msg.contains("resolve") {
+                    return Err(RequestxError::NetworkError(e));
+                } else if error_msg.contains("connect") || error_msg.contains("connection refused") {
+                    return Err(RequestxError::NetworkError(e));
+                } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                    return Err(RequestxError::ConnectTimeout);
+                } else if error_msg.contains("ssl") || error_msg.contains("tls") || error_msg.contains("certificate") {
+                    return Err(RequestxError::SslError(error_msg));
+                } else if error_msg.contains("absolute-form uris") || error_msg.contains("invalid uri") {
                     return Err(RequestxError::RuntimeError(format!("Invalid URL: {}", error_msg)));
+                } else if error_msg.contains("proxy") {
+                    return Err(RequestxError::ProxyError(error_msg));
+                } else {
+                    return Err(RequestxError::NetworkError(e));
                 }
-                return Err(RequestxError::NetworkError(e));
             }
         };
 
@@ -407,7 +423,7 @@ impl RequestxClient {
             }
             
             if redirect_count >= MAX_REDIRECTS {
-                return Err(RequestxError::RuntimeError("Too many redirects".to_string()));
+                return Err(RequestxError::TooManyRedirects);
             }
         }
 
