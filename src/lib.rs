@@ -1,10 +1,10 @@
 use hyper::{HeaderMap, Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_asyncio::tokio::future_into_py;
+
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+
 use std::time::Duration;
 
 mod core;
@@ -17,15 +17,7 @@ use error::RequestxError;
 use response::Response;
 use session::Session;
 
-// Global shared client instance for optimal performance
-static GLOBAL_CLIENT: OnceLock<RequestxClient> = OnceLock::new();
 
-/// Get the global RequestxClient instance
-fn get_global_client() -> &'static RequestxClient {
-    GLOBAL_CLIENT.get_or_init(|| {
-        RequestxClient::new().expect("Failed to create global RequestxClient")
-    })
-}
 
 /// Parse kwargs into RequestConfig with comprehensive parameter support
 fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBuilder> {
@@ -217,15 +209,7 @@ fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
     }
 }
 
-/// Check if we're in an async context by looking for a running event loop
-fn is_async_context(py: Python) -> PyResult<bool> {
-    // Try to get the running event loop
-    let asyncio = py.import("asyncio")?;
-    match asyncio.call_method0("get_running_loop") {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
-}
+
 
 /// Convert ResponseData to Python Response object
 fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Response> {
@@ -243,7 +227,7 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
     ))
 }
 
-/// HTTP GET request with async/sync context detection
+/// HTTP GET request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -252,26 +236,19 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::GET, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP POST request with async/sync context detection
+/// HTTP POST request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -280,26 +257,19 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::POST, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP PUT request with async/sync context detection
+/// HTTP PUT request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -308,26 +278,19 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PUT, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP DELETE request with async/sync context detection
+/// HTTP DELETE request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -336,26 +299,19 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::DELETE, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP HEAD request with async/sync context detection
+/// HTTP HEAD request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -364,26 +320,19 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::HEAD, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP OPTIONS request with async/sync context detection
+/// HTTP OPTIONS request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -392,26 +341,19 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::OPTIONS, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// HTTP PATCH request with async/sync context detection
+/// HTTP PATCH request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     let uri: Uri = url.parse().map_err(|e| {
@@ -420,26 +362,19 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PATCH, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
-/// Generic HTTP request with async/sync context detection
+/// Generic HTTP request with enhanced async/sync context detection
 #[pyfunction(signature = (method, url, /, **kwargs))]
 fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
     // Validate HTTP method - only allow standard methods
@@ -463,23 +398,16 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(method, uri);
     
-    // Check if we're in an async context
-    if is_async_context(py)? {
-        // Return a coroutine for async usage
-        let future = async move {
-            let client = RequestxClient::new()?;
-            let response_data = client.request_async(config).await?;
-            response_data_to_py_response(response_data)
-        };
-        
-        Ok(future_into_py(py, future)?.into())
-    } else {
-        // Execute synchronously
-        let client = get_global_client();
-        let response_data = client.request_sync(config)?;
-        let response = response_data_to_py_response(response_data)?;
-        Ok(response.into_py(py))
-    }
+    // Use enhanced runtime management for context detection and execution
+    let runtime_manager = core::runtime::get_global_runtime_manager();
+    
+    let future = async move {
+        let client = RequestxClient::new()?;
+        let response_data = client.request_async(config).await?;
+        response_data_to_py_response(response_data)
+    };
+    
+    runtime_manager.execute_future(py, future)
 }
 
 /// RequestX Python module
