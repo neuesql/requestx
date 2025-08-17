@@ -34,6 +34,7 @@ jobs:
           - os: macos-latest
             target: universal2-apple-darwin
             arch: universal2
+            rust_targets: "aarch64-apple-darwin x86_64-apple-darwin"
             python-versions: ['3.8', '3.9', '3.10', '3.11', '3.12']
           
           # Windows builds
@@ -48,7 +49,7 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: ${{ matrix.target }}
+        targets: ${{ matrix.rust_targets || matrix.target }}
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
