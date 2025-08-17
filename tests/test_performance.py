@@ -484,9 +484,16 @@ class TestBenchmarkComparison(unittest.TestCase):
         async def run_async_benchmarks():
             results = {}
             
-            # Note: RequestX doesn't have native async support yet
-            # Skipping RequestX async test as it's a synchronous library
-            print("RequestX async not yet implemented - skipping async test for RequestX")
+            # Test RequestX async (now available!)
+            async def requestx_async_get(url):
+                return await requestx.get(url)
+            
+            try:
+                results['requestx_async'] = await self.benchmark_runner.measure_async_performance(
+                    requestx_async_get, 'requestx_async', self.test_urls[:5]
+                )
+            except Exception as e:
+                print(f"RequestX async test failed: {e}")
             
             # Test httpx async (if available)
             if HAS_HTTPX:
@@ -574,7 +581,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         for method, func, url in methods_and_funcs:
             try:
                 metrics = self.benchmark_runner.measure_sync_performance(
-                    lambda u: func(u), f'requestx_{method}', [url] * 3
+                    lambda u: func(u), f'{method}', [url] * 3
                 )
                 results[method] = metrics
             except Exception as e:
@@ -587,15 +594,110 @@ class TestBenchmarkComparison(unittest.TestCase):
             for method, metrics in results.items():
                 self.assertGreaterEqual(metrics.success_rate, 0.5, f"{method} had low success rate")
 
+    def test_requestx_async_vs_sync_comprehensive(self):
+        """Comprehensive comparison of RequestX async vs sync performance."""
+        print(f"\n=== RequestX Comprehensive Async vs Sync Analysis ===")
+        
+        test_scenarios = [
+            ("Single Request", ["http://localhost:8000/get"]),
+            ("Multiple Sequential", ["http://localhost:8000/get"] * 5),
+            ("JSON Processing", ["http://localhost:8000/json"] * 3),
+            ("Mixed Methods", [
+                "http://localhost:8000/get",
+                "http://localhost:8000/post", 
+                "http://localhost:8000/put"
+            ])
+        ]
+        
+        for scenario_name, urls in test_scenarios:
+            print(f"\n--- {scenario_name} Scenario ---")
+            results = {}
+            
+            # Test sync version
+            try:
+                results[f'requestx_sync_{scenario_name.lower().replace(" ", "_")}'] = \
+                    self.benchmark_runner.measure_sync_performance(
+                        requestx.get, f'requestx_sync', urls
+                    )
+            except Exception as e:
+                print(f"Sync test failed for {scenario_name}: {e}")
+            
+            # Test async version
+            async def run_async_scenario():
+                async def requestx_async_get(url):
+                    return await requestx.get(url)
+                
+                try:
+                    return await self.benchmark_runner.measure_async_performance(
+                        requestx_async_get, f'requestx_async', urls
+                    )
+                except Exception as e:
+                    print(f"Async test failed for {scenario_name}: {e}")
+                    return None
+            
+            try:
+                async_result = asyncio.run(run_async_scenario())
+                if async_result:
+                    results[f'requestx_async_{scenario_name.lower().replace(" ", "_")}'] = async_result
+            except Exception as e:
+                print(f"Async test execution failed for {scenario_name}: {e}")
+            
+            if len(results) == 2:
+                self.benchmark_runner.print_comparison_table(results, f"{scenario_name} - Sync vs Async")
+                
+                # Analyze performance characteristics
+                sync_key = [k for k in results.keys() if 'sync' in k][0]
+                async_key = [k for k in results.keys() if 'async' in k][0]
+                
+                sync_metrics = results[sync_key]
+                async_metrics = results[async_key]
+                
+                print(f"\n{scenario_name} Analysis:")
+                print(f"  Sync:  {sync_metrics.requests_per_second:.1f} RPS, {sync_metrics.average_response_time:.1f}ms avg")
+                print(f"  Async: {async_metrics.requests_per_second:.1f} RPS, {async_metrics.average_response_time:.1f}ms avg")
+                
+                if sync_metrics.requests_per_second > 0:
+                    rps_improvement = ((async_metrics.requests_per_second - sync_metrics.requests_per_second) / sync_metrics.requests_per_second) * 100
+                    print(f"  Async RPS improvement: {rps_improvement:+.1f}%")
+                
+                if sync_metrics.average_response_time > 0:
+                    time_improvement = ((sync_metrics.average_response_time - async_metrics.average_response_time) / sync_metrics.average_response_time) * 100
+                    print(f"  Async time improvement: {time_improvement:+.1f}%")
+            
+            # Verify both versions work
+            for name, metrics in results.items():
+                self.assertGreater(metrics.requests_per_second, 0, f"{name} had zero RPS")
+                self.assertGreaterEqual(metrics.success_rate, 0.8, f"{name} had low success rate")
+
     def test_memory_efficiency_comparison(self):
         """Compare memory efficiency across different libraries."""
         test_urls = ["http://localhost:8000/json"] * 5  # JSON responses for memory testing
         results = {}
         
-        # Test RequestX memory usage
+        # Test RequestX sync memory usage
         results['requestx'] = self.benchmark_runner.measure_sync_performance(
             requestx.get, 'requestx', test_urls
         )
+        
+        # Test RequestX async memory usage
+        async def test_requestx_async_memory():
+            async def requestx_async_get(url):
+                return await requestx.get(url)
+            
+            try:
+                return await self.benchmark_runner.measure_async_performance(
+                    requestx_async_get, 'requestx_async', test_urls
+                )
+            except Exception as e:
+                print(f"RequestX async memory test failed: {e}")
+                return None
+        
+        try:
+            async_result = asyncio.run(test_requestx_async_memory())
+            if async_result:
+                results['requestx_async'] = async_result
+        except Exception as e:
+            print(f"RequestX async memory test execution failed: {e}")
         
         # Test requests memory usage (if available)
         if HAS_REQUESTS:
@@ -891,6 +993,130 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
                         library_name = name.split('_c')[0]
                         print(f"  {library_name:<10}: {metrics.requests_per_second:>8.1f} RPS, "
                               f"{metrics.average_response_time:>6.1f}ms, {metrics.success_rate:>6.1%} success")
+
+    def test_async_concurrency_comparison(self):
+        """Compare async HTTP libraries with true concurrent execution."""
+        async def run_async_concurrency_test():
+            print(f"\n=== Async Concurrency Comparison ===")
+            
+            results = {}
+            test_urls = [self.test_url] * 20  # 20 concurrent requests
+            
+            # Test RequestX async concurrency
+            async def requestx_async_get(url):
+                return await requestx.get(url)
+            
+            try:
+                results['requestx_async'] = await self.benchmark_runner.measure_async_performance(
+                    requestx_async_get, 'requestx_async', test_urls
+                )
+            except Exception as e:
+                print(f"RequestX async concurrency test failed: {e}")
+            
+            # Test httpx async concurrency (if available)
+            if HAS_HTTPX:
+                async def httpx_async_get(url):
+                    async with httpx.AsyncClient() as client:
+                        return await client.get(url)
+                
+                try:
+                    results['httpx_async'] = await self.benchmark_runner.measure_async_performance(
+                        httpx_async_get, 'httpx_async', test_urls
+                    )
+                except Exception as e:
+                    print(f"HTTPX async concurrency test failed: {e}")
+            
+            # Test aiohttp concurrency (if available)
+            if HAS_AIOHTTP:
+                async def aiohttp_get(url):
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url) as response:
+                            return response
+                
+                try:
+                    results['aiohttp'] = await self.benchmark_runner.measure_async_performance(
+                        aiohttp_get, 'aiohttp', test_urls
+                    )
+                except Exception as e:
+                    print(f"aiohttp concurrency test failed: {e}")
+            
+            if results:
+                self.benchmark_runner.print_comparison_table(results, "Async Concurrency Performance")
+                
+                # Verify all async libraries handled concurrency well
+                for name, metrics in results.items():
+                    self.assertGreater(metrics.requests_per_second, 0, f"{name} had zero RPS")
+                    self.assertGreaterEqual(metrics.success_rate, 0.7, f"{name} had low success rate: {metrics.success_rate}")
+            
+            return results
+        
+        # Run async concurrency test
+        try:
+            results = asyncio.run(run_async_concurrency_test())
+        except Exception as e:
+            print(f"Async concurrency test failed: {e}")
+
+    def test_sync_vs_async_requestx_comparison(self):
+        """Compare RequestX sync vs async performance."""
+        print(f"\n=== RequestX Sync vs Async Comparison ===")
+        
+        results = {}
+        test_urls = [self.test_url] * 10
+        
+        # Test RequestX sync
+        try:
+            results['requestx_sync'] = self.benchmark_runner.measure_sync_performance(
+                requestx.get, 'requestx_sync', test_urls
+            )
+        except Exception as e:
+            print(f"RequestX sync test failed: {e}")
+        
+        # Test RequestX async
+        async def run_requestx_async_test():
+            async def requestx_async_get(url):
+                return await requestx.get(url)
+            
+            try:
+                return await self.benchmark_runner.measure_async_performance(
+                    requestx_async_get, 'requestx_async', test_urls
+                )
+            except Exception as e:
+                print(f"RequestX async test failed: {e}")
+                return None
+        
+        try:
+            async_result = asyncio.run(run_requestx_async_test())
+            if async_result:
+                results['requestx_async'] = async_result
+        except Exception as e:
+            print(f"RequestX async test execution failed: {e}")
+        
+        if results:
+            self.benchmark_runner.print_comparison_table(results, "RequestX Sync vs Async Performance")
+            
+            # Both should perform well
+            for name, metrics in results.items():
+                self.assertGreater(metrics.requests_per_second, 0, f"{name} had zero RPS")
+                self.assertGreaterEqual(metrics.success_rate, 0.8, f"{name} had low success rate: {metrics.success_rate}")
+            
+            # Analyze the performance difference
+            if 'requestx_sync' in results and 'requestx_async' in results:
+                sync_rps = results['requestx_sync'].requests_per_second
+                async_rps = results['requestx_async'].requests_per_second
+                
+                if sync_rps > 0:
+                    performance_diff = ((async_rps - sync_rps) / sync_rps) * 100
+                    print(f"\nRequestX Async vs Sync Performance:")
+                    print(f"  Sync RPS:  {sync_rps:.1f}")
+                    print(f"  Async RPS: {async_rps:.1f}")
+                    print(f"  Difference: {performance_diff:+.1f}%")
+                    
+                    if performance_diff > 10:
+                        print("  → Async shows significant performance advantage")
+                    elif performance_diff < -10:
+                        print("  → Sync shows significant performance advantage")
+                    else:
+                        print("  → Performance is comparable between sync and async")
 
 
 if __name__ == '__main__':
