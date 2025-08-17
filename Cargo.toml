@@ -14,7 +14,7 @@ name = "requestx"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "^0.20", features = ["extension-module", "abi3-py38"] }
 pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5"
