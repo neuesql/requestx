@@ -91,9 +91,9 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
 
     - name: Install maturin
       run: uv tool install maturin[patchelf]
@@ -102,7 +102,7 @@ jobs:
       run: uv run maturin sdist --out dist
 
     - name: Upload sdist
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: sdist
         path: dist
