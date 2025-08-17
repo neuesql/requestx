@@ -104,7 +104,12 @@ jobs:
         version: "latest"
 
     - name: Install maturin
-      run: uv tool install maturin[patchelf]
+      run: |
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          uv tool install maturin[patchelf]
+        else
+          uv tool install maturin
+        fi
 
     - name: Build wheels (Linux)
       if: matrix.os == 'ubuntu-latest'
