@@ -434,6 +434,22 @@ impl Default for RequestxClient {
     }
 }
 
+impl Clone for RequestxClient {
+    fn clone(&self) -> Self {
+        if self.use_global_client {
+            // For global client usage, just create a new instance
+            RequestxClient::new().expect("Failed to clone RequestxClient")
+        } else if let Some(ref custom_client) = self.custom_client {
+            // For custom client, create a new instance with the same client
+            RequestxClient::with_custom_client(custom_client.clone())
+                .expect("Failed to clone RequestxClient with custom client")
+        } else {
+            // Fallback to default
+            RequestxClient::new().expect("Failed to clone RequestxClient")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
