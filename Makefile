@@ -143,11 +143,33 @@ test-performance: build-dev ## Run performance tests (CI stage 6)
 	fi
 	@echo "$(GREEN)Performance tests complete!$(RESET)"
 
+test-comprehensive: build-dev ## Run comprehensive test suite (Task 9)
+	@echo "$(BLUE)Running comprehensive test suite...$(RESET)"
+	uv run python tests/test_final_suite.py
+	@echo "$(GREEN)Comprehensive test suite complete!$(RESET)"
+
+test-all-modules: build-dev ## Run all test modules with summary
+	@echo "$(BLUE)Running all test modules...$(RESET)"
+	uv run python tests/run_all_tests.py
+	@echo "$(GREEN)All test modules complete!$(RESET)"
+
+test-coverage: build-dev ## Run tests with coverage measurement
+	@echo "$(BLUE)Running tests with coverage measurement...$(RESET)"
+	@if [ -f tests/test_coverage.py ]; then \
+		uv run python tests/test_coverage.py --run-with-coverage; \
+	else \
+		echo "$(YELLOW)Coverage tests not available$(RESET)"; \
+	fi
+	@echo "$(GREEN)Coverage tests complete!$(RESET)"
+
 test: test-rust test-python ## Run all tests
 	@echo "$(GREEN)All tests complete!$(RESET)"
 
-test-all: test test-integration test-performance ## Run all tests including integration and performance
+test-all: test test-integration test-performance test-comprehensive ## Run all tests including integration and performance
 	@echo "$(GREEN)All tests (including integration and performance) complete!$(RESET)"
+
+test-task9: test-comprehensive test-all-modules ## Run Task 9 comprehensive test suite
+	@echo "$(GREEN)Task 9 comprehensive test suite complete!$(RESET)"
 
 # =============================================================================
 # Documentation
