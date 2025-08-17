@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use base64::prelude::*;
 
 use crate::error::RequestxError;
 
@@ -50,6 +51,42 @@ fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConn
     })
 }
 
+/// Create a custom client with specific SSL verification settings
+fn create_custom_client(verify: bool) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+    if verify {
+        // For verify=true, just use the default HTTPS connector
+        let https = HttpsConnector::new();
+        return Ok(Client::builder()
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(50)
+            .http2_only(false)
+            .http2_initial_stream_window_size(Some(65536))
+            .http2_initial_connection_window_size(Some(1048576))
+            .build::<_, hyper::Body>(https));
+    }
+    
+    // For verify=false, create a custom TLS connector that accepts invalid certs
+    let mut https_builder = hyper_tls::native_tls::TlsConnector::builder();
+    https_builder.danger_accept_invalid_certs(true);
+    https_builder.danger_accept_invalid_hostnames(true);
+    
+    let tls_connector = https_builder.build()
+        .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {}", e)))?;
+    
+    let mut http_connector = hyper::client::HttpConnector::new();
+    http_connector.enforce_http(false);
+    
+    let https_connector = HttpsConnector::from((http_connector, tls_connector.into()));
+    
+    Ok(Client::builder()
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(50)
+        .http2_only(false)
+        .http2_initial_stream_window_size(Some(65536))
+        .http2_initial_connection_window_size(Some(1048576))
+        .build::<_, hyper::Body>(https_connector))
+}
+
 /// Request configuration for HTTP requests
 #[derive(Debug, Clone)]
 pub struct RequestConfig {
@@ -62,6 +99,10 @@ pub struct RequestConfig {
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
     pub verify: bool,
+    pub cert: Option<String>,
+    pub proxies: Option<HashMap<String, String>>,
+    pub auth: Option<(String, String)>,
+    pub stream: bool,
 }
 
 /// Request data types
@@ -151,6 +192,10 @@ impl RequestxClient {
             timeout: None,
             allow_redirects: Self::DEFAULT_ALLOW_REDIRECTS,
             verify: Self::DEFAULT_VERIFY,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         }
     }
 
@@ -257,6 +302,12 @@ impl RequestxClient {
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
+        // Use custom client only if SSL verification is disabled
+        let actual_client = if !config.verify {
+            create_custom_client(false)?
+        } else {
+            client
+        };
         // Build URL with query parameters if provided
         let final_url = if let Some(ref params) = config.params {
             let mut url_with_params = config.url.to_string();
@@ -289,6 +340,13 @@ impl RequestxClient {
             for (name, value) in headers.iter() {
                 request_builder = request_builder.header(name, value);
             }
+        }
+        
+        // Add authentication header if provided
+        if let Some(ref auth) = config.auth {
+            let credentials = format!("{}:{}", auth.0, auth.1);
+            let encoded = BASE64_STANDARD.encode(credentials.as_bytes());
+            request_builder = request_builder.header("authorization", format!("Basic {}", encoded));
         }
 
         // Build request body more efficiently
@@ -339,12 +397,12 @@ impl RequestxClient {
 
         // Execute the request with optional timeout
         let mut response = if let Some(timeout) = config.timeout {
-            match tokio::time::timeout(timeout, client.request(request)).await {
+            match tokio::time::timeout(timeout, actual_client.request(request)).await {
                 Ok(result) => result,
                 Err(_) => return Err(RequestxError::ReadTimeout), // Timeout elapsed
             }
         } else {
-            client.request(request).await
+            actual_client.request(request).await
         };
 
         // Handle specific hyper errors and convert them to appropriate RequestxError types
@@ -414,7 +472,7 @@ impl RequestxClient {
                         .map_err(|e| RequestxError::RuntimeError(format!("Failed to build redirect request: {}", e)))?;
                     
                     // Execute redirect request
-                    response = client.request(redirect_request).await?;
+                    response = actual_client.request(redirect_request).await?;
                     redirect_count += 1;
                 } else {
                     // No location header, break out of redirect loop
@@ -592,6 +650,10 @@ mod tests {
             timeout: None,
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         };
 
         let result = client.request_async(config).await;
@@ -620,6 +682,10 @@ mod tests {
             timeout: None,
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         };
 
         let result = client.request_async(config).await;
@@ -644,6 +710,10 @@ mod tests {
             timeout: None,
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         };
 
         let result = client.request_async(config).await;
@@ -668,6 +738,10 @@ mod tests {
             timeout: Some(Duration::from_secs(1)), // 1 second timeout for 5 second delay
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         };
 
         let result = client.request_async(config).await;
@@ -675,7 +749,7 @@ mod tests {
 
         // Should be a timeout error
         match result.unwrap_err() {
-            RequestxError::TimeoutError(_) => (),
+            RequestxError::ReadTimeout => (),
             _ => panic!("Expected timeout error"),
         }
     }
@@ -704,6 +778,10 @@ mod tests {
             timeout: None,
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         };
 
         let result = client.request_sync(config);

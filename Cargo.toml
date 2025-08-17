@@ -27,6 +27,7 @@ url = "2.0"
 urlencoding = "2.1"
 thiserror = "1.0"
 pythonize = "0.20"
+base64 = "0.21"
 
 [build-dependencies]
 pyo3-build-config = "0.20"

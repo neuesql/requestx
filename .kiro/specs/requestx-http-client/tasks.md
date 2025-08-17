@@ -54,7 +54,7 @@
   - Write unit tests for error handling scenarios and exception compatibility
   - _Requirements: 7.2, 1.3_
 
-- [ ] 8. Implement advanced HTTP features with hyper
+- [x] 8. Implement advanced HTTP features with hyper
   - Add support for request parameters, headers, data, and JSON payloads
   - Implement timeout handling using tokio::time::timeout
   - Add redirect control and SSL verification options with hyper-tls

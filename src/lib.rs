@@ -80,8 +80,10 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
         
         // Parse timeout
         if let Some(timeout_obj) = kwargs.get_item("timeout")? {
-            let timeout = parse_timeout(timeout_obj)?;
-            builder.timeout = Some(timeout);
+            if !timeout_obj.is_none() {
+                let timeout = parse_timeout(timeout_obj)?;
+                builder.timeout = Some(timeout);
+            }
         }
         
         // Parse allow_redirects
@@ -92,6 +94,35 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
         // Parse verify
         if let Some(verify_obj) = kwargs.get_item("verify")? {
             builder.verify = verify_obj.is_true()?;
+        }
+        
+        // Parse cert
+        if let Some(cert_obj) = kwargs.get_item("cert")? {
+            if !cert_obj.is_none() {
+                let cert = parse_cert(cert_obj)?;
+                builder.cert = Some(cert);
+            }
+        }
+        
+        // Parse proxies
+        if let Some(proxies_obj) = kwargs.get_item("proxies")? {
+            if !proxies_obj.is_none() {
+                let proxies = parse_proxies(proxies_obj)?;
+                builder.proxies = Some(proxies);
+            }
+        }
+        
+        // Parse auth
+        if let Some(auth_obj) = kwargs.get_item("auth")? {
+            if !auth_obj.is_none() {
+                let auth = parse_auth(auth_obj)?;
+                builder.auth = Some(auth);
+            }
+        }
+        
+        // Parse stream
+        if let Some(stream_obj) = kwargs.get_item("stream")? {
+            builder.stream = stream_obj.is_true()?;
         }
     }
     
@@ -108,6 +139,10 @@ struct RequestConfigBuilder {
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
     pub verify: bool,
+    pub cert: Option<String>,
+    pub proxies: Option<HashMap<String, String>>,
+    pub auth: Option<(String, String)>,
+    pub stream: bool,
 }
 
 impl RequestConfigBuilder {
@@ -120,6 +155,10 @@ impl RequestConfigBuilder {
             timeout: None,
             allow_redirects: true,
             verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
         }
     }
     
@@ -134,6 +173,10 @@ impl RequestConfigBuilder {
             timeout: self.timeout,
             allow_redirects: self.allow_redirects,
             verify: self.verify,
+            cert: self.cert,
+            proxies: self.proxies,
+            auth: self.auth,
+            stream: self.stream,
         }
     }
 }
@@ -153,8 +196,8 @@ fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
                     RequestxError::InvalidHeader(format!("Invalid header name '{}': {}", key_str, e))
                 })?;
             
-            // Validate header value
-            let header_value = value_str.parse::<hyper::header::HeaderValue>()
+            // Validate header value - ensure proper UTF-8 encoding
+            let header_value = hyper::header::HeaderValue::from_str(&value_str)
                 .map_err(|e| {
                     RequestxError::InvalidHeader(format!("Invalid header value '{}': {}", value_str, e))
                 })?;
@@ -241,6 +284,65 @@ fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
     } else {
         Err(RequestxError::RuntimeError("Timeout must be a number".to_string()).into())
     }
+}
+
+/// Parse certificate from Python object
+fn parse_cert(cert_obj: &PyAny) -> PyResult<String> {
+    if let Ok(cert_path) = cert_obj.extract::<String>() {
+        Ok(cert_path)
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Certificate must be a string path"
+        ))
+    }
+}
+
+/// Parse proxies from Python object
+fn parse_proxies(proxies_obj: &PyAny) -> PyResult<HashMap<String, String>> {
+    let mut proxies = HashMap::new();
+    
+    if let Ok(dict) = proxies_obj.downcast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            let protocol = key.extract::<String>()?;
+            let proxy_url = value.extract::<String>()?;
+            
+            // Validate proxy URL format
+            if !proxy_url.contains("://") {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Invalid proxy URL format: {}", proxy_url)
+                ));
+            }
+            
+            proxies.insert(protocol, proxy_url);
+        }
+    } else {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Proxies must be a dictionary"
+        ));
+    }
+    
+    Ok(proxies)
+}
+
+/// Parse authentication from Python object
+fn parse_auth(auth_obj: &PyAny) -> PyResult<(String, String)> {
+    // Try tuple/list first
+    if let Ok(tuple) = auth_obj.extract::<(String, String)>() {
+        return Ok(tuple);
+    }
+    
+    // Try list
+    if let Ok(list) = auth_obj.downcast::<pyo3::types::PyList>() {
+        if list.len() == 2 {
+            let username = list.get_item(0)?.extract::<String>()?;
+            let password = list.get_item(1)?.extract::<String>()?;
+            return Ok((username, password));
+        }
+    }
+    
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "Auth must be a tuple or list of (username, password)"
+    ))
 }
 
 
