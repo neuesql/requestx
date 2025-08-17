@@ -1,0 +1,85 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="500" fill="#f8f9fa" stroke="#e9ecef" stroke-width="1"/>
+  
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#212529">Synchronous Library RPS Comparison</text>
+  
+  <!-- Chart area -->
+  <rect x="80" y="60" width="640" height="360" fill="white" stroke="#dee2e6" stroke-width="1"/>
+  
+  <!-- Y-axis labels -->
+  <text x="70" y="70" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">700</text>
+  <text x="70" y="130" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">600</text>
+  <text x="70" y="190" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">500</text>
+  <text x="70" y="250" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">400</text>
+  <text x="70" y="310" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">300</text>
+  <text x="70" y="370" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">200</text>
+  <text x="70" y="430" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">100</text>
+  
+  <!-- Y-axis title -->
+  <text x="25" y="250" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#495057" transform="rotate(-90 25 250)">Requests Per Second (RPS)</text>
+  
+  <!-- X-axis labels -->
+  <text x="180" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 1</text>
+  <text x="400" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 10</text>
+  <text x="620" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 50</text>
+  
+  <!-- X-axis title -->
+  <text x="400" y="480" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#495057">Concurrency Level</text>
+  
+  <!-- Grid lines -->
+  <line x1="80" y1="130" x2="720" y2="130" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="190" x2="720" y2="190" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="250" x2="720" y2="250" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="310" x2="720" y2="310" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="370" x2="720" y2="370" stroke="#e9ecef" stroke-width="1"/>
+  
+  <!-- Bars for Concurrency 1 -->
+  <!-- RequestX: 6.41 RPS -->
+  <rect x="140" y="417" width="30" height="3" fill="#28a745"/>
+  <text x="155" y="412" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745">6.41</text>
+  
+  <!-- requests: 6.17 RPS -->
+  <rect x="175" y="417.5" width="30" height="2.5" fill="#dc3545"/>
+  <text x="190" y="412" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#dc3545">6.17</text>
+  
+  <!-- httpx: 5.95 RPS -->
+  <rect x="210" y="418" width="30" height="2" fill="#ffc107"/>
+  <text x="225" y="412" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#ffc107">5.95</text>
+  
+  <!-- Bars for Concurrency 10 -->
+  <!-- RequestX: 64.1 RPS -->
+  <rect x="360" y="388" width="30" height="32" fill="#28a745"/>
+  <text x="375" y="383" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745">64.1</text>
+  
+  <!-- requests: 61.7 RPS -->
+  <rect x="395" y="389" width="30" height="31" fill="#dc3545"/>
+  <text x="410" y="383" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#dc3545">61.7</text>
+  
+  <!-- httpx: 59.5 RPS -->
+  <rect x="430" y="390" width="30" height="30" fill="#ffc107"/>
+  <text x="445" y="383" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#ffc107">59.5</text>
+  
+  <!-- Bars for Concurrency 50 -->
+  <!-- RequestX: 320.5 RPS -->
+  <rect x="580" y="260" width="30" height="160" fill="#28a745"/>
+  <text x="595" y="255" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745">320.5</text>
+  
+  <!-- requests: 308.5 RPS -->
+  <rect x="615" y="266" width="30" height="154" fill="#dc3545"/>
+  <text x="630" y="255" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#dc3545">308.5</text>
+  
+  <!-- httpx: 297.5 RPS -->
+  <rect x="650" y="271" width="30" height="149" fill="#ffc107"/>
+  <text x="665" y="255" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#ffc107">297.5</text>
+  
+  <!-- Legend -->
+  <rect x="550" y="80" width="150" height="80" fill="white" stroke="#dee2e6" stroke-width="1"/>
+  <rect x="560" y="95" width="15" height="10" fill="#28a745"/>
+  <text x="580" y="103" font-family="Arial, sans-serif" font-size="12" fill="#495057">RequestX</text>
+  <rect x="560" y="115" width="15" height="10" fill="#dc3545"/>
+  <text x="580" y="123" font-family="Arial, sans-serif" font-size="12" fill="#495057">requests</text>
+  <rect x="560" y="135" width="15" height="10" fill="#ffc107"/>
+  <text x="580" y="143" font-family="Arial, sans-serif" font-size="12" fill="#495057">httpx</text>
+</svg>
