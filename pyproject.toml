@@ -7,7 +7,7 @@ name = "requestx"
 version = "0.1.0"
 description = "High-performance HTTP client for Python with requests-compatible API"
 authors = [
-    {name = "RequestX Team", email = "team@requestx.dev"},
+{name = "RequestX Team", email = "wu.qunfei@gmail.com"},
 ]
 license = {text = "MIT"}
 readme = "README.md"

@@ -199,7 +199,7 @@ Support
 - GitHub Discussions: https://github.com/neuesql/requestx/discussions
 
 **Commercial Support**
-For commercial support, training, or consulting, contact us at support@requestx.dev.
+For commercial support, training, or consulting, contact us at wu.qunfei@gmail.com.
 
 **Community**
 Join our community:

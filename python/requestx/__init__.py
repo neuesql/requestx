@@ -181,7 +181,7 @@ class DependencyWarning(RequestsWarning):
 # Version information
 __version__ = "0.1.0"
 __author__ = "RequestX Team"
-__email__ = "team@requestx.dev"
+__email__ = "wu.qunfei@gmail.com"
 
 # Public API
 __all__ = [
