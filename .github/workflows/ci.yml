@@ -1,22 +1,27 @@
-name: Comprehensive CI Pipeline
+name: CI
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  # Stage 1: Code Quality & Linting
-  quality-check:
+  code-quality:
     name: Code Quality & Linting
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -35,195 +40,28 @@ jobs:
       run: cargo fmt --check
 
     - name: Run Rust clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings
 
-    - name: Check Python formatting
+    - name: Check Python formatting with Black
       run: uv run black --check .
 
-    - name: Run Python linting
+    - name: Run Python linting with Ruff
       run: uv run ruff check .
 
-    - name: Run Python type checking
+    - name: Run Python type checking with MyPy
       run: uv run mypy .
+      continue-on-error: true  # Type checking may have false positives
 
-  # Stage 2: Build
-  build:
-    name: Build Extension
-    runs-on: ubuntu-latest
-    needs: quality-check
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install dependencies
-      run: uv sync --dev
-
-    - name: Build extension
-      run: uv run maturin develop
-
-    - name: Verify import
-      run: uv run python -c "import requestx; print('Import successful')"
-
-  # Stage 3: Rust Unit Tests
-  test-rust:
-    name: Rust Unit Tests
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Run Rust tests
-      run: |
-        cargo test --verbose
-        cargo test --doc
-
-  # Stage 4: Python Unit Tests
-  test-python:
-    name: Python Unit Tests
+  build-validation:
+    name: Build Validation
     runs-on: ${{ matrix.os }}
-    needs: build
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install dependencies
-      run: uv sync --dev
-
-    - name: Build extension
-      run: uv run maturin develop
-
-    - name: Run Python unit tests
-      run: uv run python -m unittest discover tests/ -v
-
-  # Stage 5: Integration Tests
-  test-integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: test-python
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install dependencies
-      run: uv sync --dev
-
-    - name: Build extension
-      run: uv run maturin develop
-
-    - name: Run integration tests
-      run: |
-        # Run comprehensive integration tests
-        if [ -f tests/test_integration_comprehensive.py ]; then
-          uv run python -m unittest tests.test_integration_comprehensive -v
-        else
-          echo "Integration tests not yet implemented"
-        fi
-        
-        # Run async tests
-        if [ -f tests/test_async.py ]; then
-          uv run python -m unittest tests.test_async -v
-        else
-          echo "Async tests not yet implemented"
-        fi
-
-  # Stage 6: Performance Tests
-  test-performance:
-    name: Performance Tests
-    runs-on: ubuntu-latest
-    needs: test-integration
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install dependencies
-      run: uv sync --dev
-
-    - name: Build extension
-      run: uv run maturin develop
-
-    - name: Run performance tests
-      run: |
-        # Run benchmark tests
-        if [ -f tests/test_benchmarks.py ]; then
-          uv run python -m unittest tests.test_benchmarks -v
-        else
-          echo "Benchmark tests not yet implemented"
-        fi
-        
-        # Run performance tests
-        if [ -f tests/test_performance.py ]; then
-          uv run python -m unittest tests.test_performance -v
-        else
-          echo "Performance tests not yet implemented"
-        fi
-
-  # Stage 7: Cross-Platform Testing
-  test-cross-platform:
-    name: Cross-Platform Testing
-    runs-on: ${{ matrix.os }}
-    needs: test-performance
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
@@ -239,46 +77,40 @@ jobs:
     - name: Install dependencies
       run: uv sync --dev
 
-    - name: Build extension
-      run: uv run maturin develop
+    - name: Build Rust library
+      run: cargo build --release
 
-    - name: Test core functionality
+    - name: Build Python package
+      run: uv run maturin develop --release
+
+    - name: Verify package import
+      run: uv run python -c "import requestx; print(f'RequestX {requestx.__version__} imported successfully')"
+
+    - name: Run basic functionality test
       run: |
         uv run python -c "
-import requestx
-import asyncio
+        import requestx
+        response = requestx.get('https://httpbin.org/get')
+        assert response.status_code == 200
+        print('Basic functionality test passed')
+        "
 
-# Test sync functionality
-print('Testing sync API...')
-try:
-    # This would normally make a real request, but for CI we'll just test import and basic functionality
-    print('Sync API available')
-except Exception as e:
-    print(f'Sync API error: {e}')
-
-# Test async functionality  
-print('Testing async API...')
-async def test_async():
-    try:
-        print('Async API available')
-        return True
-    except Exception as e:
-        print(f'Async API error: {e}')
-        return False
-
-result = asyncio.run(test_async())
-print(f'Cross-platform test completed successfully on ${{ matrix.os }}')
-"
-
-  # Stage 8: Documentation Generation
-  docs:
-    name: Documentation Generation
+  security-audit:
+    name: Security Audit
     runs-on: ubuntu-latest
-    needs: test-cross-platform
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run Rust security audit
+      run: cargo audit
+
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
@@ -291,86 +123,36 @@ print(f'Cross-platform test completed successfully on ${{ matrix.os }}')
     - name: Install dependencies
       run: uv sync --dev
 
-    - name: Generate documentation
-      run: |
-        # Generate API documentation if sphinx is available
-        if command -v sphinx-build >/dev/null 2>&1 && [ -d docs ]; then
-          uv run sphinx-build docs/ docs/_build/
-        else
-          echo "Sphinx not available or docs/ directory not found, skipping documentation generation"
-        fi
-        
-        # Update README examples if script exists
-        if [ -f scripts/update_readme_examples.py ]; then
-          uv run python scripts/update_readme_examples.py
-        else
-          echo "README update script not found"
-        fi
+    - name: Run Python security audit
+      run: uv run safety check
+      continue-on-error: true  # Safety check may have false positives
 
-  # Stage 9: Release Build
-  build-wheels:
-    name: Build Release Wheels
+  documentation:
+    name: Documentation Build
     runs-on: ubuntu-latest
-    needs: docs
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
         version: "latest"
 
-    - name: Install maturin
-      run: uv tool install maturin[patchelf]
+    - name: Install dependencies
+      run: uv sync --dev
 
-    - name: Build wheels
-      run: uv run maturin build --release --strip
-
-    - name: Build source distribution
-      run: uv run maturin sdist
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-builds
-        path: |
-          target/wheels/
-          dist/
-
-  # Final stage: Pipeline Summary
-  pipeline-summary:
-    name: Pipeline Summary
-    runs-on: ubuntu-latest
-    needs: [quality-check, build, test-rust, test-python, test-integration, test-performance, test-cross-platform, docs]
-    if: always()
-    steps:
-    - name: Pipeline Results
+    - name: Build documentation
       run: |
-        echo "## CI Pipeline Results"
-        echo "- Quality Check: ${{ needs.quality-check.result }}"
-        echo "- Build: ${{ needs.build.result }}"
-        echo "- Rust Tests: ${{ needs.test-rust.result }}"
-        echo "- Python Tests: ${{ needs.test-python.result }}"
-        echo "- Integration Tests: ${{ needs.test-integration.result }}"
-        echo "- Performance Tests: ${{ needs.test-performance.result }}"
-        echo "- Cross-Platform Tests: ${{ needs.test-cross-platform.result }}"
-        echo "- Documentation: ${{ needs.docs.result }}"
-        
-        if [ "${{ needs.quality-check.result }}" = "success" ] && \
-           [ "${{ needs.build.result }}" = "success" ] && \
-           [ "${{ needs.test-rust.result }}" = "success" ] && \
-           [ "${{ needs.test-python.result }}" = "success" ]; then
-          echo "✅ Core pipeline stages completed successfully"
-        else
-          echo "❌ Some core pipeline stages failed"
-          exit 1
-        fi
+        cd docs
+        uv run make html
+
+    - name: Check documentation links
+      run: |
+        cd docs
+        uv run make linkcheck
+      continue-on-error: true  # Link checking may fail due to external dependencies

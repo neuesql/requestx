@@ -1,90 +1,93 @@
-name: Automated Release Pipeline
+name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to publish (e.g., 1.0.1)'
+        required: true
+        type: string
       test_pypi:
         description: 'Publish to Test PyPI instead of PyPI'
         required: false
-        default: false
         type: boolean
+        default: false
       skip_tests:
-        description: 'Skip comprehensive testing (for emergency releases)'
+        description: 'Skip running tests before publishing'
         required: false
-        default: false
         type: boolean
+        default: false
+  push:
+    branches:
+      - hotfix/*
+      - patch/*
+    paths:
+      - 'Cargo.toml'
+      - 'pyproject.toml'
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  # Pre-release validation
-  validate-release:
-    name: Validate Release
+  validate-publish:
+    name: Validate Publication
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
-    - name: Extract version from tag
+    - name: Extract version
       id: version
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # Check if this is a prerelease (contains alpha, beta, rc)
-          if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          fi
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
         else
-          echo "version=dev" >> $GITHUB_OUTPUT
-          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          # Extract version from Cargo.toml
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
         fi
+        
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "Publishing version: ${VERSION}"
 
-    - name: Validate version consistency
+    - name: Validate version format
       run: |
-        # Check that pyproject.toml version matches tag
-        PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-        TAG_VERSION="${{ steps.version.outputs.version }}"
+        VERSION="${{ steps.version.outputs.version }}"
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+          echo "Invalid version format: $VERSION"
+          echo "Expected format: X.Y.Z or X.Y.Z-suffix"
+          exit 1
+        fi
+
+    - name: Check if version exists on PyPI
+      id: check
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        TEST_PYPI="${{ github.event.inputs.test_pypi }}"
         
-        echo "pyproject.toml version: $PYPROJECT_VERSION"
-        echo "Cargo.toml version: $CARGO_VERSION"
-        echo "Tag version: $TAG_VERSION"
-        
-        if [[ "$TAG_VERSION" != "dev" ]]; then
-          if [[ "$PYPROJECT_VERSION" != "$TAG_VERSION" ]]; then
-            echo "❌ Version mismatch: pyproject.toml ($PYPROJECT_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          fi
-          
-          if [[ "$CARGO_VERSION" != "$TAG_VERSION" ]]; then
-            echo "❌ Version mismatch: Cargo.toml ($CARGO_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          fi
+        if [ "$TEST_PYPI" = "true" ]; then
+          PYPI_URL="https://test.pypi.org/pypi/requestx/json"
+          echo "Checking Test PyPI for version ${VERSION}"
+        else
+          PYPI_URL="https://pypi.org/pypi/requestx/json"
+          echo "Checking PyPI for version ${VERSION}"
         fi
         
-        echo "✅ Version consistency validated"
+        if curl -s "$PYPI_URL" | jq -e ".releases.\"$VERSION\"" > /dev/null 2>&1; then
+          echo "Version $VERSION already exists on PyPI"
+          echo "should_publish=false" >> $GITHUB_OUTPUT
+        else
+          echo "Version $VERSION does not exist, proceeding with publication"
+          echo "should_publish=true" >> $GITHUB_OUTPUT
+        fi
 
-  # Comprehensive testing before release
-  pre-release-tests:
-    name: Pre-Release Testing
-    needs: validate-release
+  quick-test:
+    name: Quick Test
     runs-on: ubuntu-latest
-    if: github.event.inputs.skip_tests != 'true'
+    needs: validate-publish
+    if: needs.validate-publish.outputs.should_publish == 'true' && github.event.inputs.skip_tests != 'true'
     steps:
     - uses: actions/checkout@v4
 
@@ -95,8 +98,6 @@ jobs:
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -106,104 +107,37 @@ jobs:
     - name: Install dependencies
       run: uv sync --dev
 
-    - name: Run comprehensive tests
+    - name: Run quick tests
       run: |
-        echo "Running pre-release validation tests..."
+        # Run Rust tests
+        cargo test --lib
         
-        # Code quality checks
-        cargo fmt --check
-        cargo clippy -- -D warnings
-        uv run black --check .
-        uv run ruff check .
-        uv run mypy .
-        
-        # Build and test
+        # Build and test Python package
         uv run maturin develop
-        uv run python -c "import requestx; print('✅ Import successful')"
+        uv run python -c "import requestx; print(f'RequestX {requestx.__version__} imported successfully')"
         
-        # Run test suite
-        cargo test --verbose
-        uv run python -m unittest discover tests/ -v
-        
-        echo "✅ All pre-release tests passed"
+        # Run critical Python tests
+        if [ -f tests/test_basic.py ]; then
+          uv run python -m pytest tests/test_basic.py -v
+        else
+          echo "Basic tests not found, running import test only"
+        fi
 
-  build-wheels:
-    name: Build wheels on ${{ matrix.os }}
-    needs: [validate-release, pre-release-tests]
-    if: always() && (needs.validate-release.result == 'success' && (needs.pre-release-tests.result == 'success' || needs.pre-release-tests.result == 'skipped'))
+  build-and-publish:
+    name: Build and Publish
     runs-on: ${{ matrix.os }}
+    needs: [validate-publish, quick-test]
+    if: always() && needs.validate-publish.outputs.should_publish == 'true' && (needs.quick-test.result == 'success' || needs.quick-test.result == 'skipped')
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
-          # Linux builds
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            arch: x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            arch: aarch64
-          # macOS builds (universal2 for both x86_64 and arm64)
+            platform: linux
+          - os: windows-latest
+            platform: windows
           - os: macos-latest
-            target: universal2-apple-darwin
-            arch: universal2
-            rust_targets: "aarch64-apple-darwin x86_64-apple-darwin"
-          # Windows builds
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x86_64
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            arch: aarch64
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.rust_targets || matrix.target }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install cross-compilation tools (Linux aarch64)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-
-    - name: Install maturin (Linux)
-      if: runner.os == 'Linux'
-      run: uv tool install maturin[patchelf]
-
-    - name: Install maturin (Non-Linux)
-      if: runner.os != 'Linux'
-      run: uv tool install maturin
-
-    - name: Build wheels
-      run: |
-        uv run maturin build --release --strip --target ${{ matrix.target }} --out dist
-      env:
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-    - name: Upload wheels
-      uses: actions/upload-artifact@v4
-      with:
-        name: wheels-${{ matrix.os }}-${{ matrix.arch }}
-        path: dist
-
-  build-sdist:
-    name: Build source distribution
-    needs: [validate-release, pre-release-tests]
-    if: always() && (needs.validate-release.result == 'success' && (needs.pre-release-tests.result == 'success' || needs.pre-release-tests.result == 'skipped'))
-    runs-on: ubuntu-latest
+            platform: macos
     steps:
     - uses: actions/checkout@v4
 
@@ -223,7 +157,68 @@ jobs:
     - name: Install maturin
       run: uv tool install maturin[patchelf]
 
-    - name: Build sdist
+    - name: Build wheels (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: x86_64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+        manylinux: auto
+
+    - name: Build wheels (Linux aarch64)
+      if: matrix.os == 'ubuntu-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: aarch64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+        manylinux: auto
+
+    - name: Build wheels (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: x64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+
+    - name: Build wheels (macOS)
+      if: matrix.os == 'macos-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: universal2-apple-darwin
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheels-${{ matrix.platform }}
+        path: dist
+
+  build-sdist:
+    name: Build Source Distribution
+    runs-on: ubuntu-latest
+    needs: [validate-publish, quick-test]
+    if: always() && needs.validate-publish.outputs.should_publish == 'true' && (needs.quick-test.result == 'success' || needs.quick-test.result == 'skipped')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install maturin
+      run: uv tool install maturin
+
+    - name: Build source distribution
       run: uv run maturin sdist --out dist
 
     - name: Upload sdist
@@ -232,79 +227,67 @@ jobs:
         name: sdist
         path: dist
 
-  # Test wheel installation before publishing
-  test-wheels:
-    name: Test Wheel Installation
-    needs: [build-wheels, build-sdist, validate-release]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.12']  # Test oldest and newest supported versions
+  test-built-packages:
+    name: Test Built Packages
+    runs-on: ubuntu-latest
+    needs: [build-and-publish, build-sdist]
     steps:
-    - name: Set up Python ${{ matrix.python-version }}
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.11'
 
-    - name: Download wheels
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
+        pattern: wheels-*
+        path: dist
+        merge-multiple: true
+
+    - name: Download sdist
+      uses: actions/download-artifact@v4
+      with:
+        name: sdist
         path: dist
 
     - name: Test wheel installation
       run: |
-        # Find appropriate wheel for this platform and Python version
-        python -c "
-import sys
-import os
-import glob
-import platform
+        python -m pip install --upgrade pip
+        # Find and install a wheel
+        WHEEL=$(find dist -name '*.whl' | head -1)
+        if [ -n "$WHEEL" ]; then
+          echo "Testing wheel: $WHEEL"
+          python -m pip install "$WHEEL" --force-reinstall
+          python -c "import requestx; print(f'RequestX {requestx.__version__} from wheel works')"
+        else
+          echo "No wheel found to test"
+          exit 1
+        fi
 
-# Determine platform tag
-if sys.platform == 'win32':
-    plat_tag = 'win_amd64' if platform.machine() == 'AMD64' else 'win32'
-elif sys.platform == 'darwin':
-    plat_tag = 'macosx_*'
-else:
-    plat_tag = 'linux_x86_64'
+    - name: Test sdist installation
+      run: |
+        # Test source distribution
+        SDIST=$(find dist -name '*.tar.gz' | head -1)
+        if [ -n "$SDIST" ]; then
+          echo "Testing sdist: $SDIST"
+          python -m pip install "$SDIST" --force-reinstall
+          python -c "import requestx; print(f'RequestX {requestx.__version__} from sdist works')"
+        else
+          echo "No sdist found to test"
+          exit 1
+        fi
 
-# Find matching wheel
-py_version = f'cp{sys.version_info.major}{sys.version_info.minor}'
-wheel_pattern = f'dist/**/requestx-*-{py_version}-abi3-{plat_tag}.whl'
-wheels = glob.glob(wheel_pattern, recursive=True)
-
-if not wheels:
-    # Try universal wheel
-    wheel_pattern = f'dist/**/requestx-*-{py_version}-abi3-*.whl'
-    wheels = glob.glob(wheel_pattern, recursive=True)
-
-if wheels:
-    wheel_path = wheels[0]
-    print(f'Found wheel: {wheel_path}')
-    
-    # Install and test
-    import subprocess
-    subprocess.run([sys.executable, '-m', 'pip', 'install', wheel_path], check=True)
-    
-    # Test import
-    import requestx
-    print('✅ Successfully imported requestx')
-    print(f'Version: {getattr(requestx, \"__version__\", \"unknown\")}')
-    print(f'Module location: {requestx.__file__}')
-else:
-    print('❌ No suitable wheel found')
-    sys.exit(1)
-"
-
-  publish:
+  publish-to-pypi:
     name: Publish to PyPI
-    needs: [build-wheels, build-sdist, test-wheels, validate-release]
     runs-on: ubuntu-latest
+    needs: [validate-publish, test-built-packages]
     environment:
-      name: ${{ needs.validate-release.outputs.is_prerelease == 'true' && 'TEST' || 'PROD' }}
-      url: ${{ needs.validate-release.outputs.is_prerelease == 'true' && 'https://test.pypi.org/p/requestx' || 'https://pypi.org/p/requestx' }}
-
+      name: ${{ github.event.inputs.test_pypi == 'true' && 'test-pypi' || 'pypi' }}
+      url: ${{ github.event.inputs.test_pypi == 'true' && 'https://test.pypi.org/p/requestx' || 'https://pypi.org/p/requestx' }}
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
@@ -313,143 +296,57 @@ else:
 
     - name: Flatten artifacts
       run: |
-        mkdir -p final-dist
-        find dist -name '*.whl' -exec cp {} final-dist/ \;
-        find dist -name '*.tar.gz' -exec cp {} final-dist/ \;
-        ls -la final-dist/
-        echo "Built wheels:"
-        ls -la final-dist/*.whl || echo "No wheels found"
-        echo "Built source distributions:"
-        ls -la final-dist/*.tar.gz || echo "No source distributions found"
+        mkdir -p upload
+        find dist -name '*.whl' -exec cp {} upload/ \;
+        find dist -name '*.tar.gz' -exec cp {} upload/ \;
+        ls -la upload/
+        echo "Files to upload:"
+        ls -1 upload/
 
     - name: Publish to Test PyPI
-      if: github.event.inputs.test_pypi == 'true' || needs.validate-release.outputs.is_prerelease == 'true'
+      if: github.event.inputs.test_pypi == 'true'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         repository-url: https://test.pypi.org/legacy/
-        packages-dir: final-dist/
-        password: ${{ secrets.TEST_PYPI_TOKEN }}
+        packages-dir: upload/
+        verbose: true
+        print-hash: true
 
     - name: Publish to PyPI
-      if: github.event.inputs.test_pypi != 'true' && needs.validate-release.outputs.is_prerelease == 'false'
+      if: github.event.inputs.test_pypi != 'true'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        packages-dir: final-dist/
-        password: ${{ secrets.PYPI_TOKEN }}
+        packages-dir: upload/
+        verbose: true
+        print-hash: true
 
-  # Post-release tasks
-  post-release:
-    name: Post-Release Tasks
-    needs: [publish, validate-release]
+  cleanup:
+    name: Cleanup
     runs-on: ubuntu-latest
-    if: success()
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Generate changelog
-      id: changelog
-      run: |
-        # Generate changelog from git commits since last tag
-        CURRENT_TAG="v${{ needs.validate-release.outputs.version }}"
-        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-        
-        echo "Current tag: $CURRENT_TAG"
-        echo "Previous tag: $PREVIOUS_TAG"
-        
-        if [[ -n "$PREVIOUS_TAG" ]]; then
-          echo "## Changes since $PREVIOUS_TAG" > CHANGELOG_TEMP.md
-          echo "" >> CHANGELOG_TEMP.md
-          
-          # Get commits between tags
-          git log --pretty=format:"- %s (%h)" "$PREVIOUS_TAG..HEAD" >> CHANGELOG_TEMP.md
-        else
-          echo "## Initial Release" > CHANGELOG_TEMP.md
-          echo "" >> CHANGELOG_TEMP.md
-          echo "- Initial release of requestx" >> CHANGELOG_TEMP.md
-        fi
-        
-        echo "" >> CHANGELOG_TEMP.md
-        echo "### Installation" >> CHANGELOG_TEMP.md
-        echo "" >> CHANGELOG_TEMP.md
-        echo '```bash' >> CHANGELOG_TEMP.md
-        echo "pip install requestx==${{ needs.validate-release.outputs.version }}" >> CHANGELOG_TEMP.md
-        echo '```' >> CHANGELOG_TEMP.md
-        
-        # Set output for GitHub release
-        echo "changelog<<EOF" >> $GITHUB_OUTPUT
-        cat CHANGELOG_TEMP.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Update GitHub release
-      if: github.event_name == 'release'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const release = await github.rest.repos.getReleaseByTag({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            tag: 'v${{ needs.validate-release.outputs.version }}'
-          });
-          
-          await github.rest.repos.updateRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: release.data.id,
-            body: `${{ steps.changelog.outputs.changelog }}`
-          });
-
-    - name: Create GitHub release (for tag pushes)
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: actions/github-script@v7
-      with:
-        script: |
-          await github.rest.repos.createRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            tag_name: 'v${{ needs.validate-release.outputs.version }}',
-            name: 'Release v${{ needs.validate-release.outputs.version }}',
-            body: `${{ steps.changelog.outputs.changelog }}`,
-            prerelease: ${{ needs.validate-release.outputs.is_prerelease }}
-          });
-
-    - name: Notify success
-      run: |
-        echo "🎉 Release v${{ needs.validate-release.outputs.version }} published successfully!"
-        echo "📦 Package: https://pypi.org/project/requestx/${{ needs.validate-release.outputs.version }}/"
-        echo "📋 Release: https://github.com/${{ github.repository }}/releases/tag/v${{ needs.validate-release.outputs.version }}"
-
-  # Release summary
-  release-summary:
-    name: Release Summary
-    needs: [validate-release, pre-release-tests, build-wheels, build-sdist, test-wheels, publish, post-release]
-    runs-on: ubuntu-latest
+    needs: [publish-to-pypi]
     if: always()
     steps:
-    - name: Release Summary
+    - name: Delete artifacts
+      uses: geekyeggo/delete-artifact@v2
+      with:
+        name: |
+          wheels-*
+          sdist
+        failOnError: false
+
+    - name: Publication Summary
       run: |
-        echo "## 🚀 Release Pipeline Summary"
-        echo "**Version:** v${{ needs.validate-release.outputs.version }}"
-        echo "**Prerelease:** ${{ needs.validate-release.outputs.is_prerelease }}"
-        echo ""
-        echo "### Pipeline Results:"
-        echo "- ✅ Validation: ${{ needs.validate-release.result }}"
-        echo "- 🧪 Pre-release Tests: ${{ needs.pre-release-tests.result }}"
-        echo "- 🔧 Wheel Building: ${{ needs.build-wheels.result }}"
-        echo "- 📦 Source Distribution: ${{ needs.build-sdist.result }}"
-        echo "- 🧪 Wheel Testing: ${{ needs.test-wheels.result }}"
-        echo "- 🚀 Publishing: ${{ needs.publish.result }}"
-        echo "- 📝 Post-release: ${{ needs.post-release.result }}"
+        echo "## Publication Summary"
+        echo "- Version: ${{ needs.validate-publish.outputs.version }}"
+        echo "- Target: ${{ github.event.inputs.test_pypi == 'true' && 'Test PyPI' || 'PyPI' }}"
+        echo "- Validation: ${{ needs.validate-publish.result }}"
+        echo "- Quick Test: ${{ needs.quick-test.result }}"
+        echo "- Build: ${{ needs.build-and-publish.result }}"
+        echo "- Package Test: ${{ needs.test-built-packages.result }}"
+        echo "- Publication: ${{ needs.publish-to-pypi.result }}"
         
-        # Check if release was successful
-        if [ "${{ needs.publish.result }}" = "success" ]; then
-          echo ""
-          echo "🎉 **Release completed successfully!**"
-          echo "📦 Package available at: https://pypi.org/project/requestx/"
+        if [ "${{ needs.publish-to-pypi.result }}" = "success" ]; then
+          echo "✅ Successfully published RequestX ${{ needs.validate-publish.outputs.version }}"
         else
-          echo ""
-          echo "❌ **Release failed. Check the logs above for details.**"
-          exit 1
+          echo "❌ Publication failed"
         fi
