@@ -12,7 +12,6 @@ tests/
 ├── test_unit.py             # Stage 4: Python Unit Tests
 ├── test_integration.py      # Stage 5: Integration Tests  
 ├── test_performance.py      # Stage 6: Performance Tests
-├── run_tests.py            # Custom test runner
 └── README.md               # Detailed test documentation
 ```
 
@@ -68,12 +67,6 @@ uv run python -m unittest tests.test_performance -v
 ```bash
 # Run all tests using unittest discovery
 uv run python -m unittest discover tests/ -v
-```
-
-### Custom Test Runner
-```bash
-# Run with pipeline structure and detailed reporting
-uv run python tests/run_tests.py
 ```
 
 ### Pipeline Script

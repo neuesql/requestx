@@ -138,15 +138,16 @@ test-comprehensive: build-dev ## Run comprehensive test suite (Task 9)
 
 test-all-modules: build-dev ## Run all test modules with summary
 	@echo "$(BLUE)Running all test modules...$(RESET)"
-	uv run python tests/run_all_tests.py
+	uv run python -m unittest discover -s tests -v
 	@echo "$(GREEN)All test modules complete!$(RESET)"
 
 test-coverage: build-dev ## Run tests with coverage measurement
 	@echo "$(BLUE)Running tests with coverage measurement...$(RESET)"
-	@if [ -f tests/test_coverage.py ]; then \
-		uv run python tests/test_coverage.py --run-with-coverage; \
+	@if command -v coverage >/dev/null 2>&1; then \
+		uv run python -m coverage run -m unittest discover tests/ -v && uv run python -m coverage report; \
 	else \
-		echo "$(YELLOW)Coverage tests not available$(RESET)"; \
+		echo "$(YELLOW)Coverage package not available, running tests without coverage$(RESET)"; \
+		uv run python -m unittest discover tests/ -v; \
 	fi
 	@echo "$(GREEN)Coverage tests complete!$(RESET)"
 
@@ -156,7 +157,7 @@ test: test-rust test-python ## Run all tests
 test-all: test test-integration test-performance test-comprehensive ## Run all tests including integration and performance
 	@echo "$(GREEN)All tests (including integration and performance) complete!$(RESET)"
 
-test-task9: test-comprehensive test-all-modules ## Run Task 9 comprehensive test suite
+test-task9: test-comprehensive ## Run Task 9 comprehensive test suite
 	@echo "$(GREEN)Task 9 comprehensive test suite complete!$(RESET)"
 
 test-installation: build-dev ## Test installation process and bundled dependencies (Task 10)

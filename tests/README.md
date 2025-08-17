@@ -23,13 +23,10 @@ The test suite provides comprehensive coverage of all RequestX functionality, en
 - **`test_comprehensive.py`** - Extended comprehensive tests (some features not yet implemented)
 - **`test_integration_comprehensive.py`** - Detailed integration tests with httpbin.org
 
-- **`test_coverage.py`** - Test coverage measurement and reporting
-
 ### Test Runners
 
-- **`run_all_tests.py`** - Simple test runner for all modules
-- **`run_tests.py`** - Advanced test runner following CI/CD pipeline structure
-- **`test_coverage.py --run-with-coverage`** - Coverage measurement runner
+- **`unittest discovery`** - Standard Python unittest discovery for all tests
+- **`coverage`** - Coverage measurement with python -m coverage
 
 ## Requirements Validation
 
@@ -158,7 +155,7 @@ python tests/test_final_suite.py
 make test-all-modules
 
 # Or directly
-python tests/run_all_tests.py
+python -m unittest discover tests/ -v
 ```
 
 ### Specific Test Categories
@@ -182,7 +179,7 @@ python tests/test_error_handling.py
 make test-coverage
 
 # Or directly
-python tests/test_coverage.py --run-with-coverage
+python -m coverage run -m unittest discover tests/ -v && python -m coverage report
 ```
 
 ## Test Results Summary

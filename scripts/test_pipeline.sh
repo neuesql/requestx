@@ -30,11 +30,11 @@ uv run python -m unittest tests.test_integration -v
 
 
 
-# Run all tests using the custom runner
+# Run all tests using unittest discovery
 echo ""
 echo "Running Complete Test Suite"
 echo "----------------------------------------"
-cd tests && uv run python run_tests.py
+cd tests && uv run python -m unittest discover -s . -v
 
 echo ""
 echo "========================================"
