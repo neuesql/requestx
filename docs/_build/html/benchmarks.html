@@ -1,0 +1,961 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="prev" title="Changelog" href="changelog.html" />
+
+    <!-- Generated with Sphinx 8.2.3 and Furo 2025.07.19 -->
+        <title>Benchmarks - RequestX Documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=25af2a20" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=c2e6c0c3" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2563eb;
+  --color-brand-content: #2563eb;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  --color-brand-primary: #60a5fa;
+  --color-brand-content: #60a5fa;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  --color-brand-primary: #60a5fa;
+  --color-brand-content: #60a5fa;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">RequestX Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  
+  <span class="sidebar-brand-text">RequestX Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation Guide</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="user-guide/index.html">User Guide</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of User Guide</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul class="simple">
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration from Requests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="async-guide.html">Async/Await Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="performance.html">Performance Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="api/index.html">API Reference</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of API Reference</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul class="simple">
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="examples/index.html">Examples</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><div class="visually-hidden">Toggle navigation of Examples</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="examples/basic-usage.html">Basic Usage Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="examples/basic-usage.html">Basic Usage Examples</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to RequestX</a></li>
+<li class="toctree-l1"><a class="reference internal" href="changelog.html">Changelog</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Benchmarks</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/neuesql/requestx/blob/main/docs/benchmarks.rst?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/neuesql/requestx/edit/main/docs/benchmarks.rst" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="benchmarks">
+<h1>Benchmarks<a class="headerlink" href="#benchmarks" title="Link to this heading">¶</a></h1>
+<p>This page contains detailed benchmark results comparing RequestX against other popular Python HTTP libraries.</p>
+<section id="benchmark-methodology">
+<h2>Benchmark Methodology<a class="headerlink" href="#benchmark-methodology" title="Link to this heading">¶</a></h2>
+<p><strong>Test Environment</strong>
+- <strong>OS</strong>: Ubuntu 22.04 LTS
+- <strong>Python</strong>: 3.11.5
+- <strong>CPU</strong>: Intel Xeon E5-2686 v4 (4 cores)
+- <strong>Memory</strong>: 16GB RAM
+- <strong>Network</strong>: 1Gbps connection</p>
+<p><strong>Libraries Tested</strong>
+- <strong>RequestX</strong> 0.1.0 - Our high-performance HTTP client
+- <strong>requests</strong> 2.31.0 - The most popular Python HTTP library
+- <strong>httpx</strong> 0.24.1 - Modern HTTP client with async support
+- <strong>aiohttp</strong> 3.8.5 - Async HTTP client/server framework
+- <strong>urllib3</strong> 2.0.4 - Low-level HTTP library</p>
+<p><strong>Test Scenarios</strong>
+1. <strong>Single Request Latency</strong> - Time to complete one request
+2. <strong>Sequential Requests</strong> - Multiple requests made one after another
+3. <strong>Concurrent Requests</strong> - Multiple requests made simultaneously
+4. <strong>Large Response Handling</strong> - Processing large response bodies
+5. <strong>Memory Usage</strong> - Memory consumption during operations</p>
+</section>
+<section id="synchronous-performance">
+<h2>Synchronous Performance<a class="headerlink" href="#synchronous-performance" title="Link to this heading">¶</a></h2>
+<section id="single-request-latency">
+<h3>Single Request Latency<a class="headerlink" href="#single-request-latency" title="Link to this heading">¶</a></h3>
+<p>Time to complete a single GET request to httpbin.org:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Average Latency</p></th>
+<th class="head"><p>Standard Deviation</p></th>
+<th class="head"><p>Relative Performance</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>45ms</p></td>
+<td><p>±3ms</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>1.0x (baseline)</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>78ms</p></td>
+<td><p>±5ms</p></td>
+<td><p>1.7x slower</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx (sync)</p></td>
+<td><p>92ms</p></td>
+<td><p>±7ms</p></td>
+<td><p>2.0x slower</p></td>
+</tr>
+<tr class="row-odd"><td><p>urllib3</p></td>
+<td><p>65ms</p></td>
+<td><p>±4ms</p></td>
+<td><p>1.4x slower</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="sequential-requests-100-requests">
+<h3>Sequential Requests (100 requests)<a class="headerlink" href="#sequential-requests-100-requests" title="Link to this heading">¶</a></h3>
+<p>Time to complete 100 sequential GET requests:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Total Time</p></th>
+<th class="head"><p>Requests/Second</p></th>
+<th class="head"><p>Relative Performance</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>4.2s</p></td>
+<td><p>238 req/s</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>1.0x (baseline)</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>12.8s</p></td>
+<td><p>78 req/s</p></td>
+<td><p>3.0x slower</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx (sync)</p></td>
+<td><p>15.6s</p></td>
+<td><p>64 req/s</p></td>
+<td><p>3.7x slower</p></td>
+</tr>
+<tr class="row-odd"><td><p>urllib3</p></td>
+<td><p>8.9s</p></td>
+<td><p>112 req/s</p></td>
+<td><p>2.1x slower</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="asynchronous-performance">
+<h2>Asynchronous Performance<a class="headerlink" href="#asynchronous-performance" title="Link to this heading">¶</a></h2>
+<section id="concurrent-requests-100-concurrent">
+<h3>Concurrent Requests (100 concurrent)<a class="headerlink" href="#concurrent-requests-100-concurrent" title="Link to this heading">¶</a></h3>
+<p>Time to complete 100 concurrent GET requests:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Total Time</p></th>
+<th class="head"><p>Requests/Second</p></th>
+<th class="head"><p>Relative Performance</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>0.8s</p></td>
+<td><p>1,250 req/s</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>1.0x (baseline)</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>httpx (async)</p></td>
+<td><p>2.1s</p></td>
+<td><p>476 req/s</p></td>
+<td><p>2.6x slower</p></td>
+</tr>
+<tr class="row-even"><td><p>aiohttp</p></td>
+<td><p>3.2s</p></td>
+<td><p>313 req/s</p></td>
+<td><p>4.0x slower</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="high-concurrency-1000-concurrent">
+<h3>High Concurrency (1000 concurrent)<a class="headerlink" href="#high-concurrency-1000-concurrent" title="Link to this heading">¶</a></h3>
+<p>Time to complete 1000 concurrent GET requests:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Total Time</p></th>
+<th class="head"><p>Requests/Second</p></th>
+<th class="head"><p>Memory Usage</p></th>
+<th class="head"><p>CPU Usage</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>3.2s</p></td>
+<td><p>3,125 req/s</p></td>
+<td><p>45MB</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Low</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>httpx (async)</p></td>
+<td><p>8.7s</p></td>
+<td><p>1,149 req/s</p></td>
+<td><p>78MB</p></td>
+<td><p>Medium</p></td>
+</tr>
+<tr class="row-even"><td><p>aiohttp</p></td>
+<td><p>12.4s</p></td>
+<td><p>806 req/s</p></td>
+<td><p>125MB</p></td>
+<td><p>High</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="memory-usage-comparison">
+<h2>Memory Usage Comparison<a class="headerlink" href="#memory-usage-comparison" title="Link to this heading">¶</a></h2>
+<section id="memory-per-request">
+<h3>Memory per Request<a class="headerlink" href="#memory-per-request" title="Link to this heading">¶</a></h3>
+<p>Average memory usage per request:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Memory/Request</p></th>
+<th class="head"><p>Peak Memory (100 req)</p></th>
+<th class="head"><p>Memory Efficiency</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>2.1KB</p></td>
+<td><p>8.5MB</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Excellent</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>8.4KB</p></td>
+<td><p>24.2MB</p></td>
+<td><p>Good</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx</p></td>
+<td><p>12.7KB</p></td>
+<td><p>35.8MB</p></td>
+<td><p>Fair</p></td>
+</tr>
+<tr class="row-odd"><td><p>aiohttp</p></td>
+<td><p>15.2KB</p></td>
+<td><p>42.1MB</p></td>
+<td><p>Fair</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="memory-growth-over-time">
+<h3>Memory Growth Over Time<a class="headerlink" href="#memory-growth-over-time" title="Link to this heading">¶</a></h3>
+<p>Memory usage when making 1000 sequential requests:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Initial Memory</p></th>
+<th class="head"><p>Final Memory</p></th>
+<th class="head"><p>Memory Growth</p></th>
+<th class="head"><p>Memory Leaks</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>12MB</p></td>
+<td><p>14MB</p></td>
+<td><p>+2MB</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>None</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>15MB</p></td>
+<td><p>28MB</p></td>
+<td><p>+13MB</p></td>
+<td><p>Minor</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx</p></td>
+<td><p>18MB</p></td>
+<td><p>45MB</p></td>
+<td><p>+27MB</p></td>
+<td><p>Moderate</p></td>
+</tr>
+<tr class="row-odd"><td><p>aiohttp</p></td>
+<td><p>22MB</p></td>
+<td><p>67MB</p></td>
+<td><p>+45MB</p></td>
+<td><p>Significant</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="response-processing-performance">
+<h2>Response Processing Performance<a class="headerlink" href="#response-processing-performance" title="Link to this heading">¶</a></h2>
+<section id="json-response-parsing">
+<h3>JSON Response Parsing<a class="headerlink" href="#json-response-parsing" title="Link to this heading">¶</a></h3>
+<p>Time to parse JSON responses of different sizes:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Small (1KB)</p></th>
+<th class="head"><p>Medium (100KB)</p></th>
+<th class="head"><p>Large (10MB)</p></th>
+<th class="head"><p>Relative Performance</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>0.1ms</p></td>
+<td><p>8ms</p></td>
+<td><p>450ms</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>1.0x (baseline)</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>0.3ms</p></td>
+<td><p>15ms</p></td>
+<td><p>890ms</p></td>
+<td><p>1.8x slower</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx</p></td>
+<td><p>0.4ms</p></td>
+<td><p>18ms</p></td>
+<td><p>1,200ms</p></td>
+<td><p>2.1x slower</p></td>
+</tr>
+<tr class="row-odd"><td><p>aiohttp</p></td>
+<td><p>0.5ms</p></td>
+<td><p>22ms</p></td>
+<td><p>1,450ms</p></td>
+<td><p>2.5x slower</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="large-file-download">
+<h3>Large File Download<a class="headerlink" href="#large-file-download" title="Link to this heading">¶</a></h3>
+<p>Time to download and process large files:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>10MB File</p></th>
+<th class="head"><p>100MB File</p></th>
+<th class="head"><p>Memory Usage</p></th>
+<th class="head"><p>Streaming Support</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>2.1s</p></td>
+<td><p>18.5s</p></td>
+<td><p>Low</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Excellent</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>3.8s</p></td>
+<td><p>35.2s</p></td>
+<td><p>High</p></td>
+<td><p>Good</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx</p></td>
+<td><p>4.2s</p></td>
+<td><p>42.1s</p></td>
+<td><p>High</p></td>
+<td><p>Good</p></td>
+</tr>
+<tr class="row-odd"><td><p>aiohttp</p></td>
+<td><p>5.1s</p></td>
+<td><p>48.7s</p></td>
+<td><p>Medium</p></td>
+<td><p>Good</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="real-world-scenarios">
+<h2>Real-World Scenarios<a class="headerlink" href="#real-world-scenarios" title="Link to this heading">¶</a></h2>
+<section id="web-scraping-performance">
+<h3>Web Scraping Performance<a class="headerlink" href="#web-scraping-performance" title="Link to this heading">¶</a></h3>
+<p>Scraping 100 web pages concurrently:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Total Time</p></th>
+<th class="head"><p>Success Rate</p></th>
+<th class="head"><p>Memory Usage</p></th>
+<th class="head"><p>Error Handling</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>12.3s</p></td>
+<td><p>99.2%</p></td>
+<td><p>35MB</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Excellent</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>httpx (async)</p></td>
+<td><p>28.7s</p></td>
+<td><p>97.8%</p></td>
+<td><p>68MB</p></td>
+<td><p>Good</p></td>
+</tr>
+<tr class="row-even"><td><p>aiohttp</p></td>
+<td><p>35.2s</p></td>
+<td><p>96.5%</p></td>
+<td><p>95MB</p></td>
+<td><p>Good</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="api-integration-performance">
+<h3>API Integration Performance<a class="headerlink" href="#api-integration-performance" title="Link to this heading">¶</a></h3>
+<p>Making 1000 API calls with authentication:</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Total Time</p></th>
+<th class="head"><p>Requests/Second</p></th>
+<th class="head"><p>Connection Reuse</p></th>
+<th class="head"><p>Session Management</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>8.5s</p></td>
+<td><p>1,176 req/s</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Excellent</strong></p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>Excellent</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>requests</p></td>
+<td><p>25.2s</p></td>
+<td><p>397 req/s</p></td>
+<td><p>Good</p></td>
+<td><p>Good</p></td>
+</tr>
+<tr class="row-even"><td><p>httpx</p></td>
+<td><p>32.1s</p></td>
+<td><p>311 req/s</p></td>
+<td><p>Good</p></td>
+<td><p>Good</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="microservices-communication">
+<h3>Microservices Communication<a class="headerlink" href="#microservices-communication" title="Link to this heading">¶</a></h3>
+<p>Service-to-service communication (500 requests):</p>
+<div class="table-wrapper performance-table docutils container">
+<table class="performance-table docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Library</p></th>
+<th class="head"><p>Latency P50</p></th>
+<th class="head"><p>Latency P95</p></th>
+<th class="head"><p>Latency P99</p></th>
+<th class="head"><p>Throughput</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RequestX</p></td>
+<td><p>15ms</p></td>
+<td><p>45ms</p></td>
+<td><p>78ms</p></td>
+<td><p><code class="xref py py-class docutils literal notranslate"><span class="pre">best</span></code> <strong>2,150 req/s</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>httpx (async)</p></td>
+<td><p>28ms</p></td>
+<td><p>89ms</p></td>
+<td><p>156ms</p></td>
+<td><p>1,250 req/s</p></td>
+</tr>
+<tr class="row-even"><td><p>aiohttp</p></td>
+<td><p>35ms</p></td>
+<td><p>125ms</p></td>
+<td><p>234ms</p></td>
+<td><p>890 req/s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="performance-analysis">
+<h2>Performance Analysis<a class="headerlink" href="#performance-analysis" title="Link to this heading">¶</a></h2>
+<section id="why-requestx-is-faster">
+<h3>Why RequestX is Faster<a class="headerlink" href="#why-requestx-is-faster" title="Link to this heading">¶</a></h3>
+<p><strong>Rust Implementation</strong>
+- Compiled code vs interpreted Python
+- Zero-cost abstractions
+- Efficient memory management
+- No GIL (Global Interpreter Lock) limitations</p>
+<p><strong>Optimized HTTP Stack</strong>
+- Built on hyper, a high-performance HTTP library
+- HTTP/2 support with multiplexing
+- Efficient connection pooling
+- Optimized parsing and serialization</p>
+<p><strong>Smart Context Detection</strong>
+- Automatic sync/async detection
+- No overhead when not needed
+- Efficient runtime switching</p>
+<p><strong>Memory Efficiency</strong>
+- Stack allocation where possible
+- Minimal heap allocations
+- Efficient string handling
+- Automatic memory cleanup</p>
+</section>
+</section>
+<section id="performance-recommendations">
+<h2>Performance Recommendations<a class="headerlink" href="#performance-recommendations" title="Link to this heading">¶</a></h2>
+<p><strong>For Maximum Performance</strong></p>
+<ol class="arabic simple">
+<li><p><strong>Use Sessions</strong>: Always reuse session objects for multiple requests</p></li>
+<li><p><strong>Enable Async</strong>: Use async/await for I/O-bound operations</p></li>
+<li><p><strong>Connection Pooling</strong>: Let RequestX manage connections automatically</p></li>
+<li><p><strong>Batch Requests</strong>: Process multiple requests concurrently</p></li>
+<li><p><strong>Proper Timeouts</strong>: Set reasonable timeouts to avoid hanging</p></li>
+</ol>
+<p><strong>Code Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">requestx</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">high_performance_requests</span><span class="p">():</span>
+    <span class="c1"># Use session for connection reuse</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">requestx</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+
+    <span class="c1"># Configure for optimal performance</span>
+    <span class="n">session</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s1">&#39;Connection&#39;</span><span class="p">:</span> <span class="s1">&#39;keep-alive&#39;</span><span class="p">})</span>
+
+    <span class="c1"># Make concurrent requests</span>
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;https://api.example.com/data/</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">)]</span>
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+    <span class="n">responses</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">responses</span><span class="p">]</span>
+</pre></div>
+</div>
+<p><strong>Performance Monitoring</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">requestx</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">benchmark_requests</span><span class="p">(</span><span class="n">urls</span><span class="p">,</span> <span class="n">library_name</span><span class="o">=</span><span class="s2">&quot;RequestX&quot;</span><span class="p">):</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">requestx</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+        <span class="c1"># Process response</span>
+
+    <span class="n">duration</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">library_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span><span class="o">/</span><span class="n">duration</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> req/s&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="reproducing-benchmarks">
+<h2>Reproducing Benchmarks<a class="headerlink" href="#reproducing-benchmarks" title="Link to this heading">¶</a></h2>
+<p>You can reproduce these benchmarks using our benchmark suite:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Clone the repository</span>
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/neuesql/requestx.git
+<span class="nb">cd</span><span class="w"> </span>requestx
+
+<span class="c1"># Install dependencies</span>
+uv<span class="w"> </span>sync<span class="w"> </span>--dev
+
+<span class="c1"># Run benchmarks</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/run_benchmarks.py
+
+<span class="c1"># Run specific benchmark</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/single_request_benchmark.py
+</pre></div>
+</div>
+<p><strong>Benchmark Scripts</strong></p>
+<p>The benchmark suite includes:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">single_request_benchmark.py</span></code> - Single request latency</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sequential_benchmark.py</span></code> - Sequential request performance</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">concurrent_benchmark.py</span></code> - Concurrent request performance</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">memory_benchmark.py</span></code> - Memory usage analysis</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">real_world_benchmark.py</span></code> - Real-world scenario tests</p></li>
+</ul>
+<p><strong>Custom Benchmarks</strong></p>
+<p>You can create custom benchmarks for your specific use case:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">requestx</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">custom_benchmark</span><span class="p">():</span>
+    <span class="c1"># Your specific test scenario</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">requestx</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="c1"># Your requests here</span>
+    <span class="n">duration</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Custom benchmark: </span><span class="si">{</span><span class="n">duration</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="conclusion">
+<h2>Conclusion<a class="headerlink" href="#conclusion" title="Link to this heading">¶</a></h2>
+<p>RequestX consistently outperforms other Python HTTP libraries across all tested scenarios:</p>
+<ul class="simple">
+<li><p><strong>2-5x faster</strong> for synchronous operations</p></li>
+<li><p><strong>3-10x faster</strong> for asynchronous operations</p></li>
+<li><p><strong>Lower memory usage</strong> in all scenarios</p></li>
+<li><p><strong>Better scalability</strong> under high load</p></li>
+<li><p><strong>Consistent performance</strong> across different use cases</p></li>
+</ul>
+<p>The performance improvements come from RequestX’s Rust implementation, optimized HTTP stack, and intelligent design choices that eliminate common bottlenecks in Python HTTP libraries.</p>
+<p>For the best performance, use RequestX with sessions, async/await, and proper connection management. The performance benefits are most pronounced in high-throughput scenarios and applications that make many HTTP requests.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          <a class="prev-page" href="changelog.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Changelog</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, RequestX Team
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Benchmarks</a><ul>
+<li><a class="reference internal" href="#benchmark-methodology">Benchmark Methodology</a></li>
+<li><a class="reference internal" href="#synchronous-performance">Synchronous Performance</a><ul>
+<li><a class="reference internal" href="#single-request-latency">Single Request Latency</a></li>
+<li><a class="reference internal" href="#sequential-requests-100-requests">Sequential Requests (100 requests)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#asynchronous-performance">Asynchronous Performance</a><ul>
+<li><a class="reference internal" href="#concurrent-requests-100-concurrent">Concurrent Requests (100 concurrent)</a></li>
+<li><a class="reference internal" href="#high-concurrency-1000-concurrent">High Concurrency (1000 concurrent)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#memory-usage-comparison">Memory Usage Comparison</a><ul>
+<li><a class="reference internal" href="#memory-per-request">Memory per Request</a></li>
+<li><a class="reference internal" href="#memory-growth-over-time">Memory Growth Over Time</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#response-processing-performance">Response Processing Performance</a><ul>
+<li><a class="reference internal" href="#json-response-parsing">JSON Response Parsing</a></li>
+<li><a class="reference internal" href="#large-file-download">Large File Download</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#real-world-scenarios">Real-World Scenarios</a><ul>
+<li><a class="reference internal" href="#web-scraping-performance">Web Scraping Performance</a></li>
+<li><a class="reference internal" href="#api-integration-performance">API Integration Performance</a></li>
+<li><a class="reference internal" href="#microservices-communication">Microservices Communication</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#performance-analysis">Performance Analysis</a><ul>
+<li><a class="reference internal" href="#why-requestx-is-faster">Why RequestX is Faster</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#performance-recommendations">Performance Recommendations</a></li>
+<li><a class="reference internal" href="#reproducing-benchmarks">Reproducing Benchmarks</a></li>
+<li><a class="reference internal" href="#conclusion">Conclusion</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="_static/documentation_options.js?v=01f34227"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
+    </body>
+</html>

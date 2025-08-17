@@ -189,6 +189,43 @@ task10: quality-check build-wheels build-sdist test-installation ## Complete Tas
 	@echo "  ✓ Cross-platform wheel building configured"
 	@echo "  ✓ Installation process tested and verified"
 
+docs-build: ## Build documentation with Sphinx
+	@echo "$(BLUE)Building documentation...$(RESET)"
+	@if [ -d docs ]; then \
+		cd docs && make html; \
+		echo "$(GREEN)Documentation built successfully!$(RESET)"; \
+		echo "$(YELLOW)Open docs/_build/html/index.html to view$(RESET)"; \
+	else \
+		echo "$(RED)docs/ directory not found$(RESET)"; \
+		exit 1; \
+	fi
+
+docs-serve: docs-build ## Build and serve documentation locally
+	@echo "$(BLUE)Serving documentation locally...$(RESET)"
+	@cd docs/_build/html && python -m http.server 8000
+	@echo "$(GREEN)Documentation available at http://localhost:8000$(RESET)"
+
+docs-clean: ## Clean documentation build files
+	@echo "$(BLUE)Cleaning documentation build files...$(RESET)"
+	@if [ -d docs/_build ]; then \
+		rm -rf docs/_build; \
+		echo "$(GREEN)Documentation build files cleaned!$(RESET)"; \
+	else \
+		echo "$(YELLOW)No documentation build files to clean$(RESET)"; \
+	fi
+
+task12: docs-build ## Complete Task 12: Create documentation and examples
+	@echo "$(GREEN)🎉 Task 12 completed successfully!$(RESET)"
+	@echo "$(YELLOW)Documentation and examples created:$(RESET)"
+	@echo "  ✓ Comprehensive Sphinx documentation"
+	@echo "  ✓ Read the Docs configuration"
+	@echo "  ✓ API reference documentation"
+	@echo "  ✓ User guide with examples"
+	@echo "  ✓ Migration guide from requests"
+	@echo "  ✓ Async/await usage guide"
+	@echo "  ✓ Performance benchmarks"
+	@echo "  ✓ Contributing guidelines"
+
 # =============================================================================
 # Documentation
 # =============================================================================

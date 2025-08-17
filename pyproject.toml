@@ -123,8 +123,14 @@ strict_equality = true
 dev = [
     "aiohttp>=3.10.11",
     "black>=24.8.0",
+    "furo>=2024.8.6",
     "httpx>=0.28.1",
+    "linkify-it-py>=2.0.3",
     "mypy>=1.14.1",
+    "myst-parser>=3.0.1",
     "requests>=2.32.4",
     "ruff>=0.12.5",
+    "sphinx>=7.1.2",
+    "sphinx-autodoc-typehints>=2.0.1",
+    "sphinx-copybutton>=0.5.2",
 ]
