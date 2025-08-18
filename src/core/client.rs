@@ -60,7 +60,6 @@ fn create_custom_client(
     verify: bool,
 ) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
     let https = if verify {
-        // For verify=true, use the default HTTPS connector with rustls
         HttpsConnectorBuilder::new()
             .with_native_roots()
             .https_or_http()
@@ -68,7 +67,6 @@ fn create_custom_client(
             .enable_http2()
             .build()
     } else {
-        // For verify=false, create a connector that accepts invalid certs
         let config = rustls::ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(DangerAcceptAllCerts))
@@ -82,13 +80,7 @@ fn create_custom_client(
             .build()
     };
 
-    Ok(Client::builder()
-        .pool_idle_timeout(Duration::from_secs(90))
-        .pool_max_idle_per_host(50)
-        .http2_only(false)
-        .http2_initial_stream_window_size(Some(65536))
-        .http2_initial_connection_window_size(Some(1048576))
-        .build::<_, hyper::Body>(https))
+    Ok(Client::builder().build::<_, hyper::Body>(https))
 }
 
 /// Request configuration for HTTP requests
