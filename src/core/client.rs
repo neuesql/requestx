@@ -23,7 +23,7 @@ fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConn
     GLOBAL_CLIENT.get_or_init(|| {
         let https = HttpsConnectorBuilder::new()
             .with_native_roots()
-            .https_only()
+            .https_or_http()
             .enable_http1()
             .enable_http2()
             .build();
@@ -63,7 +63,7 @@ fn create_custom_client(
         // For verify=true, use the default HTTPS connector with rustls
         HttpsConnectorBuilder::new()
             .with_native_roots()
-            .https_only()
+            .https_or_http()
             .enable_http1()
             .enable_http2()
             .build()
@@ -76,7 +76,7 @@ fn create_custom_client(
 
         HttpsConnectorBuilder::new()
             .with_tls_config(config)
-            .https_only()
+            .https_or_http()
             .enable_http1()
             .enable_http2()
             .build()

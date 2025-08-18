@@ -294,7 +294,7 @@ jobs:
     needs: [validate-release, test-wheels]
     if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     environment:
-      name: pypi
+      name: PROD
       url: https://pypi.org/p/requestx
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
@@ -318,8 +318,6 @@ jobs:
         packages-dir: upload/
         verbose: true
         print-hash: true
-        user: __token__
-        password: ${{ secrets.PYPI_TOKEN }}
 
   cleanup:
     name: Cleanup
