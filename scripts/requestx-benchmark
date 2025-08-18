@@ -485,7 +485,13 @@ def main():
                     
                     # Use profiler context to monitor performance
                     with profile_context(cpu=True, memory=True, request=True, detailed=True) as profiler_metrics:
-                        result = current_runner.run_benchmark(benchmarker, url, method)
+                        # Check if benchmarker is async and use appropriate method
+                        from requestx.benchmark import BenchmarkerAsync
+                        if isinstance(benchmarker, BenchmarkerAsync):
+                            import asyncio
+                            result = asyncio.run(current_runner.run_async_benchmark(benchmarker, url, method))
+                        else:
+                            result = current_runner.run_benchmark(benchmarker, url, method)
                     
                         # Enhance result with profiler metrics
                         if hasattr(result, 'cpu_usage_percent'):

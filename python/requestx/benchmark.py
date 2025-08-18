@@ -187,6 +187,7 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
     
     async def asyncSetUp(self):
         """Async setup method called before each test."""
+        print(f"BenchmarkerAsync.asyncSetUp called for {self.library_name}")
         await self.async_setup()
     
     async def asyncTearDown(self):
@@ -389,16 +390,26 @@ class RequestXBenchmarker(BenchmarkerSync):
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
+            if self.session is None:
+                print("RequestX session is None!")
+                return False
             response = self.session.request(method, url, **kwargs)
+            print(f"RequestX response: {response.status_code}")
             return 200 <= response.status_code < 400
-        except Exception:
+        except Exception as e:
+            print(f"RequestX sync error: {e}")
             return False
     
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
         import asyncio
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
+        try:
+            result = await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
+            return result
+        except Exception as e:
+            print(f"RequestX async error: {e}")
+            return False
 
 
 class RequestXSyncBenchmarker(BenchmarkerSync):
@@ -511,7 +522,9 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
             import requestx
             # RequestX doesn't have async session yet, will use sync session
             self.session = requestx.Session()
+            print(f"RequestX async_setup completed, session: {self.session}")
         except ImportError:
+            print("RequestX library not found!")
             raise ImportError("RequestX library not found")
     
     async def async_teardown(self):
