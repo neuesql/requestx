@@ -315,9 +315,11 @@ jobs:
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
         packages-dir: upload/
         verbose: true
         print-hash: true
+        repository-url: https://pypi.org/p/requestx
 
   cleanup:
     name: Cleanup
