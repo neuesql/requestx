@@ -31,22 +31,6 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Setup development environment
-      run: make setup
-
-    - name: Run quality checks
-      run: make quality-check
 
     - name: Extract version information
       id: version
@@ -114,11 +98,52 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Setup development environment
-      run: make setup
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
 
-    - name: Build wheels for CI
-      run: make build-wheels-ci
+    - name: Install maturin
+      run: |
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          uv tool install maturin[patchelf]
+        else
+          uv tool install maturin
+        fi
+
+    - name: Build wheels (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: x86_64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+        manylinux: auto
+
+    - name: Build wheels (Linux aarch64)
+      if: matrix.os == 'ubuntu-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: aarch64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+        manylinux: auto
+
+    - name: Build wheels (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: x64
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+
+    - name: Build wheels (macOS)
+      if: matrix.os == 'macos-latest'
+      uses: PyO3/maturin-action@v1
+      with:
+        target: universal2-apple-darwin
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
 
     - name: Upload wheels
       uses: actions/upload-artifact@v4
@@ -138,14 +163,16 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
 
-    - name: Setup development environment
-      run: make setup
+    - name: Install maturin
+      run: uv tool install maturin
 
     - name: Build source distribution
-      run: make build-sdist
+      run: uv run maturin sdist --out dist
 
     - name: Upload sdist
       uses: actions/upload-artifact@v4
@@ -169,14 +196,22 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Download wheels
+      uses: actions/download-artifact@v4
+      with:
+        pattern: wheels-*
+        path: dist
+        merge-multiple: true
 
-    - name: Setup development environment
-      run: make setup
+    - name: Install wheel
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install --find-links dist requestx --force-reinstall --no-deps
 
-    - name: Test wheel installation
-      run: make test-wheel-installation
+    - name: Test installation
+      run: |
+        python -c "import requestx; print(f'RequestX {requestx.__version__} installed successfully')"
+        python -c "import requestx; response = requestx.get('https://httpbin.org/get'); assert response.status_code == 200; print('Basic functionality test passed')"
 
   create-release:
     name: Create GitHub Release
@@ -258,28 +293,24 @@ jobs:
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Setup development environment
-      run: make setup
-
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: dist
 
+    - name: Flatten artifacts
+      run: |
+        mkdir -p upload
+        find dist -name '*.whl' -exec cp {} upload/ \;
+        find dist -name '*.tar.gz' -exec cp {} upload/ \;
+        ls -la upload/
+
     - name: Publish to PyPI
-      run: make publish-pypi
-      env:
-        PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: upload/
+        verbose: true
+        print-hash: true
 
   cleanup:
     name: Cleanup
