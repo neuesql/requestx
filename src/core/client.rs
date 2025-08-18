@@ -1,7 +1,8 @@
 use base64::prelude::*;
 use bytes::Bytes;
 use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
-use hyper_tls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
+use rustls::{Certificate, ServerName};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -20,7 +21,12 @@ static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnecto
 
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
     GLOBAL_CLIENT.get_or_init(|| {
-        let https = HttpsConnector::new();
+        let https = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_only()
+            .enable_http1()
+            .enable_http2()
+            .build();
         Client::builder()
             .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for better reuse
             .pool_max_idle_per_host(50) // More connections per host
@@ -31,35 +37,50 @@ fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConn
     })
 }
 
+/// Dangerous certificate verifier that accepts all certificates
+#[derive(Debug)]
+struct DangerAcceptAllCerts;
+
+impl rustls::client::ServerCertVerifier for DangerAcceptAllCerts {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &Certificate,
+        _intermediates: &[Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
+
 /// Create a custom client with specific SSL verification settings
 fn create_custom_client(
     verify: bool,
 ) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
-    if verify {
-        // For verify=true, just use the default HTTPS connector
-        let https = HttpsConnector::new();
-        return Ok(Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(50)
-            .http2_only(false)
-            .http2_initial_stream_window_size(Some(65536))
-            .http2_initial_connection_window_size(Some(1048576))
-            .build::<_, hyper::Body>(https));
-    }
+    let https = if verify {
+        // For verify=true, use the default HTTPS connector with rustls
+        HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_only()
+            .enable_http1()
+            .enable_http2()
+            .build()
+    } else {
+        // For verify=false, create a connector that accepts invalid certs
+        let config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(DangerAcceptAllCerts))
+            .with_no_client_auth();
 
-    // For verify=false, create a custom TLS connector that accepts invalid certs
-    let mut https_builder = hyper_tls::native_tls::TlsConnector::builder();
-    https_builder.danger_accept_invalid_certs(true);
-    https_builder.danger_accept_invalid_hostnames(true);
-
-    let tls_connector = https_builder
-        .build()
-        .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {e}")))?;
-
-    let mut http_connector = hyper::client::HttpConnector::new();
-    http_connector.enforce_http(false);
-
-    let https_connector = HttpsConnector::from((http_connector, tls_connector.into()));
+        HttpsConnectorBuilder::new()
+            .with_tls_config(config)
+            .https_only()
+            .enable_http1()
+            .enable_http2()
+            .build()
+    };
 
     Ok(Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
@@ -67,7 +88,7 @@ fn create_custom_client(
         .http2_only(false)
         .http2_initial_stream_window_size(Some(65536))
         .http2_initial_connection_window_size(Some(1048576))
-        .build::<_, hyper::Body>(https_connector))
+        .build::<_, hyper::Body>(https))
 }
 
 /// Request configuration for HTTP requests
