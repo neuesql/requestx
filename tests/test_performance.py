@@ -12,6 +12,9 @@ from typing import Dict, Any
 import psutil
 from tabulate import tabulate
 
+# Global host constant for all performance tests
+HOST = "http://localhost:8000/"
+
 # Import HTTP clients for comparison
 import requestx
 
@@ -412,7 +415,7 @@ class TestPerformanceBasics(unittest.TestCase):
     def test_request_response_time(self):
         """Test that requests complete within reasonable time."""
         start_time = time.time()
-        response = requestx.get("http://localhost:8000/get")
+        response = requestx.get(f"{HOST}/get")
         end_time = time.time()
 
         # Should complete within 10 seconds (generous timeout for CI)
@@ -425,7 +428,7 @@ class TestPerformanceBasics(unittest.TestCase):
 
         responses = []
         for i in range(5):
-            response = requestx.get("http://localhost:8000/get")
+            response = requestx.get(f"{HOST}/get")
             responses.append(response)
 
         end_time = time.time()
@@ -443,7 +446,7 @@ class TestPerformanceBasics(unittest.TestCase):
         """Test handling of large responses."""
         # Request a large JSON response (100 items)
         start_time = time.time()
-        response = requestx.get("http://localhost:8000/json")
+        response = requestx.get(f"{HOST}/json")
         end_time = time.time()
 
         self.assertEqual(response.status_code, 200)
@@ -458,7 +461,7 @@ class TestPerformanceBasics(unittest.TestCase):
         # This test would need timeout support to be implemented
         # For now, just test that delayed requests work
         start_time = time.time()
-        response = requestx.get("http://localhost:8000/delay/2")
+        response = requestx.get(f"{HOST}/delay/2")
         end_time = time.time()
 
         # Should take at least 2 seconds
@@ -479,7 +482,7 @@ class TestMemoryUsage(unittest.TestCase):
 
         # Create and discard multiple responses
         for i in range(10):
-            response = requestx.get("http://localhost:8000/get")
+            response = requestx.get(f"{HOST}/get")
             self.assertEqual(response.status_code, 200)
             # Access response data to ensure it's loaded
             _ = response.text
@@ -504,7 +507,7 @@ class TestMemoryUsage(unittest.TestCase):
         gc.collect()
 
         # Make request for potentially large response
-        response = requestx.get("http://localhost:8000/json")
+        response = requestx.get(f"{HOST}/json")
         self.assertEqual(response.status_code, 200)
 
         # Access the content
@@ -528,7 +531,7 @@ class TestBenchmarkComparison(unittest.TestCase):
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
         self.test_urls = [
-            "http://localhost:8000/get"
+            f"{HOST}/get"
         ] * 10  # Reduced for faster testing
 
     def test_sync_libraries_comparison(self):
@@ -639,7 +642,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         """Compare performance of first request vs subsequent requests."""
         # Cold request (first one)
         start_time = time.time()
-        response1 = requestx.get("http://localhost:8000/get")
+        response1 = requestx.get(f"{HOST}/get")
         cold_time = time.time() - start_time
 
         self.assertEqual(response1.status_code, 200)
@@ -648,7 +651,7 @@ class TestBenchmarkComparison(unittest.TestCase):
         warm_times = []
         for i in range(3):
             start_time = time.time()
-            response = requestx.get("http://localhost:8000/get")
+            response = requestx.get(f"{HOST}/get")
             warm_time = time.time() - start_time
             warm_times.append(warm_time)
             self.assertEqual(response.status_code, 200)
@@ -665,11 +668,11 @@ class TestBenchmarkComparison(unittest.TestCase):
     def test_different_http_methods_performance(self):
         """Compare performance of different HTTP methods with RequestX."""
         methods_and_funcs = [
-            ("GET", requestx.get, "http://localhost:8000/get"),
-            ("POST", requestx.post, "http://localhost:8000/post"),
-            ("PUT", requestx.put, "http://localhost:8000/put"),
-            ("DELETE", requestx.delete, "http://localhost:8000/delete"),
-            ("PATCH", requestx.patch, "http://localhost:8000/patch"),
+            ("GET", requestx.get, f"{HOST}/get"),
+            ("POST", requestx.post, f"{HOST}/post"),
+            ("PUT", requestx.put, f"{HOST}/put"),
+            ("DELETE", requestx.delete, f"{HOST}/delete"),
+            ("PATCH", requestx.patch, f"{HOST}/patch"),
         ]
 
         results = {}
@@ -699,15 +702,15 @@ class TestBenchmarkComparison(unittest.TestCase):
         print(f"\n=== RequestX Comprehensive Async vs Sync Analysis ===")
 
         test_scenarios = [
-            ("Single Request", ["http://localhost:8000/get"]),
-            ("Multiple Sequential", ["http://localhost:8000/get"] * 5),
-            ("JSON Processing", ["http://localhost:8000/json"] * 3),
+            ("Single Request", [f"{HOST}/get"]),
+            ("Multiple Sequential", [f"{HOST}/get"] * 5),
+            ("JSON Processing", [f"{HOST}/json"] * 3),
             (
                 "Mixed Methods",
                 [
-                    "http://localhost:8000/get",
-                    "http://localhost:8000/post",
-                    "http://localhost:8000/put",
+                    f"{HOST}/get",
+                    f"{HOST}/post",
+                    f"{HOST}/put",
                 ],
             ),
         ]
@@ -800,7 +803,7 @@ class TestBenchmarkComparison(unittest.TestCase):
     def test_memory_efficiency_comparison(self):
         """Compare memory efficiency across different libraries."""
         test_urls = [
-            "http://localhost:8000/json"
+            f"{HOST}/json"
         ] * 5  # JSON responses for memory testing
         results = {}
 
@@ -855,9 +858,11 @@ class TestBenchmarkComparison(unittest.TestCase):
 class TestConcurrencyBenchmarks(unittest.TestCase):
     """Concurrency benchmark tests comparing different HTTP clients."""
 
+    HOST = "https://httpbin.org"
+
     def setUp(self):
         self.benchmark_runner = BenchmarkRunner()
-        self.test_url = "http://localhost:8000/get"
+        self.test_url = f"{HOST}/get"
         self.concurrency_levels = [
             10,
             100,
