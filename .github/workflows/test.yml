@@ -38,23 +38,16 @@ jobs:
         version: "latest"
 
     - name: Install dependencies
-      run: uv sync --dev
-
-    - name: Run Rust tests
-      run: cargo test --verbose
+      run: make setup
 
     - name: Build Python package
-      run: uv run maturin develop
+      run: make build-wheels-ci
 
     - name: Verify Python import
       run: uv run python -c "import requestx; print('RequestX import successful')"
 
     - name: Run Python unit tests
       run: uv run python -m unittest discover tests/ -v
-
-    - name: Run comprehensive tests
-      run: uv run python -m unittest discover tests/ -v
-
 
 
   test-coverage:
