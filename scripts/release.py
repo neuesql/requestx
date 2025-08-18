@@ -165,7 +165,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Version command
-    subparsers.add_parser("version", help="Show current version")
+    version_parser = subparsers.add_parser("version", help="Show current version")
 
     # Bump command
     bump_parser = subparsers.add_parser("bump", help="Bump version")

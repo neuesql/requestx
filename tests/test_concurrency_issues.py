@@ -287,7 +287,7 @@ def test_rapid_sequential_requests():
         for i in range(num_requests):
             try:
                 req_start = time.time()
-                _ = requestx.get(test_url)
+                response = requestx.get(test_url)
                 req_end = time.time()
 
                 response_times.append((req_end - req_start) * 1000)
