@@ -245,18 +245,32 @@ class BenchmarkerSync(Benchmarker):
         return sorted_data[index]
 
 
-class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
+class BenchmarkerAsync(Benchmarker):
     """Asynchronous benchmarker for HTTP libraries like requestx-async, httpx-async, aiohttp."""
+    
+    def __init__(self, library_name: str):
+        super().__init__(library_name)
+        self._loop = None
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Default sync implementation that runs async method synchronously."""
         import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self.make_async_request(url, method, **kwargs))
-        except RuntimeError:
-            # If no event loop is running, create a new one
-            return asyncio.run(self.make_async_request(url, method, **kwargs))
+            if self._loop and not self._loop.is_closed():
+                # Use existing loop if available
+                if self._loop.is_running():
+                    # Create a new task in the running loop
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.make_async_request(url, method, **kwargs), self._loop
+                    )
+                    return future.result(timeout=kwargs.get('timeout', 30))
+                else:
+                    return self._loop.run_until_complete(self.make_async_request(url, method, **kwargs))
+            else:
+                # Create new event loop
+                return asyncio.run(self.make_async_request(url, method, **kwargs))
+        except Exception:
+            return False
     
     def benchmark_sync(self, url: str, method: str, num_requests: int, 
                       concurrent_requests: int, timeout: float) -> BenchmarkResult:

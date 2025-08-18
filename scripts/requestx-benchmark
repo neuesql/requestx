@@ -74,13 +74,21 @@ class AiohttpBenchmarker(BenchmarkerAsync):
     
     def __init__(self):
         super().__init__('aiohttp')
-    
-    def setup(self):
-        # Session will be created in async context
         self.session = None
     
+    def setup(self):
+        """Setup aiohttp session."""
+        import asyncio
+        import aiohttp
+        
+        # Don't try to get or create event loop here
+        # Sessions will be created per request to avoid loop issues
+        self.session = None
+        self._loop = None
+    
     def teardown(self):
-        # Sessions are managed per request
+        """Clean up aiohttp session."""
+        # Sessions are created and closed per request, no cleanup needed
         pass
     
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
@@ -88,13 +96,13 @@ class AiohttpBenchmarker(BenchmarkerAsync):
         try:
             import aiohttp
             
-            # Create session if not already created
-            session = self.session
-            if session is None:
+            # Use existing session or create a temporary one
+            if self.session and not self.session.closed:
+                session = self.session
+                session_created_here = False
+            else:
                 session = aiohttp.ClientSession()
                 session_created_here = True
-            else:
-                session_created_here = False
             
             try:
                 async with session.request(method, url, **kwargs) as response:
