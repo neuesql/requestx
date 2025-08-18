@@ -76,32 +76,36 @@ class AiohttpBenchmarker(LibraryBenchmarker):
         super().__init__('aiohttp')
     
     def setup(self):
-        import aiohttp
-        self.session = aiohttp.ClientSession()
+        # For aiohttp, we'll create sessions in make_request to avoid event loop issues
+        self.session = None
     
     def teardown(self):
-        if self.session:
-            import asyncio
-            # Handle async cleanup properly
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If loop is running, schedule cleanup
-                    asyncio.create_task(self.session.close())
-                else:
-                    # If loop is not running, run cleanup
-                    loop.run_until_complete(self.session.close())
-            except Exception:
-                # Fallback cleanup
-                pass
+        # Sessions are created and closed per request, no cleanup needed
+        pass
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             import asyncio
+            import aiohttp
             
             async def _make_request():
-                async with self.session.request(method, url, **kwargs) as response:
-                    return 200 <= response.status < 400
+                try:
+                    # Create session if not already created
+                    session = self.session
+                    if session is None:
+                        session = aiohttp.ClientSession()
+                        session_created_here = True
+                    else:
+                        session_created_here = False
+                    
+                    try:
+                        async with session.request(method, url, **kwargs) as response:
+                            return 200 <= response.status < 400
+                    finally:
+                        if session_created_here:
+                            await session.close()
+                except Exception:
+                    return False
             
             # Run async request in sync context
             try:
@@ -476,12 +480,18 @@ def main():
     """Main function to run benchmarks."""
     args = parse_arguments()
     
-    # Create configuration
+    # Parse concurrency levels
+    if args.quick:
+        concurrency_levels = [10]
+    else:
+        concurrency_levels = [int(x.strip()) for x in args.concurrency.split(',')]
+    
+    # Create base configuration
     config = create_config_from_args(args)
     
     if args.verbose:
         print(f"Configuration:")
-        print(f"  Concurrent requests: {config.concurrent_requests}")
+        print(f"  Concurrent requests: {', '.join(map(str, concurrency_levels))}")
         print(f"  Requests per test: {config.num_requests}")
         print(f"  Libraries: {', '.join(config.libraries)}")
         print(f"  Endpoints: {', '.join(config.endpoints)}")
@@ -540,33 +550,47 @@ def main():
             url = f"{base_url}{endpoint}"
             method = endpoint.upper().replace('/', '') if endpoint != '/' else 'GET'
             
-            try:
-                print(f"  Testing {method} {endpoint}...")
-                
-                # Use profiler context to monitor performance
-                with profile_context(cpu=True, memory=True, request=True, detailed=True) as profiler_metrics:
-                    result = runner.run_benchmark(benchmarker, url, method)
-                
-                # Enhance result with profiler metrics
-                if hasattr(result, 'cpu_usage_percent'):
-                    result.cpu_usage_percent = profiler_metrics.cpu_usage_percent
-                if hasattr(result, 'memory_usage_mb'):
-                    result.memory_usage_mb = profiler_metrics.memory_usage_mb
-                if hasattr(result, 'peak_memory_mb'):
-                    result.peak_memory_mb = profiler_metrics.peak_memory_mb
-                
-                all_results.append(result)
-                
-                if args.verbose:
-                    print(f"    RPS: {result.requests_per_second:.2f}")
-                    print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
-                    print(f"    Error Rate: {result.error_rate:.2f}%")
-                    print(f"    CPU Usage: {profiler_metrics.cpu_usage_percent:.2f}%")
-                    print(f"    Memory Usage: {profiler_metrics.memory_usage_mb:.2f}MB")
-                
-            except Exception as e:
-                print(f"    Error: {e}")
-                continue
+            for concurrency in concurrency_levels:
+                try:
+                    print(f"  Testing {method} {endpoint} (concurrency: {concurrency})...")
+                    
+                    # Create config for this specific concurrency level
+                    current_config = BenchmarkConfig(
+                        num_requests=config.num_requests,
+                        concurrent_requests=concurrency,
+                        timeout=config.timeout,
+                        warmup_requests=config.warmup_requests,
+                        libraries=config.libraries,
+                        endpoints=config.endpoints
+                    )
+                    
+                    # Create runner with current config
+                    current_runner = BenchmarkRunner(current_config)
+                    
+                    # Use profiler context to monitor performance
+                    with profile_context(cpu=True, memory=True, request=True, detailed=True) as profiler_metrics:
+                        result = current_runner.run_benchmark(benchmarker, url, method)
+                    
+                        # Enhance result with profiler metrics
+                        if hasattr(result, 'cpu_usage_percent'):
+                            result.cpu_usage_percent = profiler_metrics.cpu_usage_percent
+                        if hasattr(result, 'memory_usage_mb'):
+                            result.memory_usage_mb = profiler_metrics.memory_usage_mb
+                        if hasattr(result, 'peak_memory_mb'):
+                            result.peak_memory_mb = profiler_metrics.peak_memory_mb
+                        
+                        all_results.append(result)
+                        
+                        if args.verbose:
+                            print(f"    RPS: {result.requests_per_second:.2f}")
+                            print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
+                            print(f"    Error Rate: {result.error_rate:.2f}%")
+                            print(f"    CPU Usage: {profiler_metrics.cpu_usage_percent:.2f}%")
+                            print(f"    Memory Usage: {profiler_metrics.memory_usage_mb:.2f}MB")
+                    
+                except Exception as e:
+                    print(f"    Error: {e}")
+                    continue
     
     # Save results
     if all_results:
