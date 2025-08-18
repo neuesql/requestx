@@ -51,7 +51,7 @@ print(f"requestx module attributes: {dir(requestx)}")
 try:
     # These should be available even if we can't make real requests
     print("Testing basic API availability...")
-    
+
     # Check if main functions exist
     functions_to_check = ['get', 'post', 'put', 'delete', 'head', 'options', 'patch']
     for func_name in functions_to_check:
@@ -60,7 +60,7 @@ try:
         else:
             print(f"✗ {func_name} function missing")
             sys.exit(1)
-    
+
     # Check if classes exist
     classes_to_check = ['Response', 'Session']
     for class_name in classes_to_check:
@@ -69,9 +69,9 @@ try:
         else:
             print(f"✗ {class_name} class missing")
             sys.exit(1)
-    
+
     print("✅ Basic import test passed!")
-    
+
 except Exception as e:
     print(f"✗ Basic import test failed: {e}")
     sys.exit(1)
@@ -93,15 +93,15 @@ import sys
 async def test_async():
     try:
         print("Testing async functionality...")
-        
+
         # Test that async context detection works
         print("✓ Async context available")
-        
+
         # Test basic async API structure
         # Note: We're not making real requests here, just testing the API structure
         print("✓ Async API test passed!")
         return True
-        
+
     except Exception as e:
         print(f"✗ Async API test failed: {e}")
         return False
@@ -136,16 +136,16 @@ print(f"Module path: {module_path}")
 # Check if it's a compiled extension
 if module_path.endswith(('.so', '.pyd', '.dll')):
     print("✓ Found compiled extension")
-    
+
     # Check file size (should be reasonable for bundled dependencies)
     file_size = os.path.getsize(module_path)
     print(f"Extension file size: {file_size} bytes ({file_size / 1024 / 1024:.2f} MB)")
-    
+
     if file_size > 100 * 1024:  # Should be at least 100KB with bundled deps
         print("✓ Extension file size looks reasonable for bundled dependencies")
     else:
         print("⚠ Extension file size seems small, dependencies might not be bundled")
-        
+
 else:
     print("⚠ Module is not a compiled extension")
 
@@ -180,15 +180,15 @@ print(f"Testing on {platform.system()} {platform.machine()}")
 
 # Test platform-specific functionality
 try:
-    # Basic functionality should work on all platforms
-    print("Testing platform compatibility...")
-    
-    # Test that the module loads correctly
-    print(f"Module loaded successfully on {platform.system()}")
-    
-    print("✅ Cross-platform compatibility test passed!")
-    
-except Exception as e:
+            # Basic functionality should work on all platforms
+            print("Testing platform compatibility...")
+
+            # Test that the module loads correctly
+            print(f"Module loaded successfully on {platform.system()}")
+
+            print("✅ Cross-platform compatibility test passed!")
+
+        except Exception as e:
     print(f"✗ Cross-platform compatibility test failed: {e}")
     sys.exit(1)
 """
