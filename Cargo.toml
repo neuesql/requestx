@@ -1,6 +1,6 @@
 [package]
 name = "requestx"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "High-performance HTTP client for Python with requests-compatible API"
 authors = ["RequestX Team"]
