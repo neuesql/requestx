@@ -477,20 +477,21 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
         if self.session:
             self.session.close()
     
-
-    
-    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
-        try:
-            response = self.session.request(method, url, **kwargs)
-            return 200 <= response.status_code < 400
-        except Exception:
-            return False
+    # Remove the make_request method - BenchmarkerAsync handles this with NotImplementedError
     
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
         import asyncio
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
+        # Since we removed make_request, we need to implement the sync logic here
+        def sync_request():
+            try:
+                response = self.session.request(method, url, **kwargs)
+                return 200 <= response.status_code < 400
+            except Exception:
+                return False
+        
+        return await loop.run_in_executor(None, sync_request)
 
 
 # Remove the duplicate HttpxAsyncBenchmarker class (lines 496-530)
