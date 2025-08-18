@@ -19,10 +19,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python')
 
 import requestx
 from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
-from requestx.benchmark import RequestXBenchmarker
+from requestx.benchmark import (
+    RequestXSyncBenchmarker,
+    RequestXAsyncBenchmarker,
+    HttpxSyncBenchmarker,
+    HttpxAsyncBenchmarker,
+    RequestsBenchmarker,
+    AiohttpBenchmarker
+)
 from requestx.exporter import export_to_grafana_cloud, export_to_otlp
 from requestx.profiler import profile_context, PerformanceMetrics
-from requestx.benchmark import BenchmarkerSync, BenchmarkerAsync, RequestsBenchmarker, HttpxBenchmarker, AiohttpBenchmarker
 
 
 
@@ -167,7 +173,7 @@ Examples:
     parser.add_argument(
         '--libraries', 
         type=str, 
-        default='requestx,requests,httpx,aiohttp',
+        default='requestx-sync,requestx-async,httpx-sync,httpx-async,requests,aiohttp',
         help='Comma-separated libraries to test (default: all available)'
     )
     
@@ -409,19 +415,28 @@ def main():
     # Create benchmarkers for each library
     benchmarkers = {}
     for library in config.libraries:
-        if library == 'requestx':
-            benchmarkers[library] = RequestXBenchmarker()
+        if library == 'requestx-sync':
+            benchmarkers[library] = RequestXSyncBenchmarker()
+        elif library == 'requestx-async':
+            benchmarkers[library] = RequestXAsyncBenchmarker()
+        elif library == 'httpx-sync':
+            try:
+                import httpx
+                benchmarkers[library] = HttpxSyncBenchmarker()
+            except ImportError:
+                print(f"Warning: Library 'httpx' not installed. Skipping {library}.")
+                continue
+        elif library == 'httpx-async':
+            try:
+                import httpx
+                benchmarkers[library] = HttpxAsyncBenchmarker()
+            except ImportError:
+                print(f"Warning: Library 'httpx' not installed. Skipping {library}.")
+                continue
         elif library == 'requests':
             try:
                 import requests
                 benchmarkers[library] = RequestsBenchmarker()
-            except ImportError:
-                print(f"Warning: Library '{library}' not installed. Skipping.")
-                continue
-        elif library == 'httpx':
-            try:
-                import httpx
-                benchmarkers[library] = HttpxBenchmarker()
             except ImportError:
                 print(f"Warning: Library '{library}' not installed. Skipping.")
                 continue
@@ -433,7 +448,7 @@ def main():
                 print(f"Warning: Library '{library}' not installed. Skipping.")
                 continue
         else:
-            print(f"Warning: Library '{library}' not supported yet. Skipping.")
+            print(f"Warning: Unknown library '{library}'. Skipping.")
             continue
     
     if not benchmarkers:

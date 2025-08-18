@@ -354,10 +354,41 @@ class BenchmarkerAsync(Benchmarker):
 
 
 class RequestXBenchmarker(BenchmarkerSync):
-    """Benchmarker for RequestX library."""
+    """Benchmarker for RequestX library (legacy name for backward compatibility)."""
     
     def __init__(self):
         super().__init__('requestx')
+    
+    def setup(self):
+        try:
+            import requestx
+            self.session = requestx.Session()
+        except ImportError:
+            raise ImportError("RequestX library not found")
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+    
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        # RequestX doesn't have async support yet, so we'll use sync in thread
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
+
+
+class RequestXSyncBenchmarker(BenchmarkerSync):
+    """Benchmarker for RequestX library (sync variant)."""
+    
+    def __init__(self):
+        super().__init__('requestx-sync')
     
     def setup(self):
         try:
@@ -407,7 +438,7 @@ class RequestsBenchmarker(BenchmarkerSync):
 
 
 class HttpxBenchmarker(BenchmarkerSync):
-    """Benchmarker for httpx library."""
+    """Benchmarker for httpx library (legacy name for backward compatibility)."""
     
     def __init__(self):
         super().__init__('httpx')
@@ -423,6 +454,105 @@ class HttpxBenchmarker(BenchmarkerSync):
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class HttpxSyncBenchmarker(BenchmarkerSync):
+    """Benchmarker for httpx library (sync variant)."""
+    
+    def __init__(self):
+        super().__init__('httpx-sync')
+    
+    def setup(self):
+        import httpx
+        self.session = httpx.Client()
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class RequestXAsyncBenchmarker(BenchmarkerAsync):
+    """Benchmarker for RequestX library (async variant)."""
+    
+    def __init__(self):
+        super().__init__('requestx-async')
+    
+    def setup(self):
+        try:
+            import requestx
+            # RequestX doesn't have async session yet, will use sync session
+            self.session = requestx.Session()
+        except ImportError:
+            raise ImportError("RequestX library not found")
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+    
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        # RequestX doesn't have async support yet, so we'll use sync in thread
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
+
+
+class HttpxAsyncBenchmarker(BenchmarkerAsync):
+    """Benchmarker for httpx library (async variant)."""
+    
+    def __init__(self):
+        super().__init__('httpx-async')
+    
+    def setup(self):
+        import httpx
+        self.session = httpx.AsyncClient()
+    
+    def teardown(self):
+        if self.session:
+            import asyncio
+            if asyncio.iscoroutinefunction(self.session.aclose):
+                # Handle async close properly
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Create a task to close the session
+                        asyncio.create_task(self.session.aclose())
+                    else:
+                        loop.run_until_complete(self.session.aclose())
+                except Exception:
+                    pass
+            else:
+                self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        # For sync calls, create a temporary sync client
+        try:
+            import httpx
+            with httpx.Client() as client:
+                response = client.request(method, url, **kwargs)
+                return 200 <= response.status_code < 400
+        except Exception:
+            return False
+    
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = await self.session.request(method, url, **kwargs)
             return 200 <= response.status_code < 400
         except Exception:
             return False
