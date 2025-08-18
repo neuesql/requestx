@@ -104,9 +104,13 @@ class BenchmarkerSync(Benchmarker):
         """Run synchronous benchmark."""
         self.setup()
         
+        # Initialize process and CPU measurement
+        process = psutil.Process()
+        process.cpu_percent()  # First call to initialize CPU measurement
+        
         start_time = time.time()
-        start_cpu = psutil.cpu_percent()
-        start_memory = psutil.Process().memory_info().rss / 1024 / 1024
+        start_cpu = process.cpu_percent()
+        start_memory = process.memory_info().rss / 1024 / 1024
         
         successful_requests = 0
         failed_requests = 0
@@ -136,8 +140,8 @@ class BenchmarkerSync(Benchmarker):
                     failed_requests += 1
         
         end_time = time.time()
-        end_cpu = psutil.cpu_percent()
-        end_memory = psutil.Process().memory_info().rss / 1024 / 1024
+        end_cpu = process.cpu_percent()
+        end_memory = process.memory_info().rss / 1024 / 1024
         
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
@@ -158,8 +162,8 @@ class BenchmarkerSync(Benchmarker):
             total_requests=num_requests,
             successful_requests=successful_requests,
             failed_requests=failed_requests,
-            cpu_usage_percent=end_cpu - start_cpu,
-            memory_usage_mb=end_memory - start_memory,
+            cpu_usage_percent=end_cpu,  # Use absolute CPU usage
+            memory_usage_mb=end_memory,  # Use absolute memory usage
             timestamp=time.time()
         )
     
@@ -210,9 +214,13 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
         """Run asynchronous benchmark."""
         await self.async_setup()
         
+        # Initialize process and CPU measurement
+        process = psutil.Process()
+        process.cpu_percent()  # First call to initialize CPU measurement
+        
         start_time = time.time()
-        start_cpu = psutil.cpu_percent()
-        start_memory = psutil.Process().memory_info().rss / 1024 / 1024
+        start_cpu = process.cpu_percent()
+        start_memory = process.memory_info().rss / 1024 / 1024
         
         successful_requests = 0
         failed_requests = 0
@@ -248,8 +256,8 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
                 failed_requests += 1
         
         end_time = time.time()
-        end_cpu = psutil.cpu_percent()
-        end_memory = psutil.Process().memory_info().rss / 1024 / 1024
+        end_cpu = process.cpu_percent()
+        end_memory = process.memory_info().rss / 1024 / 1024
         
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
@@ -270,8 +278,8 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             total_requests=num_requests,
             successful_requests=successful_requests,
             failed_requests=failed_requests,
-            cpu_usage_percent=end_cpu - start_cpu,
-            memory_usage_mb=end_memory - start_memory,
+            cpu_usage_percent=end_cpu,  # Use absolute CPU usage
+            memory_usage_mb=end_memory,  # Use absolute memory usage
             timestamp=time.time()
         )
     
