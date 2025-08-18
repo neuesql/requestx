@@ -177,12 +177,29 @@ class BenchmarkerSync(Benchmarker):
         return sorted_data[index]
 
 
-class BenchmarkerAsync(Benchmarker):
+class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
     """Asynchronous benchmarker for HTTP libraries like requestx-async, httpx-async, aiohttp."""
     
     def __init__(self, library_name: str):
-        super().__init__(library_name)
+        Benchmarker.__init__(self, library_name)
+        unittest.IsolatedAsyncioTestCase.__init__(self)
         self._loop = None
+    
+    async def asyncSetUp(self):
+        """Async setup method called before each test."""
+        await self.async_setup()
+    
+    async def asyncTearDown(self):
+        """Async teardown method called after each test."""
+        await self.async_teardown()
+    
+    async def async_setup(self):
+        """Override this method in subclasses for async setup."""
+        pass
+    
+    async def async_teardown(self):
+        """Override this method in subclasses for async teardown."""
+        pass
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Default sync implementation that runs async method synchronously."""
@@ -486,8 +503,10 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
     
     def __init__(self):
         super().__init__('requestx-async')
+        self.session = None
     
-    def setup(self):
+    async def async_setup(self):
+        """Async setup method for RequestX."""
         try:
             import requestx
             # RequestX doesn't have async session yet, will use sync session
@@ -495,9 +514,12 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
         except ImportError:
             raise ImportError("RequestX library not found")
     
-    def teardown(self):
+    async def async_teardown(self):
+        """Async teardown method for RequestX."""
         if self.session:
             self.session.close()
+    
+
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
@@ -518,27 +540,19 @@ class HttpxAsyncBenchmarker(BenchmarkerAsync):
     
     def __init__(self):
         super().__init__('httpx-async')
+        self.session = None
     
-    def setup(self):
+    async def async_setup(self):
+        """Async setup method for httpx."""
         import httpx
         self.session = httpx.AsyncClient()
     
-    def teardown(self):
+    async def async_teardown(self):
+        """Async teardown method for httpx."""
         if self.session:
-            import asyncio
-            if asyncio.iscoroutinefunction(self.session.aclose):
-                # Handle async close properly
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # Create a task to close the session
-                        asyncio.create_task(self.session.aclose())
-                    else:
-                        loop.run_until_complete(self.session.aclose())
-                except Exception:
-                    pass
-            else:
-                self.session.close()
+            await self.session.aclose()
+    
+
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # For sync calls, create a temporary sync client
@@ -565,40 +579,31 @@ class AiohttpBenchmarker(BenchmarkerAsync):
         super().__init__('aiohttp')
         self.session = None
     
-    def setup(self):
-        """Setup aiohttp session."""
-        import asyncio
+    async def async_setup(self):
+        """Async setup method for aiohttp."""
         import aiohttp
-        
-        # Don't try to get or create event loop here
-        # Sessions will be created per request to avoid loop issues
-        self.session = None
-        self._loop = None
+        self.session = aiohttp.ClientSession()
     
-    def teardown(self):
-        """Clean up aiohttp session."""
-        # Sessions are created and closed per request, no cleanup needed
-        pass
+    async def async_teardown(self):
+        """Async teardown method for aiohttp."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+    
+
     
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Make async request using aiohttp."""
         try:
-            import aiohttp
-            
-            # Use existing session or create a temporary one
+            # Use the properly managed session from async_setup
             if self.session and not self.session.closed:
-                session = self.session
-                session_created_here = False
-            else:
-                session = aiohttp.ClientSession()
-                session_created_here = True
-            
-            try:
-                async with session.request(method, url, **kwargs) as response:
+                async with self.session.request(method, url, **kwargs) as response:
                     return 200 <= response.status < 400
-            finally:
-                if session_created_here:
-                    await session.close()
+            else:
+                # Fallback: create temporary session if none exists
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(method, url, **kwargs) as response:
+                        return 200 <= response.status < 400
         except Exception:
             return False
 
@@ -637,15 +642,19 @@ class BenchmarkRunner:
     async def run_async_benchmark(self, benchmarker: Benchmarker,
                                  url: str, method: str = 'GET') -> BenchmarkResult:
         """Run a single async benchmark."""
+        # For async benchmarkers, setup/teardown is handled by IsolatedAsyncioTestCase
         # Warmup
         if self.config.warmup_requests > 0:
-            benchmarker.setup()
+            # Only call setup/teardown for sync benchmarkers
+            if hasattr(benchmarker, 'setup') and not isinstance(benchmarker, BenchmarkerAsync):
+                benchmarker.setup()
             for _ in range(self.config.warmup_requests):
                 try:
                     await benchmarker.make_async_request(url, method, timeout=self.config.timeout)
                 except Exception:
                     pass
-            benchmarker.teardown()
+            if hasattr(benchmarker, 'teardown') and not isinstance(benchmarker, BenchmarkerAsync):
+                benchmarker.teardown()
         
         # Actual benchmark
         result = await benchmarker.benchmark_async(
