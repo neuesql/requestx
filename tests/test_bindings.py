@@ -6,11 +6,9 @@ and sync/async context detection.
 """
 
 import asyncio
-import json
-import unittest
-from unittest.mock import patch
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -383,7 +381,7 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_network_timeout_error(self):
         """Test network timeout error handling."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             requestx.get("https://httpbin.org/delay/10", timeout=1)
 
     async def test_async_invalid_url_error(self):
@@ -393,7 +391,7 @@ class TestErrorHandling(unittest.TestCase):
 
     async def test_async_network_timeout_error(self):
         """Test network timeout error handling in async context."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             await requestx.get("https://httpbin.org/delay/10", timeout=1)
 
 

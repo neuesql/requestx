@@ -8,14 +8,11 @@ integration tests, compatibility tests, and both sync/async usage patterns.
 Requirements tested: 6.1, 7.1, 7.2, 7.3, 7.4
 """
 
-import unittest
 import asyncio
-import json
-import time
-import threading
-import sys
 import os
-from unittest.mock import patch, MagicMock
+import sys
+import time
+import unittest
 
 # Add the parent directory to the path to import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -487,7 +484,7 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_invalid_method_error(self):
         """Test invalid HTTP method error."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.request("INVALID_METHOD", f"{self.base_url}/get")
 
     async def test_async_error_handling(self):
@@ -805,7 +802,7 @@ if __name__ == "__main__":
         async_success = False
 
     # Summary
-    print(f"\nTest Summary:")
+    print("\nTest Summary:")
     print(f"Sync tests: {'PASSED' if sync_result.wasSuccessful() else 'FAILED'}")
     print(f"Async tests: {'PASSED' if async_success else 'FAILED'}")
 

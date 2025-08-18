@@ -8,11 +8,10 @@ functionality and validates the requirements for task 9.
 Requirements tested: 6.1, 7.1, 7.2, 7.3, 7.4
 """
 
-import unittest
 import asyncio
-import time
-import sys
 import os
+import sys
+import unittest
 
 # Add the parent directory to the path to import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -280,7 +279,7 @@ class TestSessionManagement(unittest.TestCase):
         session = requestx.Session()
 
         # Make multiple requests
-        for i in range(3):
+        for _i in range(3):
             response = session.get(f"{self.base_url}/get", timeout=self.timeout)
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -569,7 +568,7 @@ if __name__ == "__main__":
         print("✓ Integration Tests: Live HTTP testing with httpbin.org")
         print("✓ Both sync and async usage patterns extensively tested")
 
-        print(f"\nRequirements Validated:")
+        print("\nRequirements Validated:")
         print("✓ 6.1: Automated testing with comprehensive test suite")
         print("✓ 7.1: All HTTP methods tested with various scenarios")
         print("✓ 7.2: Error conditions handled (network, timeout, HTTP errors)")

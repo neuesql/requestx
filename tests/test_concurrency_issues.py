@@ -3,13 +3,11 @@
 Focused concurrency issue detection for RequestX.
 """
 
-import time
-import threading
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import statistics
+import threading
+import time
 import traceback
-import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import requestx
@@ -289,7 +287,7 @@ def test_rapid_sequential_requests():
         for i in range(num_requests):
             try:
                 req_start = time.time()
-                response = requestx.get(test_url)
+                _ = requestx.get(test_url)
                 req_end = time.time()
 
                 response_times.append((req_end - req_start) * 1000)
@@ -305,7 +303,7 @@ def test_rapid_sequential_requests():
         end_time = time.time()
         total_time = end_time - start_time
 
-        print(f"  RequestX Sequential Results:")
+        print("  RequestX Sequential Results:")
         print(f"    Total time: {total_time:.2f}s")
         print(f"    Successful: {successful}/{num_requests}")
         print(f"    Errors: {errors}")
@@ -328,7 +326,7 @@ def test_rapid_sequential_requests():
         for i in range(num_requests):
             try:
                 req_start = time.time()
-                response = requests.get(test_url)
+                _ = requests.get(test_url)
                 req_end = time.time()
 
                 response_times.append((req_end - req_start) * 1000)
@@ -344,7 +342,7 @@ def test_rapid_sequential_requests():
         end_time = time.time()
         total_time = end_time - start_time
 
-        print(f"  Requests Sequential Results:")
+        print("  Requests Sequential Results:")
         print(f"    Total time: {total_time:.2f}s")
         print(f"    Successful: {successful}/{num_requests}")
         print(f"    Errors: {errors}")

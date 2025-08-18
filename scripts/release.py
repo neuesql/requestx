@@ -122,10 +122,10 @@ def generate_changelog(version: str) -> str:
     else:
         changelog += "- No changes recorded\n"
 
-    changelog += f"\n### Installation\n\n"
-    changelog += f"```bash\n"
+    changelog += "\n### Installation\n\n"
+    changelog += "```bash\n"
     changelog += f"pip install requestx=={version}\n"
-    changelog += f"```\n"
+    changelog += "```\n"
 
     return changelog
 

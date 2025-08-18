@@ -8,14 +8,11 @@ behavior against a live HTTP testing service, ensuring real-world compatibility.
 Requirements tested: 6.1, 7.1, 7.2, 7.3, 7.4
 """
 
-import unittest
 import asyncio
-import json
-import base64
-import time
-import sys
 import os
-from urllib.parse import urlencode
+import sys
+import time
+import unittest
 
 # Add the parent directory to the path to import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -650,7 +647,7 @@ if __name__ == "__main__":
         async_success = False
 
     # Summary
-    print(f"\nIntegration Test Summary:")
+    print("\nIntegration Test Summary:")
     print(f"Sync tests: {'PASSED' if sync_result.wasSuccessful() else 'FAILED'}")
     print(f"Async tests: {'PASSED' if async_success else 'FAILED'}")
 

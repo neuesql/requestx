@@ -6,12 +6,10 @@ This script tests the installation process and verifies that bundled Rust depend
 work correctly across different scenarios.
 """
 
-import os
-import sys
-import subprocess
-import tempfile
-import shutil
 import platform
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 

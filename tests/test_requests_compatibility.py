@@ -5,9 +5,9 @@ This test verifies that the Response object behaves identically to requests.Resp
 for common usage patterns.
 """
 
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -53,7 +53,7 @@ class TestRequestsCompatibility(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
         # Should raise exception
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             response.raise_for_status()
 
     def test_conditional_processing_pattern(self):
@@ -95,7 +95,7 @@ class TestRequestsCompatibility(unittest.TestCase):
 
         # Common pattern: try to parse JSON, handle errors
         try:
-            data = response.json()
+            response.json()
             self.fail("Should have raised exception for non-JSON content")
         except Exception:
             # This is expected
@@ -110,7 +110,7 @@ class TestRequestsCompatibility(unittest.TestCase):
 
         # Should be able to iterate
         header_count = 0
-        for key in headers:
+        for _key in headers:
             header_count += 1
         self.assertGreater(header_count, 0)
 

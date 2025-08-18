@@ -6,9 +6,9 @@ json(), raise_for_status(), and other requests-compatible methods.
 """
 
 import json
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -105,7 +105,7 @@ class TestResponseProperties(unittest.TestCase):
         response = requestx.get(self.test_url)
 
         # Initially might be None or detected from headers
-        initial_encoding = response.encoding
+        _initial_encoding = response.encoding
 
         # Should be able to set encoding
         response.encoding = "utf-8"
@@ -161,7 +161,7 @@ class TestResponseMethods(unittest.TestCase):
         # Get plain text response
         response = requestx.get("https://httpbin.org/html")
 
-        with self.assertRaises(Exception):  # Should raise JSON decode error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise JSON decode error
             response.json()
 
     def test_raise_for_status_success(self):
@@ -178,14 +178,14 @@ class TestResponseMethods(unittest.TestCase):
         """Test raise_for_status() with 4xx client error."""
         response = requestx.get(self.status_url.format(404))
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             response.raise_for_status()
 
     def test_raise_for_status_server_error(self):
         """Test raise_for_status() with 5xx server error."""
         response = requestx.get(self.status_url.format(500))
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             response.raise_for_status()
 
     def test_raise_for_status_redirect(self):

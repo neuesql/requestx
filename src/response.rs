@@ -105,11 +105,11 @@ impl Response {
     fn json(&mut self, py: Python) -> PyResult<PyObject> {
         let text = self.text()?;
         let value: Value =
-            serde_json::from_str(&text).map_err(|e| RequestxError::JsonDecodeError(e))?;
+            serde_json::from_str(&text).map_err(RequestxError::JsonDecodeError)?;
 
         pythonize::pythonize(py, &value)
             .map_err(|e| RequestxError::PythonError(e.to_string()).into())
-            .map(|bound| bound.unbind())
+            .map(Bound::unbind)
     }
 
     /// Raise an exception for HTTP error status codes

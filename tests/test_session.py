@@ -4,9 +4,9 @@ Tests Requirements: 1.3, 7.1, 7.2
 """
 
 import asyncio
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -345,7 +345,7 @@ class TestSessionAsync(unittest.TestCase):
             responses = await asyncio.gather(*tasks)
 
             # All should be successful
-            for i, response in enumerate(responses):
+            for _i, response in enumerate(responses):
                 self.assertEqual(response.status_code, 200)
 
                 # Verify session header was sent in all requests
@@ -469,13 +469,13 @@ class TestSessionErrorHandling(unittest.TestCase):
 
     def test_session_timeout(self):
         """Test Session timeout handling."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             self.session.get("https://httpbin.org/delay/10", timeout=1)
 
     def test_session_network_error_handling(self):
         """Test Session handles network errors gracefully."""
         # This should raise a connection error
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             self.session.get("https://nonexistent-domain-12345.com")
 
 

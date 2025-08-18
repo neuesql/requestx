@@ -54,7 +54,7 @@ fn create_custom_client(
 
     let tls_connector = https_builder
         .build()
-        .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {}", e)))?;
+        .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {e}")))?;
 
     let mut http_connector = hyper::client::HttpConnector::new();
     http_connector.enforce_http(false);
@@ -294,7 +294,7 @@ impl RequestxClient {
         // Block on the spawned task handle instead of the runtime directly
         runtime
             .block_on(handle)
-            .map_err(|e| RequestxError::RuntimeError(format!("Task execution failed: {}", e)))?
+            .map_err(|e| RequestxError::RuntimeError(format!("Task execution failed: {e}")))?
     }
 
     /// Static method to execute async request with a given client
@@ -348,7 +348,7 @@ impl RequestxClient {
         if let Some(ref auth) = config.auth {
             let credentials = format!("{}:{}", auth.0, auth.1);
             let encoded = BASE64_STANDARD.encode(credentials.as_bytes());
-            request_builder = request_builder.header("authorization", format!("Basic {}", encoded));
+            request_builder = request_builder.header("authorization", format!("Basic {encoded}"));
         }
 
         // Build request body more efficiently
@@ -396,7 +396,7 @@ impl RequestxClient {
 
         let request = request_builder
             .body(body)
-            .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {e}")))?;
 
         // Execute the request with optional timeout
         let response = if let Some(timeout) = config.timeout {
@@ -415,10 +415,8 @@ impl RequestxClient {
                 let error_msg = e.to_string().to_lowercase();
 
                 // Map specific hyper errors to appropriate RequestxError types
-                if error_msg.contains("dns") || error_msg.contains("resolve") {
-                    return Err(RequestxError::NetworkError(e));
-                } else if error_msg.contains("connect") || error_msg.contains("connection refused")
-                {
+                if error_msg.contains("dns") || error_msg.contains("resolve") ||
+                   error_msg.contains("connect") || error_msg.contains("connection refused") {
                     return Err(RequestxError::NetworkError(e));
                 } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
                     return Err(RequestxError::ConnectTimeout);
@@ -430,10 +428,7 @@ impl RequestxClient {
                 } else if error_msg.contains("absolute-form uris")
                     || error_msg.contains("invalid uri")
                 {
-                    return Err(RequestxError::RuntimeError(format!(
-                        "Invalid URL: {}",
-                        error_msg
-                    )));
+                    return Err(RequestxError::RuntimeError(format!("Invalid URL: {error_msg}")));
                 } else if error_msg.contains("proxy") {
                     return Err(RequestxError::ProxyError(error_msg));
                 } else {
@@ -458,25 +453,22 @@ impl RequestxClient {
                     let redirect_url: Uri = if location_str.starts_with("http") {
                         // Absolute URL
                         location_str.parse().map_err(|e| {
-                            RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
+                            RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
                         })?
                     } else {
                         // Relative URL - construct absolute URL
                         let base_scheme = final_url.scheme_str().unwrap_or("https");
                         let base_host = final_url.host().unwrap_or("");
                         let base_port = if let Some(port) = final_url.port_u16() {
-                            format!(":{}", port)
+                            format!(":{port}")
                         } else {
                             String::new()
                         };
 
-                        format!(
-                            "{}://{}{}{}",
-                            base_scheme, base_host, base_port, location_str
-                        )
+                        format!("{base_scheme}://{base_host}{base_port}{location_str}")
                         .parse()
                         .map_err(|e| {
-                            RequestxError::RuntimeError(format!("Invalid redirect URL: {}", e))
+                            RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
                         })?
                     };
 
@@ -487,8 +479,7 @@ impl RequestxClient {
                         .body(Body::empty())
                         .map_err(|e| {
                             RequestxError::RuntimeError(format!(
-                                "Failed to build redirect request: {}",
-                                e
+                                "Failed to build redirect request: {e}"
                             ))
                         })?;
 

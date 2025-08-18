@@ -190,12 +190,12 @@ fn parse_headers(headers_obj: &Bound<'_, PyAny>) -> PyResult<HeaderMap> {
 
             // Validate header name
             let header_name = key_str.parse::<hyper::header::HeaderName>().map_err(|e| {
-                RequestxError::InvalidHeader(format!("Invalid header name '{}': {}", key_str, e))
+                RequestxError::InvalidHeader(format!("Invalid header name '{key_str}': {e}"))
             })?;
 
             // Validate header value - ensure proper UTF-8 encoding
             let header_value = hyper::header::HeaderValue::from_str(&value_str).map_err(|e| {
-                RequestxError::InvalidHeader(format!("Invalid header value '{}': {}", value_str, e))
+                RequestxError::InvalidHeader(format!("Invalid header value '{value_str}': {e}"))
             })?;
 
             headers.insert(header_name, header_value);
@@ -258,7 +258,7 @@ fn parse_json(py: Python, json_obj: &Bound<'_, PyAny>) -> PyResult<Value> {
 
     // Parse the JSON string into serde_json::Value
     serde_json::from_str(&json_str).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse JSON: {}", e))
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse JSON: {e}"))
     })
 }
 
@@ -315,8 +315,7 @@ fn parse_proxies(proxies_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, Str
             // Validate proxy URL format
             if !proxy_url.contains("://") {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid proxy URL format: {}",
-                    proxy_url
+                    "Invalid proxy URL format: {proxy_url}"
                 )));
             }
 
@@ -523,7 +522,7 @@ fn request(
         "CONNECT" => Method::CONNECT,
         _ => {
             return Err(
-                RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into(),
+                RequestxError::RuntimeError(format!("Invalid HTTP method: {method}")).into(),
             )
         }
     };

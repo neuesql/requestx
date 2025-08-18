@@ -3,9 +3,9 @@ Simple integration tests for Python-Rust binding functionality.
 """
 
 import asyncio
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -187,7 +187,7 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_invalid_url_error(self):
         """Test invalid URL error handling."""
-        with self.assertRaises(Exception):  # Should raise some kind of error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise some kind of error
             requestx.get("not-a-valid-url")
 
     def test_invalid_method_error(self):
@@ -197,7 +197,7 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_timeout_error(self):
         """Test timeout error handling."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             requestx.get("https://httpbin.org/delay/10", timeout=1)
 
 

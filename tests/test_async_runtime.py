@@ -10,11 +10,11 @@ Requirements tested: 2.1, 2.2, 2.3, 2.4, 7.3
 """
 
 import asyncio
-import unittest
+import os
+import sys
 import threading
 import time
-import sys
-import os
+import unittest
 
 # Add the parent directory to the path to import requestx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -233,7 +233,7 @@ class TestEventLoopIntegration(unittest.TestCase):
         """Test execution when no event loop is running."""
         # Ensure no event loop is running
         try:
-            loop = asyncio.get_running_loop()
+            _loop = asyncio.get_running_loop()
             self.fail("Event loop should not be running in sync test")
         except RuntimeError:
             pass  # Expected - no event loop running
@@ -317,7 +317,7 @@ class TestRuntimeBehavior(unittest.TestCase):
     def test_runtime_resource_cleanup(self):
         """Test that runtime resources are properly managed."""
         # Make multiple requests to test resource management
-        for i in range(10):
+        for _i in range(10):
             response = requestx.get(self.test_url)
             self.assertEqual(response.status_code, 200)
 
@@ -328,7 +328,7 @@ class TestRuntimeBehavior(unittest.TestCase):
     async def test_async_runtime_resource_cleanup(self):
         """Test async runtime resource cleanup."""
         # Make multiple async requests
-        for i in range(10):
+        for _i in range(10):
             response = await requestx.get(self.test_url)
             self.assertEqual(response.status_code, 200)
 
@@ -348,12 +348,12 @@ class TestRuntimeBehavior(unittest.TestCase):
 
     def test_timeout_handling_sync(self):
         """Test timeout handling in sync context."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             requestx.get("https://httpbin.org/delay/10", timeout=1)
 
     async def test_timeout_handling_async(self):
         """Test timeout handling in async context."""
-        with self.assertRaises(Exception):  # Should raise timeout error
+        with self.assertRaises(Exception):  # noqa: B017 Should raise timeout error
             await requestx.get("https://httpbin.org/delay/10", timeout=1)
 
 
@@ -415,7 +415,7 @@ def run_async_tests():
         ]
 
         print("Running async tests...")
-        for i, (test_name, test_coro) in enumerate(async_tests):
+        for _i, (test_name, test_coro) in enumerate(async_tests):
             try:
                 await test_coro
                 print(f"  ✓ {test_name} passed")
@@ -460,7 +460,7 @@ if __name__ == "__main__":
         async_success = False
 
     # Summary
-    print(f"\nTest Summary:")
+    print("\nTest Summary:")
     print(f"Sync tests: {'PASSED' if sync_result.wasSuccessful() else 'FAILED'}")
     print(f"Async tests: {'PASSED' if async_success else 'FAILED'}")
 

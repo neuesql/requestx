@@ -3,9 +3,9 @@
 Integration tests for advanced HTTP features to verify they work together correctly.
 """
 
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -219,7 +219,7 @@ class TestAdvancedIntegration(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
         # Test with very short timeout
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/delay/3", timeout=0.5)  # Very short timeout
 
 

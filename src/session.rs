@@ -35,8 +35,7 @@ impl Session {
 
         let client = RequestxClient::with_custom_client(hyper_client).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create session client: {}",
-                e
+                "Failed to create session client: {e}"
             ))
         })?;
 
@@ -150,13 +149,13 @@ impl Session {
             "CONNECT" => Method::CONNECT,
             _ => {
                 return Err(
-                    RequestxError::RuntimeError(format!("Invalid HTTP method: {}", method)).into(),
+                    RequestxError::RuntimeError(format!("Invalid HTTP method: {method}")).into(),
                 )
             }
         };
 
         let uri: Uri = url.parse().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {}", e))
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid URL: {e}"))
         })?;
 
         // Parse kwargs and merge with session headers
@@ -230,8 +229,7 @@ impl Session {
 
             let header_name = key_str.parse::<hyper::header::HeaderName>().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid header name '{}': {}",
-                    key_str, e
+                    "Invalid header name '{key_str}': {e}"
                 ))
             })?;
 
@@ -239,8 +237,7 @@ impl Session {
                 .parse::<hyper::header::HeaderValue>()
                 .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Invalid header value '{}': {}",
-                        value_str, e
+                        "Invalid header value '{value_str}': {e}"
                     ))
                 })?;
 
@@ -270,15 +267,13 @@ impl Session {
 
         let header_name = name.parse::<hyper::header::HeaderName>().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header name '{}': {}",
-                name, e
+                "Invalid header name '{name}': {e}"
             ))
         })?;
 
         let header_value = value.parse::<hyper::header::HeaderValue>().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header value '{}': {}",
-                value, e
+                "Invalid header value '{value}': {e}"
             ))
         })?;
 
@@ -292,8 +287,7 @@ impl Session {
 
         let header_name = name.parse::<hyper::header::HeaderName>().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header name '{}': {}",
-                name, e
+                "Invalid header name '{name}': {e}"
             ))
         })?;
 
@@ -344,8 +338,7 @@ impl Session {
         let headers_count = self.headers.lock().unwrap().len();
         let cookies_count = self.cookies.lock().unwrap().iter_any().count();
         format!(
-            "<Session headers={} cookies={}>",
-            headers_count, cookies_count
+            "<Session headers={headers_count} cookies={cookies_count}>"
         )
     }
 }

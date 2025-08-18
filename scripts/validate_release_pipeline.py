@@ -5,11 +5,10 @@ Validate the complete release pipeline setup.
 This script checks that all components of the release pipeline are properly configured.
 """
 
-import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List
 
 
 def check_file_exists(file_path: str, description: str) -> bool:

@@ -7,18 +7,36 @@ the familiar requests interface.
 """
 
 from ._requestx import (
-    # HTTP method functions
-    get as _get,
-    post as _post,
-    put as _put,
-    delete as _delete,
-    head as _head,
-    options as _options,
-    patch as _patch,
-    request as _request,
     # Classes
     Response as _Response,
+)
+from ._requestx import (
     Session,
+)
+from ._requestx import (
+    delete as _delete,
+)
+from ._requestx import (
+    # HTTP method functions
+    get as _get,
+)
+from ._requestx import (
+    head as _head,
+)
+from ._requestx import (
+    options as _options,
+)
+from ._requestx import (
+    patch as _patch,
+)
+from ._requestx import (
+    post as _post,
+)
+from ._requestx import (
+    put as _put,
+)
+from ._requestx import (
+    request as _request,
 )
 
 

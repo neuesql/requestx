@@ -10,7 +10,6 @@ import json
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -103,7 +102,7 @@ def test_build_system() -> bool:
     if exit_code != 0:
         print(f"❌ Module import failed: {stderr}")
         return False
-    print(f"  ✅ Module import successful")
+    print("  ✅ Module import successful")
 
     return True
 

@@ -74,13 +74,13 @@ impl From<RequestxError> for PyErr {
                 // Map hyper errors to appropriate connection errors
                 let error_str = e.to_string();
                 if error_str.contains("dns") || error_str.contains("resolve") {
-                    PyConnectionError::new_err(format!("Failed to resolve hostname: {}", e))
+                    PyConnectionError::new_err(format!("Failed to resolve hostname: {e}"))
                 } else if error_str.contains("connect") || error_str.contains("connection") {
-                    PyConnectionError::new_err(format!("Connection error: {}", e))
+                    PyConnectionError::new_err(format!("Connection error: {e}"))
                 } else if error_str.contains("timeout") {
-                    PyTimeoutError::new_err(format!("Connection timeout: {}", e))
+                    PyTimeoutError::new_err(format!("Connection timeout: {e}"))
                 } else {
-                    PyConnectionError::new_err(format!("Network error: {}", e))
+                    PyConnectionError::new_err(format!("Network error: {e}"))
                 }
             }
             RequestxError::TimeoutError(_) => PyTimeoutError::new_err(
@@ -94,17 +94,17 @@ impl From<RequestxError> for PyErr {
             ),
             RequestxError::HttpError { status, message } => {
                 // Create HTTPError with status code information
-                PyRuntimeError::new_err(format!("{} Client Error: {} for url", status, message))
+                PyRuntimeError::new_err(format!("{status} Client Error: {message} for url"))
             }
             RequestxError::JsonDecodeError(e) => {
-                PyValueError::new_err(format!("Failed to decode JSON response: {}", e))
+                PyValueError::new_err(format!("Failed to decode JSON response: {e}"))
             }
-            RequestxError::InvalidUrl(e) => PyValueError::new_err(format!("Invalid URL: {}", e)),
+            RequestxError::InvalidUrl(e) => PyValueError::new_err(format!("Invalid URL: {e}")),
             RequestxError::UrlRequired => {
                 PyValueError::new_err("A valid URL is required to make a request")
             }
             RequestxError::InvalidSchema(schema) => {
-                PyValueError::new_err(format!("Invalid URL schema: {}", schema))
+                PyValueError::new_err(format!("Invalid URL schema: {schema}"))
             }
             RequestxError::MissingSchema => {
                 PyValueError::new_err("No connection adapters were found for the URL")
@@ -113,44 +113,42 @@ impl From<RequestxError> for PyErr {
                 // Map HTTP request building errors
                 let error_str = e.to_string();
                 if error_str.contains("header") {
-                    PyValueError::new_err(format!("Invalid header: {}", e))
+                    PyValueError::new_err(format!("Invalid header: {e}"))
                 } else {
-                    PyRuntimeError::new_err(format!("HTTP request error: {}", e))
+                    PyRuntimeError::new_err(format!("HTTP request error: {e}"))
                 }
             }
             RequestxError::SslError(msg) => {
-                PyConnectionError::new_err(format!("SSL error: {}", msg))
+                PyConnectionError::new_err(format!("SSL error: {msg}"))
             }
             RequestxError::InvalidHeader(msg) => {
-                PyValueError::new_err(format!("Invalid header: {}", msg))
+                PyValueError::new_err(format!("Invalid header: {msg}"))
             }
             RequestxError::TooManyRedirects => {
                 PyRuntimeError::new_err("Exceeded maximum number of redirects")
             }
             RequestxError::ProxyError(msg) => {
-                PyConnectionError::new_err(format!("Proxy error: {}", msg))
+                PyConnectionError::new_err(format!("Proxy error: {msg}"))
             }
             RequestxError::ChunkedEncodingError(msg) => {
-                PyConnectionError::new_err(format!("Chunked encoding error: {}", msg))
+                PyConnectionError::new_err(format!("Chunked encoding error: {msg}"))
             }
             RequestxError::ContentDecodingError(msg) => {
-                PyRuntimeError::new_err(format!("Content decoding error: {}", msg))
+                PyRuntimeError::new_err(format!("Content decoding error: {msg}"))
             }
             RequestxError::StreamConsumedError => {
                 PyRuntimeError::new_err("The content for this response was already consumed")
             }
             RequestxError::RuntimeError(msg) => {
                 // Check for specific error patterns and map appropriately
-                if msg.contains("Invalid URL:") {
-                    PyValueError::new_err(msg)
-                } else if msg.contains("Invalid HTTP method:") {
+                if msg.contains("Invalid URL:") || msg.contains("Invalid HTTP method:") {
                     PyValueError::new_err(msg)
                 } else {
-                    PyRuntimeError::new_err(format!("Runtime error: {}", msg))
+                    PyRuntimeError::new_err(format!("Runtime error: {msg}"))
                 }
             }
             RequestxError::PythonError(msg) => {
-                PyRuntimeError::new_err(format!("Python error: {}", msg))
+                PyRuntimeError::new_err(format!("Python error: {msg}"))
             }
         }
     }

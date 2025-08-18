@@ -3,10 +3,9 @@
 Simple concurrency test to verify RequestX optimizations.
 """
 
-import time
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import statistics
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import requestx
@@ -153,7 +152,7 @@ def test_simple_performance():
     # Analyze RequestX scaling
     requestx_results = [r for r in results if r["library"] == "RequestX"]
     if len(requestx_results) >= 2:
-        print(f"\nRequestX Scaling Analysis:")
+        print("\nRequestX Scaling Analysis:")
         print("-" * 30)
 
         base_result = requestx_results[0]

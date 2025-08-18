@@ -12,7 +12,7 @@ static GLOBAL_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 fn get_global_runtime() -> &'static Arc<Runtime> {
     GLOBAL_RUNTIME.get_or_init(|| {
         let worker_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() * 2).min(16).max(4))
+            .map(|n| (n.get() * 2).clamp(4, 16))
             .unwrap_or(8);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -59,9 +59,8 @@ impl RuntimeManager {
     /// Enhanced async context detection using pyo3-asyncio
     pub fn is_async_context(py: Python) -> PyResult<bool> {
         // Method 1: Try to get the current asyncio event loop using pyo3-asyncio
-        match get_current_loop(py) {
-            Ok(_) => return Ok(true),
-            Err(_) => {}
+        if get_current_loop(py).is_ok() {
+            return Ok(true);
         }
 
         // Method 2: Fallback to checking asyncio directly

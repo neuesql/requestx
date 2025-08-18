@@ -5,11 +5,10 @@ This module tests all error scenarios and exception compatibility with the reque
 Tests cover network errors, timeouts, HTTP errors, SSL errors, and other edge cases.
 """
 
-import unittest
 import asyncio
+import unittest
+
 import requestx
-import time
-from unittest.mock import patch
 
 
 class TestExceptionHierarchy(unittest.TestCase):
@@ -390,7 +389,7 @@ def run_async_tests():
         try:
             await method()
             return True, None
-        except AssertionError as e:
+        except AssertionError:
             # Test passed - the exception was expected
             return True, None
         except Exception as e:

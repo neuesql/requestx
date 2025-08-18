@@ -2,6 +2,7 @@
 """Unit tests for the core HTTP client functionality using unittest."""
 
 import unittest
+
 import requestx
 
 
@@ -135,7 +136,7 @@ class TestResponseObject(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
         # Test raise_for_status method
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017 - Expected exception for test
             response.raise_for_status()
 
 
@@ -144,18 +145,18 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_invalid_url(self):
         """Test that invalid URLs raise appropriate errors."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017 - Expected exception for test
             requestx.get("not-a-valid-url")
 
     def test_invalid_method_error(self):
         """Test handling of invalid HTTP methods."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017 - Expected exception for test
             requestx.request("INVALID_METHOD", "https://httpbin.org/get")
 
     def test_network_error_handling(self):
         """Test handling of network errors."""
         # Test connection to non-existent domain
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017 - Expected exception for test
             requestx.get("https://this-domain-does-not-exist-12345.com")
 
 

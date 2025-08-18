@@ -4,11 +4,9 @@ Unit tests for advanced HTTP features including parameters, headers, data, JSON,
 timeout handling, redirect control, SSL verification, proxy support, and authentication.
 """
 
-import unittest
-import sys
 import os
-import json
-import base64
+import sys
+import unittest
 
 # Add the project root to the path so we can import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -232,28 +230,28 @@ class TestAdvancedHTTPFeatures(unittest.TestCase):
 
     def test_invalid_timeout(self):
         """Test error handling for invalid timeout values."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/get", timeout=-1.0)
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/get", timeout=4000.0)  # Too large
 
     def test_invalid_headers(self):
         """Test error handling for invalid headers."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/get", headers={"Invalid\nHeader": "value"})
 
     def test_invalid_auth(self):
         """Test error handling for invalid authentication."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/get", auth="invalid")
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(f"{self.base_url}/get", auth=("only_username",))
 
     def test_data_and_json_conflict(self):
         """Test error handling when both data and json are provided."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.post(
                 f"{self.base_url}/post", data="text data", json={"key": "value"}
             )
@@ -324,7 +322,7 @@ class TestEdgeCases(unittest.TestCase):
     def test_large_json_payload(self):
         """Test with large JSON payload."""
         large_data = {
-            "data": ["item_{}".format(i) for i in range(1000)],
+            "data": [f"item_{i}" for i in range(1000)],
             "metadata": {"count": 1000, "description": "Large test payload"},
         }
 
