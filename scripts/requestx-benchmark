@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python')
 
 import requestx
 from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
-from requestx import export_to_grafana_cloud, export_to_otlp as export_to_custom_otlp
+from requestx.benchmark import RequestXBenchmarker
+from requestx.exporter import export_to_grafana_cloud, export_to_otlp
+from requestx.profiler import profile_context, PerformanceMetrics
 
 
 def parse_arguments():
@@ -29,22 +31,46 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run quick benchmarks
+  # Basic usage - run quick benchmarks with default settings
   ./requestx-benchmark --quick
   
-  # Run full benchmarks with custom parameters
-  ./requestx-benchmark --concurrency 1,10,100,1000 --requests 200
+  # Full benchmarks with custom concurrency and request count
+  ./requestx-benchmark --concurrency 1,10,100,1000 --requests 500
   
-  # Run benchmarks and export to Grafana Cloud
-  ./requestx-benchmark --grafana-cloud
-  
-  # Run specific HTTP methods only
+  # Test specific HTTP methods only
   ./requestx-benchmark --methods GET,POST --sizes small,medium
   
-  # Run with custom output directory
-  ./requestx-benchmark --output-dir ./my_results
+  # Use custom test server (default is https://httpbin.org)
+  ./requestx-benchmark --host http://localhost:8080 --quick
+  ./requestx-benchmark --host https://api.example.com --methods GET
+  
+  # Compare specific libraries
+  ./requestx-benchmark --libraries requestx,requests --quick
+  ./requestx-benchmark --libraries requestx --verbose
+  
+  # Custom output and reporting
+  ./requestx-benchmark --output-dir ./my_results --verbose
+  ./requestx-benchmark --no-csv --output-dir ./json_only
+  
+  # Export results to monitoring systems
+  ./requestx-benchmark --grafana-cloud --quick
+  ./requestx-benchmark --otlp-endpoint http://localhost:4317
+  ./requestx-benchmark --otlp-endpoint http://jaeger:14268/api/traces --otlp-headers '{"Authorization":"Bearer token"}'
+  
+  # Performance testing scenarios
+  ./requestx-benchmark --concurrency 1,50,100,500 --requests 1000 --timeout 60
+  ./requestx-benchmark --methods GET,POST,PUT,DELETE --sizes small,large --warmup 10
+  
+  # Development and debugging
+  ./requestx-benchmark --quick --verbose --libraries requestx
+  ./requestx-benchmark --host http://localhost:3000 --methods GET --requests 10 --verbose
         """
     )
+    
+    # Show help if no arguments provided
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
     
     # Test configuration
     parser.add_argument(
@@ -143,6 +169,14 @@ Examples:
         help='Comma-separated libraries to test (default: all available)'
     )
     
+    # Host configuration
+    parser.add_argument(
+        '--host',
+        type=str,
+        default='http://localhost:8080',
+        help='Base URL for the test server (default: http://localhost:8080)'
+    )
+    
     # Verbose output
     parser.add_argument(
         '--verbose', '-v', 
@@ -156,35 +190,41 @@ Examples:
 def create_config_from_args(args) -> BenchmarkConfig:
     """Create BenchmarkConfig from command line arguments."""
     
-    # Parse concurrency levels
-    concurrency_levels = [int(x.strip()) for x in args.concurrency.split(',')]
+    # Parse libraries
+    libraries = [x.strip().lower() for x in args.libraries.split(',')]
     
-    # Parse HTTP methods
-    http_methods = [x.strip().upper() for x in args.methods.split(',')]
-    
-    # Parse request sizes
-    request_sizes = [x.strip() for x in args.sizes.split(',')]
+    # Parse HTTP methods to endpoints
+    endpoints = []
+    for method in args.methods.split(','):
+        method = method.strip().upper()
+        if method == 'GET':
+            endpoints.append('/get')
+        elif method == 'POST':
+            endpoints.append('/post')
+        elif method == 'PUT':
+            endpoints.append('/put')
+        elif method == 'DELETE':
+            endpoints.append('/delete')
+        else:
+            endpoints.append(f'/{method.lower()}')
     
     # Quick mode adjustments
     if args.quick:
-        concurrency_levels = [1, 10]
-        request_sizes = ['small']
-        test_requests = 20
+        concurrent_requests = 10
+        num_requests = 20
         warmup_requests = 2
     else:
-        test_requests = args.requests
+        concurrent_requests = int(args.concurrency.split(',')[0])  # Use first concurrency level
+        num_requests = args.requests
         warmup_requests = args.warmup
     
     return BenchmarkConfig(
-        concurrency_levels=concurrency_levels,
-        request_sizes=request_sizes,
-        http_methods=http_methods,
-        warmup_requests=warmup_requests,
-        test_requests=test_requests,
+        num_requests=num_requests,
+        concurrent_requests=concurrent_requests,
         timeout=args.timeout,
-        output_dir=args.output_dir,
-        csv_output=not args.no_csv,
-        json_output=not args.no_json
+        warmup_requests=warmup_requests,
+        libraries=libraries,
+        endpoints=endpoints
     )
 
 
@@ -202,39 +242,66 @@ def filter_libraries(runner: BenchmarkRunner, libraries: str) -> None:
         del runner.benchmarkers[lib_name]
 
 
-def export_results(results: List[BenchmarkResult], args) -> None:
-    """Export results to configured destinations."""
-    
-    # Export to Grafana Cloud
-    if args.grafana_cloud:
-        print("\nExporting to Grafana Cloud...")
-        try:
-            export_to_grafana_cloud(results)
-        except Exception as e:
-            print(f"Failed to export to Grafana Cloud: {e}")
-    
-    # Export to custom OTLP endpoint
-    if args.otlp_endpoint:
-        print(f"\nExporting to OTLP endpoint: {args.otlp_endpoint}")
-        
-        headers = {}
-        if args.otlp_headers:
-            for header in args.otlp_headers.split(','):
-                if '=' in header:
-                    key, value = header.split('=', 1)
-                    headers[key.strip()] = value.strip()
-        
-        try:
-            export_to_custom_otlp(results, args.otlp_endpoint, headers)
-        except Exception as e:
-            print(f"Failed to export to OTLP endpoint: {e}")
-
-
-def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
+def generate_report(results: List[BenchmarkResult]) -> None:
     """Generate a comprehensive benchmark report."""
     
     if not results:
         return
+    
+    print("\n" + "="*50)
+    print("BENCHMARK REPORT")
+    print("="*50)
+    
+    # Group by library
+    library_stats = {}
+    for result in results:
+        lib = result.library
+        if lib not in library_stats:
+            library_stats[lib] = {
+                'total_tests': 0,
+                'avg_rps': 0,
+                'avg_response_time': 0,
+                'avg_memory': 0,
+                'total_errors': 0,
+                'total_requests': 0
+            }
+        
+        stats = library_stats[lib]
+        stats['total_tests'] += 1
+        stats['avg_rps'] += result.requests_per_second
+        stats['avg_response_time'] += result.average_response_time
+        stats['avg_memory'] += result.memory_usage_mb
+        stats['total_errors'] += result.failed_requests
+        stats['total_requests'] += result.total_requests
+    
+    # Calculate averages
+    for lib, stats in library_stats.items():
+        if stats['total_tests'] > 0:
+            stats['avg_rps'] /= stats['total_tests']
+            stats['avg_response_time'] /= stats['total_tests']
+            stats['avg_memory'] /= stats['total_tests']
+    
+    # Print summary
+    print("\nSUMMARY:")
+    print(f"{'Library':<15} {'Avg RPS':<10} {'Avg RT (ms)':<12} {'Memory (MB)':<12} {'Error Rate':<10}")
+    print("-" * 70)
+    
+    for lib, stats in sorted(library_stats.items()):
+        error_rate = (stats['total_errors'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+        print(f"{lib:<15} {stats['avg_rps']:<10.2f} {stats['avg_response_time']*1000:<12.2f} {stats['avg_memory']:<12.2f} {error_rate:<10.2f}%")
+    
+    # Best performers
+    print("\nBEST PERFORMERS:")
+    
+    best_rps = max(results, key=lambda r: r.requests_per_second)
+    print(f"Highest RPS: {best_rps.library} - {best_rps.requests_per_second:.2f} RPS")
+    
+    best_latency = min(results, key=lambda r: r.average_response_time)
+    print(f"Lowest Latency: {best_latency.library} - {best_latency.average_response_time*1000:.2f}ms")
+    
+    if hasattr(results[0], 'memory_usage_mb'):
+        best_memory = min(results, key=lambda r: r.memory_usage_mb)
+        print(f"Lowest Memory: {best_memory.library} - {best_memory.memory_usage_mb:.2f}MB")
     
     report_file = os.path.join(output_dir, f"benchmark_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
     
@@ -309,55 +376,146 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
 
 
 def main():
-    """Main entry point."""
+    """Main function to run benchmarks."""
     args = parse_arguments()
     
     # Create configuration
     config = create_config_from_args(args)
     
-    print("RequestX Benchmark Suite")
-    print("=" * 50)
-    print(f"Configuration:")
-    print(f"  Concurrency levels: {config.concurrency_levels}")
-    print(f"  HTTP methods: {config.http_methods}")
-    print(f"  Request sizes: {config.request_sizes}")
-    print(f"  Requests per test: {config.test_requests}")
-    print(f"  Timeout: {config.timeout}s")
-    print(f"  Output directory: {config.output_dir}")
+    if args.verbose:
+        print(f"Configuration:")
+        print(f"  Concurrent requests: {config.concurrent_requests}")
+        print(f"  Requests per test: {config.num_requests}")
+        print(f"  Libraries: {', '.join(config.libraries)}")
+        print(f"  Endpoints: {', '.join(config.endpoints)}")
+        print(f"  Timeout: {config.timeout}s")
+        print(f"  Warmup requests: {config.warmup_requests}")
+        print()
     
-    # Create benchmark runner
+    # Initialize benchmark runner
     runner = BenchmarkRunner(config)
     
-    # Filter libraries if specified
-    if args.libraries != 'requestx,requests,httpx,aiohttp':
-        filter_libraries(runner, args.libraries)
-        print(f"  Testing libraries: {list(runner.benchmarkers.keys())}")
+    # Base URL for testing
+    base_url = args.host.rstrip('/')
+    
+    # Create benchmarkers for each library
+    benchmarkers = {}
+    for library in config.libraries:
+        if library == 'requestx':
+            benchmarkers[library] = RequestXBenchmarker()
+        else:
+            print(f"Warning: Library '{library}' not supported yet. Skipping.")
+            continue
+    
+    if not benchmarkers:
+        print("Error: No supported libraries found.")
+        return
     
     # Run benchmarks
-    print("\nStarting benchmarks...")
-    results = runner.run_all_benchmarks()
+    print("Running benchmarks...")
+    all_results = []
     
-    if not results:
-        print("No benchmark results generated")
-        return 1
+    for library, benchmarker in benchmarkers.items():
+        print(f"\nBenchmarking {library}...")
+        
+        for endpoint in config.endpoints:
+            url = f"{base_url}{endpoint}"
+            method = endpoint.upper().replace('/', '') if endpoint != '/' else 'GET'
+            
+            try:
+                print(f"  Testing {method} {endpoint}...")
+                
+                # Use profiler context to monitor performance
+                with profile_context(cpu=True, memory=True, request=True, detailed=True) as profiler_metrics:
+                    result = runner.run_benchmark(benchmarker, url, method)
+                
+                # Enhance result with profiler metrics
+                if hasattr(result, 'cpu_usage_percent'):
+                    result.cpu_usage_percent = profiler_metrics.cpu_usage_percent
+                if hasattr(result, 'memory_usage_mb'):
+                    result.memory_usage_mb = profiler_metrics.memory_usage_mb
+                if hasattr(result, 'peak_memory_mb'):
+                    result.peak_memory_mb = profiler_metrics.peak_memory_mb
+                
+                all_results.append(result)
+                
+                if args.verbose:
+                    print(f"    RPS: {result.requests_per_second:.2f}")
+                    print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
+                    print(f"    Error Rate: {result.error_rate:.2f}%")
+                    print(f"    CPU Usage: {profiler_metrics.cpu_usage_percent:.2f}%")
+                    print(f"    Memory Usage: {profiler_metrics.memory_usage_mb:.2f}MB")
+                
+            except Exception as e:
+                print(f"    Error: {e}")
+                continue
     
     # Save results
-    print("\nSaving results...")
-    runner.save_results()
+    if all_results:
+        # Save to JSON
+        if not args.no_json:
+            json_file = os.path.join(args.output_dir, 'benchmark_results.json')
+            os.makedirs(args.output_dir, exist_ok=True)
+            
+            with open(json_file, 'w') as f:
+                json.dump([result.to_dict() for result in all_results], f, indent=2)
+            print(f"\nResults saved to {json_file}")
+        
+        # Save to CSV
+        if not args.no_csv:
+            csv_file = os.path.join(args.output_dir, 'benchmark_results.csv')
+            os.makedirs(args.output_dir, exist_ok=True)
+            
+            import csv
+            with open(csv_file, 'w', newline='') as f:
+                if all_results:
+                    writer = csv.DictWriter(f, fieldnames=all_results[0].to_dict().keys())
+                    writer.writeheader()
+                    for result in all_results:
+                        writer.writerow(result.to_dict())
+            print(f"Results saved to {csv_file}")
+        
+        # Generate report
+        if args.verbose:
+            print("\n" + "="*50)
+            print("BENCHMARK REPORT")
+            print("="*50)
+            generate_report(all_results)
+        
+        # Export to external systems
+        if args.grafana_cloud:
+            try:
+                instance_id = os.getenv('GRAFANA_INSTANCE_ID')
+                api_key = os.getenv('GRAFANA_API_KEY')
+                region = os.getenv('GRAFANA_REGION', 'us-central1')
+                
+                if not instance_id or not api_key:
+                    print("Error: GRAFANA_INSTANCE_ID and GRAFANA_API_KEY environment variables are required")
+                else:
+                    # Convert results to dict format
+                    results_dict = [result.to_dict() for result in all_results]
+                    export_to_grafana_cloud(results_dict, instance_id, api_key, region)
+            except Exception as e:
+                print(f"Failed to export to Grafana Cloud: {e}")
+        
+        if args.otlp_endpoint:
+            try:
+                # Parse headers if provided
+                headers = None
+                if args.otlp_headers:
+                    try:
+                        headers = json.loads(args.otlp_headers)
+                    except json.JSONDecodeError:
+                        print("Warning: Invalid JSON format for OTLP headers, ignoring")
+                
+                # Convert results to dict format
+                results_dict = [result.to_dict() for result in all_results]
+                export_to_otlp(results_dict, args.otlp_endpoint, headers)
+            except Exception as e:
+                print(f"Failed to export to OTLP endpoint: {e}")
     
-    # Generate report
-    generate_report(results, config.output_dir)
-    
-    # Export to external systems
-    export_results(results, args)
-    
-    # Print summary
-    runner.print_summary()
-    
-    print(f"\nBenchmark completed successfully!")
-    print(f"Results saved to: {config.output_dir}")
-    
-    return 0
+    else:
+        print("No benchmark results to save.")
 
 
 if __name__ == "__main__":

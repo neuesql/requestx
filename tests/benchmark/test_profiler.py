@@ -12,6 +12,8 @@ import time
 import sys
 import os
 
+# Add the parent directory to sys.path to import requestx
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
 try:
     import requestx
