@@ -337,9 +337,7 @@ impl Session {
     fn __repr__(&self) -> String {
         let headers_count = self.headers.lock().unwrap().len();
         let cookies_count = self.cookies.lock().unwrap().iter_any().count();
-        format!(
-            "<Session headers={headers_count} cookies={cookies_count}>"
-        )
+        format!("<Session headers={headers_count} cookies={cookies_count}>")
     }
 }
 

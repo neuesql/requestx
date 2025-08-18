@@ -415,8 +415,11 @@ impl RequestxClient {
                 let error_msg = e.to_string().to_lowercase();
 
                 // Map specific hyper errors to appropriate RequestxError types
-                if error_msg.contains("dns") || error_msg.contains("resolve") ||
-                   error_msg.contains("connect") || error_msg.contains("connection refused") {
+                if error_msg.contains("dns")
+                    || error_msg.contains("resolve")
+                    || error_msg.contains("connect")
+                    || error_msg.contains("connection refused")
+                {
                     return Err(RequestxError::NetworkError(e));
                 } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
                     return Err(RequestxError::ConnectTimeout);
@@ -428,7 +431,9 @@ impl RequestxClient {
                 } else if error_msg.contains("absolute-form uris")
                     || error_msg.contains("invalid uri")
                 {
-                    return Err(RequestxError::RuntimeError(format!("Invalid URL: {error_msg}")));
+                    return Err(RequestxError::RuntimeError(format!(
+                        "Invalid URL: {error_msg}"
+                    )));
                 } else if error_msg.contains("proxy") {
                     return Err(RequestxError::ProxyError(error_msg));
                 } else {
@@ -466,10 +471,10 @@ impl RequestxClient {
                         };
 
                         format!("{base_scheme}://{base_host}{base_port}{location_str}")
-                        .parse()
-                        .map_err(|e| {
-                            RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
-                        })?
+                            .parse()
+                            .map_err(|e| {
+                                RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
+                            })?
                     };
 
                     // Create new request for redirect

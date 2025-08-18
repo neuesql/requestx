@@ -118,9 +118,7 @@ impl From<RequestxError> for PyErr {
                     PyRuntimeError::new_err(format!("HTTP request error: {e}"))
                 }
             }
-            RequestxError::SslError(msg) => {
-                PyConnectionError::new_err(format!("SSL error: {msg}"))
-            }
+            RequestxError::SslError(msg) => PyConnectionError::new_err(format!("SSL error: {msg}")),
             RequestxError::InvalidHeader(msg) => {
                 PyValueError::new_err(format!("Invalid header: {msg}"))
             }
