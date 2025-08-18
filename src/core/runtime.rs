@@ -98,7 +98,8 @@ impl RuntimeManager {
             // We're in a sync context - block on the future
             let runtime = self.get_runtime();
             let result = runtime.block_on(future)?;
-            Ok(result.into_pyobject(py)
+            Ok(result
+                .into_pyobject(py)
                 .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Conversion error"))?
                 .into_any()
                 .unbind())

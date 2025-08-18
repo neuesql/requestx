@@ -503,7 +503,12 @@ fn patch(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResul
 
 /// Generic HTTP request with enhanced async/sync context detection
 #[pyfunction(signature = (method, url, /, **kwargs))]
-fn request(py: Python, method: String, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
+fn request(
+    py: Python,
+    method: String,
+    url: String,
+    kwargs: Option<&Bound<'_, PyDict>>,
+) -> PyResult<PyObject> {
     // Validate HTTP method - only allow standard methods
     let method_upper = method.to_uppercase();
     let method: Method = match method_upper.as_str() {
