@@ -22,6 +22,103 @@ from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
 from requestx.benchmark import RequestXBenchmarker
 from requestx.exporter import export_to_grafana_cloud, export_to_otlp
 from requestx.profiler import profile_context, PerformanceMetrics
+from requestx.benchmark import LibraryBenchmarker
+
+
+class RequestsBenchmarker(LibraryBenchmarker):
+    """Benchmarker for requests library."""
+    
+    def __init__(self):
+        super().__init__('requests')
+    
+    def setup(self):
+        import requests
+        self.session = requests.Session()
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class HttpxBenchmarker(LibraryBenchmarker):
+    """Benchmarker for httpx library."""
+    
+    def __init__(self):
+        super().__init__('httpx')
+    
+    def setup(self):
+        import httpx
+        self.session = httpx.Client()
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class AiohttpBenchmarker(LibraryBenchmarker):
+    """Benchmarker for aiohttp library."""
+    
+    def __init__(self):
+        super().__init__('aiohttp')
+    
+    def setup(self):
+        import aiohttp
+        self.session = aiohttp.ClientSession()
+    
+    def teardown(self):
+        if self.session:
+            import asyncio
+            # Handle async cleanup properly
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, schedule cleanup
+                    asyncio.create_task(self.session.close())
+                else:
+                    # If loop is not running, run cleanup
+                    loop.run_until_complete(self.session.close())
+            except Exception:
+                # Fallback cleanup
+                pass
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            import asyncio
+            
+            async def _make_request():
+                async with self.session.request(method, url, **kwargs) as response:
+                    return 200 <= response.status < 400
+            
+            # Run async request in sync context
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If we're already in an async context, create a new thread
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, _make_request())
+                        return future.result()
+                else:
+                    return loop.run_until_complete(_make_request())
+            except RuntimeError:
+                # No event loop, create one
+                return asyncio.run(_make_request())
+        except Exception:
+            return False
 
 
 def parse_arguments():
@@ -242,7 +339,7 @@ def filter_libraries(runner: BenchmarkRunner, libraries: str) -> None:
         del runner.benchmarkers[lib_name]
 
 
-def generate_report(results: List[BenchmarkResult]) -> None:
+def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
     """Generate a comprehensive benchmark report."""
     
     if not results:
@@ -363,12 +460,12 @@ def generate_report(results: List[BenchmarkResult]) -> None:
         
         # Detailed results
         f.write("\n## Detailed Results\n\n")
-        f.write("| Library | Method | Concurrency | Size | RPS | Response Time (ms) | Memory (MB) | Success Rate (%) |\n")
-        f.write("|---------|--------|-------------|------|-----|-------------------|-------------|------------------|\n")
+        f.write("| Library | Method | Concurrency | RPS | Response Time (ms) | Memory (MB) | Success Rate (%) |\n")
+        f.write("|---------|--------|-------------|-----|-------------------|-------------|------------------|\n")
         
         for result in sorted(results, key=lambda r: (r.library, r.method, r.concurrency)):
             success_rate = (result.successful_requests / result.total_requests * 100) if result.total_requests > 0 else 0
-            f.write(f"| {result.library} | {result.method} | {result.concurrency} | {result.request_size} | "
+            f.write(f"| {result.library} | {result.method} | {result.concurrency} | "
                    f"{result.requests_per_second:.2f} | {result.average_response_time*1000:.2f} | "
                    f"{result.memory_usage_mb:.2f} | {success_rate:.2f} |\n")
     
@@ -403,6 +500,27 @@ def main():
     for library in config.libraries:
         if library == 'requestx':
             benchmarkers[library] = RequestXBenchmarker()
+        elif library == 'requests':
+            try:
+                import requests
+                benchmarkers[library] = RequestsBenchmarker()
+            except ImportError:
+                print(f"Warning: Library '{library}' not installed. Skipping.")
+                continue
+        elif library == 'httpx':
+            try:
+                import httpx
+                benchmarkers[library] = HttpxBenchmarker()
+            except ImportError:
+                print(f"Warning: Library '{library}' not installed. Skipping.")
+                continue
+        elif library == 'aiohttp':
+            try:
+                import aiohttp
+                benchmarkers[library] = AiohttpBenchmarker()
+            except ImportError:
+                print(f"Warning: Library '{library}' not installed. Skipping.")
+                continue
         else:
             print(f"Warning: Library '{library}' not supported yet. Skipping.")
             continue
@@ -483,7 +601,7 @@ def main():
             print("\n" + "="*50)
             print("BENCHMARK REPORT")
             print("="*50)
-            generate_report(all_results)
+            generate_report(all_results, args.output_dir)
         
         # Export to external systems
         if args.grafana_cloud:

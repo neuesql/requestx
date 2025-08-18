@@ -34,7 +34,7 @@ class BenchmarkConfig:
 class BenchmarkResult:
     """Result of a single benchmark run."""
     library: str
-    endpoint: str
+    concurrency: int
     method: str
     requests_per_second: float
     average_response_time: float
@@ -133,7 +133,7 @@ class LibraryBenchmarker:
         
         return BenchmarkResult(
             library=self.library_name,
-            endpoint=url,
+            concurrency=concurrent_requests,
             method=method,
             requests_per_second=requests_per_second,
             average_response_time=statistics.mean(response_times) if response_times else 0,
@@ -203,7 +203,7 @@ class LibraryBenchmarker:
         
         return BenchmarkResult(
             library=self.library_name,
-            endpoint=url,
+            concurrency=concurrent_requests,
             method=method,
             requests_per_second=requests_per_second,
             average_response_time=statistics.mean(response_times) if response_times else 0,
