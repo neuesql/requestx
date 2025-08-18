@@ -452,6 +452,95 @@ class RequestXBenchmarker(BenchmarkerSync):
         return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
 
 
+class RequestsBenchmarker(BenchmarkerSync):
+    """Benchmarker for requests library."""
+    
+    def __init__(self):
+        super().__init__('requests')
+    
+    def setup(self):
+        import requests
+        self.session = requests.Session()
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class HttpxBenchmarker(BenchmarkerSync):
+    """Benchmarker for httpx library."""
+    
+    def __init__(self):
+        super().__init__('httpx')
+    
+    def setup(self):
+        import httpx
+        self.session = httpx.Client()
+    
+    def teardown(self):
+        if self.session:
+            self.session.close()
+    
+    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        try:
+            response = self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
+
+
+class AiohttpBenchmarker(BenchmarkerAsync):
+    """Benchmarker for aiohttp library."""
+    
+    def __init__(self):
+        super().__init__('aiohttp')
+        self.session = None
+    
+    def setup(self):
+        """Setup aiohttp session."""
+        import asyncio
+        import aiohttp
+        
+        # Don't try to get or create event loop here
+        # Sessions will be created per request to avoid loop issues
+        self.session = None
+        self._loop = None
+    
+    def teardown(self):
+        """Clean up aiohttp session."""
+        # Sessions are created and closed per request, no cleanup needed
+        pass
+    
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        """Make async request using aiohttp."""
+        try:
+            import aiohttp
+            
+            # Use existing session or create a temporary one
+            if self.session and not self.session.closed:
+                session = self.session
+                session_created_here = False
+            else:
+                session = aiohttp.ClientSession()
+                session_created_here = True
+            
+            try:
+                async with session.request(method, url, **kwargs) as response:
+                    return 200 <= response.status < 400
+            finally:
+                if session_created_here:
+                    await session.close()
+        except Exception:
+            return False
+
+
 class BenchmarkRunner:
     """Main benchmark runner class."""
     
