@@ -77,12 +77,16 @@
   - Test installation process and verify bundled Rust dependencies work correctly
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 6.1, 6.2_
 
-- [ ] 11. Implement comprehensive performance benchmarking
-  - Create benchmark suite comparing requestx against requests, httpx (sync), httpx (async), and aiohttp
-  - Implement metrics for requests per second, average response time, connection time
-  - Add CPU and memory usage profiling during benchmarks
-  - Test various request sizes and concurrency levels
-  - Generate detailed benchmark reports for documentation and validation
+- [ ] 11. Performance benchmarking
+  - Using a decorator-based method to measure performance metrics like @Profile(cpu=True, memory=True, request=True, ...), hande it as requestx source code in python
+  - Setup metrics for all test with critical metrics like e.g. requests per second, average response time, connection time, cpu and memory usage profiling, error rates
+  - Create benchmark suite comparing requestx(sync), requestx(async) against requests, httpx (sync), httpx (async), and aiohttp under folder tests/benchmark
+  - Test various use cases based on httpbin API documentation file api.spec.json, special on GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH methods
+  - Test various concurrency levels, e.g., 1, 10, 100, 1000 concurrent requests
+  - Test various request sizes for POST and PUT methods, e.g., small (1KB), medium (10KB), large (100KB)
+  - Merge into makefile as cli command line
+  - Persist test results in a structured format (e.g.,CSV) for analysis in folder tests/benchmark
+  - Persist test results with OpenTelemetry for performance monitoring, upload to OpenTelemetry server like grafana.net
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 10.1, 10.2, 10.3, 10.4_
 
 - [x] 12. Create documentation and examples
@@ -100,14 +104,3 @@
   - Implement version management and changelog generation
   - Test complete release workflow from tag to PyPI publication
   - _Requirements: 6.2, 6.3, 4.1, 4.2_
-
-- [ ] 14. Create performance benchmarking test
-  - Using a decorator-based method to measure performance metrics like @Profile(cpu=True, memory=True, request=True, ...), hande it as requestx source code in python
-  - Setup metrics for all test with critical metrics like e.g. requests per second, average response time, connection time, cpu and memory usage profiling, error rates
-  - Create benchmark suite comparing requestx(sync), requestx(async) against requests, httpx (sync), httpx (async), and aiohttp under folder tests/benchmark
-  - Test various use cases based on httpbin API documentation file api.spec.json, special on GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH methods
-  - Test various concurrency levels, e.g., 1, 10, 100, 1000 concurrent requests
-  - Test various request sizes for POST and PUT methods, e.g., small (1KB), medium (10KB), large (100KB)
-  - Merge into makefile as cli command line
-  - Persist test results in a structured format (e.g.,CSV) for analysis in folder tests/benchmark
-  - Persist test results with OpenTelemetry for performance monitoring, upload to OpenTelemetry server like grafana.net
