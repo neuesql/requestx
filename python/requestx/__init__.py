@@ -39,7 +39,7 @@ from ._requestx import (
     request as _request,
 )
 from .profiler import Profile, PerformanceMetrics, ResourceMonitor, profile_context, aggregate_metrics, get_last_metrics
-from .benchmark import BenchmarkConfig, BenchmarkResult, LibraryBenchmarker, RequestXBenchmarker, BenchmarkRunner
+from .benchmark import BenchmarkConfig, BenchmarkResult, Benchmarker, BenchmarkerSync, BenchmarkerAsync, RequestXBenchmarker, BenchmarkRunner
 from .exporter import OpenTelemetryExporter, GrafanaCloudExporter, export_to_grafana_cloud, export_to_otlp, convert_performance_metrics_to_dict
 
 
@@ -228,7 +228,9 @@ __all__ = [
     # Benchmark
     "BenchmarkConfig",
     "BenchmarkResult",
-    "LibraryBenchmarker",
+    "Benchmarker",
+    "BenchmarkerSync", 
+    "BenchmarkerAsync",
     "RequestXBenchmarker",
     "BenchmarkRunner",
     # OpenTelemetry Exporter

@@ -22,10 +22,10 @@ from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
 from requestx.benchmark import RequestXBenchmarker
 from requestx.exporter import export_to_grafana_cloud, export_to_otlp
 from requestx.profiler import profile_context, PerformanceMetrics
-from requestx.benchmark import LibraryBenchmarker
+from requestx.benchmark import BenchmarkerSync, BenchmarkerAsync
 
 
-class RequestsBenchmarker(LibraryBenchmarker):
+class RequestsBenchmarker(BenchmarkerSync):
     """Benchmarker for requests library."""
     
     def __init__(self):
@@ -47,7 +47,7 @@ class RequestsBenchmarker(LibraryBenchmarker):
             return False
 
 
-class HttpxBenchmarker(LibraryBenchmarker):
+class HttpxBenchmarker(BenchmarkerSync):
     """Benchmarker for httpx library."""
     
     def __init__(self):
@@ -69,58 +69,39 @@ class HttpxBenchmarker(LibraryBenchmarker):
             return False
 
 
-class AiohttpBenchmarker(LibraryBenchmarker):
+class AiohttpBenchmarker(BenchmarkerAsync):
     """Benchmarker for aiohttp library."""
     
     def __init__(self):
         super().__init__('aiohttp')
     
     def setup(self):
-        # For aiohttp, we'll create sessions in make_request to avoid event loop issues
+        # Session will be created in async context
         self.session = None
     
     def teardown(self):
-        # Sessions are created and closed per request, no cleanup needed
+        # Sessions are managed per request
         pass
     
-    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        """Make async request using aiohttp."""
         try:
-            import asyncio
             import aiohttp
             
-            async def _make_request():
-                try:
-                    # Create session if not already created
-                    session = self.session
-                    if session is None:
-                        session = aiohttp.ClientSession()
-                        session_created_here = True
-                    else:
-                        session_created_here = False
-                    
-                    try:
-                        async with session.request(method, url, **kwargs) as response:
-                            return 200 <= response.status < 400
-                    finally:
-                        if session_created_here:
-                            await session.close()
-                except Exception:
-                    return False
+            # Create session if not already created
+            session = self.session
+            if session is None:
+                session = aiohttp.ClientSession()
+                session_created_here = True
+            else:
+                session_created_here = False
             
-            # Run async request in sync context
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If we're already in an async context, create a new thread
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, _make_request())
-                        return future.result()
-                else:
-                    return loop.run_until_complete(_make_request())
-            except RuntimeError:
-                # No event loop, create one
-                return asyncio.run(_make_request())
+                async with session.request(method, url, **kwargs) as response:
+                    return 200 <= response.status < 400
+            finally:
+                if session_created_here:
+                    await session.close()
         except Exception:
             return False
 
