@@ -187,7 +187,6 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
     
     async def asyncSetUp(self):
         """Async setup method called before each test."""
-        print(f"BenchmarkerAsync.asyncSetUp called for {self.library_name}")
         await self.async_setup()
     
     async def asyncTearDown(self):
@@ -203,93 +202,13 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
         pass
     
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
-        """Default sync implementation that runs async method synchronously."""
-        import asyncio
-        try:
-            if self._loop and not self._loop.is_closed():
-                # Use existing loop if available
-                if self._loop.is_running():
-                    # Create a new task in the running loop
-                    future = asyncio.run_coroutine_threadsafe(
-                        self.make_async_request(url, method, **kwargs), self._loop
-                    )
-                    return future.result(timeout=kwargs.get('timeout', 30))
-                else:
-                    return self._loop.run_until_complete(self.make_async_request(url, method, **kwargs))
-            else:
-                # Create new event loop
-                return asyncio.run(self.make_async_request(url, method, **kwargs))
-        except Exception:
-            return False
-    
-    def benchmark_sync(self, url: str, method: str, num_requests: int, 
-                      concurrent_requests: int, timeout: float) -> BenchmarkResult:
-        """Run synchronous benchmark."""
-        self.setup()
-        
-        start_time = time.time()
-        start_cpu = psutil.cpu_percent()
-        start_memory = psutil.Process().memory_info().rss / 1024 / 1024
-        
-        successful_requests = 0
-        failed_requests = 0
-        response_times = []
-        
-        def make_single_request():
-            request_start = time.time()
-            try:
-                success = self.make_request(url, method, timeout=timeout)
-                response_time = time.time() - request_start
-                response_times.append(response_time)
-                return success
-            except Exception:
-                response_times.append(time.time() - request_start)
-                return False
-        
-        with ThreadPoolExecutor(max_workers=concurrent_requests) as executor:
-            futures = [executor.submit(make_single_request) for _ in range(num_requests)]
-            
-            for future in as_completed(futures):
-                try:
-                    if future.result():
-                        successful_requests += 1
-                    else:
-                        failed_requests += 1
-                except Exception:
-                    failed_requests += 1
-        
-        end_time = time.time()
-        end_cpu = psutil.cpu_percent()
-        end_memory = psutil.Process().memory_info().rss / 1024 / 1024
-        
-        total_time = end_time - start_time
-        requests_per_second = num_requests / total_time if total_time > 0 else 0
-        error_rate = (failed_requests / num_requests) * 100 if num_requests > 0 else 0
-        
-        self.teardown()
-        
-        return BenchmarkResult(
-            library=self.library_name,
-            concurrency=concurrent_requests,
-            method=method,
-            requests_per_second=requests_per_second,
-            average_response_time=statistics.mean(response_times) if response_times else 0,
-            median_response_time=statistics.median(response_times) if response_times else 0,
-            p95_response_time=self._percentile(response_times, 95) if response_times else 0,
-            p99_response_time=self._percentile(response_times, 99) if response_times else 0,
-            error_rate=error_rate,
-            total_requests=num_requests,
-            successful_requests=successful_requests,
-            failed_requests=failed_requests,
-            cpu_usage_percent=end_cpu - start_cpu,
-            memory_usage_mb=end_memory - start_memory,
-            timestamp=time.time()
-        )
+        """Sync method not supported in async benchmarker."""
+        raise NotImplementedError("BenchmarkerAsync only supports async operations. Use make_async_request instead.")
     
     async def benchmark_async(self, url: str, method: str, num_requests: int,
                              concurrent_requests: int, timeout: float) -> BenchmarkResult:
         """Run asynchronous benchmark."""
-        self.setup()
+        await self.async_setup()
         
         start_time = time.time()
         start_cpu = psutil.cpu_percent()
@@ -336,7 +255,7 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
         requests_per_second = num_requests / total_time if total_time > 0 else 0
         error_rate = (failed_requests / num_requests) * 100 if num_requests > 0 else 0
         
-        self.teardown()
+        await self.async_teardown()
         
         return BenchmarkResult(
             library=self.library_name,
@@ -369,6 +288,32 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             lower = sorted_data[int(index)]
             upper = sorted_data[int(index) + 1]
             return lower + (upper - lower) * (index - int(index))
+
+
+class HttpxAsyncBenchmarker(BenchmarkerAsync):
+    """Benchmarker for httpx library (async variant)."""
+    
+    def __init__(self):
+        super().__init__('httpx-async')
+        self.session = None
+    
+    async def async_setup(self):
+        """Async setup method for httpx."""
+        import httpx
+        self.session = httpx.AsyncClient()
+    
+    async def async_teardown(self):
+        """Async teardown method for httpx."""
+        if self.session:
+            await self.session.aclose()
+    
+    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
+        """Make async request using httpx."""
+        try:
+            response = await self.session.request(method, url, **kwargs)
+            return 200 <= response.status_code < 400
+        except Exception:
+            return False
 
 
 class RequestXBenchmarker(BenchmarkerSync):
@@ -520,7 +465,7 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
         """Async setup method for RequestX."""
         try:
             import requestx
-            # RequestX doesn't have async session yet, will use sync session
+            # RequestX doesn't have asyncsession yet, will use sync session
             self.session = requestx.Session()
             print(f"RequestX async_setup completed, session: {self.session}")
         except ImportError:
@@ -548,42 +493,8 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
         return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
 
 
-class HttpxAsyncBenchmarker(BenchmarkerAsync):
-    """Benchmarker for httpx library (async variant)."""
-    
-    def __init__(self):
-        super().__init__('httpx-async')
-        self.session = None
-    
-    async def async_setup(self):
-        """Async setup method for httpx."""
-        import httpx
-        self.session = httpx.AsyncClient()
-    
-    async def async_teardown(self):
-        """Async teardown method for httpx."""
-        if self.session:
-            await self.session.aclose()
-    
-
-    
-    def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
-        # For sync calls, create a temporary sync client
-        try:
-            import httpx
-            with httpx.Client() as client:
-                response = client.request(method, url, **kwargs)
-                return 200 <= response.status_code < 400
-        except Exception:
-            return False
-    
-    async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
-        try:
-            response = await self.session.request(method, url, **kwargs)
-            return 200 <= response.status_code < 400
-        except Exception:
-            return False
-
+# Remove the duplicate HttpxAsyncBenchmarker class (lines 496-530)
+# Keep only the clean version at line 293
 
 class AiohttpBenchmarker(BenchmarkerAsync):
     """Benchmarker for aiohttp library."""
