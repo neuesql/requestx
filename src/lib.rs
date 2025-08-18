@@ -48,56 +48,56 @@ fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
 }
 
 /// Parse kwargs into RequestConfig with comprehensive parameter support
-fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBuilder> {
+fn parse_kwargs(py: Python, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<RequestConfigBuilder> {
     let mut builder = RequestConfigBuilder::new();
 
     if let Some(kwargs) = kwargs {
         // Parse headers
         if let Some(headers_obj) = kwargs.get_item("headers")? {
-            let headers = parse_headers(headers_obj)?;
+            let headers = parse_headers(&headers_obj)?;
             builder.headers = Some(headers);
         }
 
         // Parse params (query parameters)
         if let Some(params_obj) = kwargs.get_item("params")? {
-            let params = parse_params(params_obj)?;
+            let params = parse_params(&params_obj)?;
             builder.params = Some(params);
         }
 
         // Parse data
         if let Some(data_obj) = kwargs.get_item("data")? {
-            let data = parse_data(data_obj)?;
+            let data = parse_data(&data_obj)?;
             builder.data = Some(data);
         }
 
         // Parse json
         if let Some(json_obj) = kwargs.get_item("json")? {
-            let json = parse_json(py, json_obj)?;
+            let json = parse_json(py, &json_obj)?;
             builder.json = Some(json);
         }
 
         // Parse timeout
         if let Some(timeout_obj) = kwargs.get_item("timeout")? {
             if !timeout_obj.is_none() {
-                let timeout = parse_timeout(timeout_obj)?;
+                let timeout = parse_timeout(&timeout_obj)?;
                 builder.timeout = Some(timeout);
             }
         }
 
         // Parse allow_redirects
         if let Some(redirects_obj) = kwargs.get_item("allow_redirects")? {
-            builder.allow_redirects = redirects_obj.is_true()?;
+            builder.allow_redirects = redirects_obj.is_truthy()?;
         }
 
         // Parse verify
         if let Some(verify_obj) = kwargs.get_item("verify")? {
-            builder.verify = verify_obj.is_true()?;
+            builder.verify = verify_obj.is_truthy()?;
         }
 
         // Parse cert
         if let Some(cert_obj) = kwargs.get_item("cert")? {
             if !cert_obj.is_none() {
-                let cert = parse_cert(cert_obj)?;
+                let cert = parse_cert(&cert_obj)?;
                 builder.cert = Some(cert);
             }
         }
@@ -105,7 +105,7 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
         // Parse proxies
         if let Some(proxies_obj) = kwargs.get_item("proxies")? {
             if !proxies_obj.is_none() {
-                let proxies = parse_proxies(proxies_obj)?;
+                let proxies = parse_proxies(&proxies_obj)?;
                 builder.proxies = Some(proxies);
             }
         }
@@ -113,14 +113,14 @@ fn parse_kwargs(py: Python, kwargs: Option<&PyDict>) -> PyResult<RequestConfigBu
         // Parse auth
         if let Some(auth_obj) = kwargs.get_item("auth")? {
             if !auth_obj.is_none() {
-                let auth = parse_auth(auth_obj)?;
+                let auth = parse_auth(&auth_obj)?;
                 builder.auth = Some(auth);
             }
         }
 
         // Parse stream
         if let Some(stream_obj) = kwargs.get_item("stream")? {
-            builder.stream = stream_obj.is_true()?;
+            builder.stream = stream_obj.is_truthy()?;
         }
     }
 
@@ -180,7 +180,7 @@ impl RequestConfigBuilder {
 }
 
 /// Parse headers from Python object with comprehensive error handling
-fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
+fn parse_headers(headers_obj: &Bound<'_, PyAny>) -> PyResult<HeaderMap> {
     let mut headers = HeaderMap::new();
 
     if let Ok(dict) = headers_obj.downcast::<PyDict>() {
@@ -206,7 +206,7 @@ fn parse_headers(headers_obj: &PyAny) -> PyResult<HeaderMap> {
 }
 
 /// Parse query parameters from Python object
-fn parse_params(params_obj: &PyAny) -> PyResult<HashMap<String, String>> {
+fn parse_params(params_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, String>> {
     let mut params = HashMap::new();
 
     if let Ok(dict) = params_obj.downcast::<PyDict>() {
@@ -221,7 +221,7 @@ fn parse_params(params_obj: &PyAny) -> PyResult<HashMap<String, String>> {
 }
 
 /// Parse request data from Python object
-fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
+fn parse_data(data_obj: &Bound<'_, PyAny>) -> PyResult<RequestData> {
     // Try string first
     if let Ok(text) = data_obj.extract::<String>() {
         return Ok(RequestData::Text(text));
@@ -249,7 +249,7 @@ fn parse_data(data_obj: &PyAny) -> PyResult<RequestData> {
 }
 
 /// Parse JSON data from Python object
-fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
+fn parse_json(py: Python, json_obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     // Use Python's json module to serialize the object
     let json_module = py.import("json")?;
     let json_str = json_module
@@ -263,7 +263,7 @@ fn parse_json(py: Python, json_obj: &PyAny) -> PyResult<Value> {
 }
 
 /// Parse timeout from Python object with comprehensive validation
-fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
+fn parse_timeout(timeout_obj: &Bound<'_, PyAny>) -> PyResult<Duration> {
     if let Ok(seconds) = timeout_obj.extract::<f64>() {
         if seconds < 0.0 {
             return Err(
@@ -293,7 +293,7 @@ fn parse_timeout(timeout_obj: &PyAny) -> PyResult<Duration> {
 }
 
 /// Parse certificate from Python object
-fn parse_cert(cert_obj: &PyAny) -> PyResult<String> {
+fn parse_cert(cert_obj: &Bound<'_, PyAny>) -> PyResult<String> {
     if let Ok(cert_path) = cert_obj.extract::<String>() {
         Ok(cert_path)
     } else {
@@ -304,7 +304,7 @@ fn parse_cert(cert_obj: &PyAny) -> PyResult<String> {
 }
 
 /// Parse proxies from Python object
-fn parse_proxies(proxies_obj: &PyAny) -> PyResult<HashMap<String, String>> {
+fn parse_proxies(proxies_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, String>> {
     let mut proxies = HashMap::new();
 
     if let Ok(dict) = proxies_obj.downcast::<PyDict>() {
@@ -332,7 +332,7 @@ fn parse_proxies(proxies_obj: &PyAny) -> PyResult<HashMap<String, String>> {
 }
 
 /// Parse authentication from Python object
-fn parse_auth(auth_obj: &PyAny) -> PyResult<(String, String)> {
+fn parse_auth(auth_obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     // Try tuple/list first
     if let Ok(tuple) = auth_obj.extract::<(String, String)>() {
         return Ok(tuple);
@@ -341,8 +341,8 @@ fn parse_auth(auth_obj: &PyAny) -> PyResult<(String, String)> {
     // Try list
     if let Ok(list) = auth_obj.downcast::<pyo3::types::PyList>() {
         if list.len() == 2 {
-            let username = list.get_item(0)?.extract::<String>()?;
-            let password = list.get_item(1)?.extract::<String>()?;
+            let username = list.get_item(0).unwrap().extract::<String>()?;
+            let password = list.get_item(1).unwrap().extract::<String>()?;
             return Ok((username, password));
         }
     }
@@ -370,7 +370,7 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
 
 /// HTTP GET request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn get(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::GET, uri);
@@ -389,7 +389,7 @@ fn get(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 
 /// HTTP POST request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn post(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::POST, uri);
@@ -408,7 +408,7 @@ fn post(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 
 /// HTTP PUT request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn put(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PUT, uri);
@@ -427,7 +427,7 @@ fn put(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
 
 /// HTTP DELETE request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn delete(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::DELETE, uri);
@@ -446,7 +446,7 @@ fn delete(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject
 
 /// HTTP HEAD request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn head(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::HEAD, uri);
@@ -465,7 +465,7 @@ fn head(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> 
 
 /// HTTP OPTIONS request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn options(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::OPTIONS, uri);
@@ -484,7 +484,7 @@ fn options(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObjec
 
 /// HTTP PATCH request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
-fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn patch(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     let uri: Uri = parse_and_validate_url(&url)?;
     let config_builder = parse_kwargs(py, kwargs)?;
     let config = config_builder.build(Method::PATCH, uri);
@@ -503,7 +503,7 @@ fn patch(py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject>
 
 /// Generic HTTP request with enhanced async/sync context detection
 #[pyfunction(signature = (method, url, /, **kwargs))]
-fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+fn request(py: Python, method: String, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
     // Validate HTTP method - only allow standard methods
     let method_upper = method.to_uppercase();
     let method: Method = match method_upper.as_str() {
@@ -541,7 +541,7 @@ fn request(py: Python, method: String, url: String, kwargs: Option<&PyDict>) -> 
 
 /// RequestX Python module
 #[pymodule]
-fn _requestx(py: Python, m: &PyModule) -> PyResult<()> {
+fn _requestx(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register HTTP method functions
     m.add_function(wrap_pyfunction!(get, m)?)?;
     m.add_function(wrap_pyfunction!(post, m)?)?;

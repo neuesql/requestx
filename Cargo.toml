@@ -14,8 +14,8 @@ name = "requestx"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "^0.20", features = ["extension-module", "abi3-py38"] }
-pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+pyo3 = { version = "0.25.1", features = ["extension-module", "abi3-py38"] }
+pyo3-async-runtimes = { version = "0.25.0", features = ["tokio-runtime"] }
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5"
 tokio = { version = "1.0", features = ["full"] }
@@ -26,8 +26,8 @@ bytes = "1.0"
 url = "2.0"
 urlencoding = "2.1"
 thiserror = "1.0"
-pythonize = "0.20"
+pythonize = "0.25.0"
 base64 = "0.21"
 
 [build-dependencies]
-pyo3-build-config = "0.24"
+pyo3-build-config = "0.25.1"

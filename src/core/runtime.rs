@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
-use pyo3_asyncio::tokio::{future_into_py, get_current_loop};
+use pyo3::BoundObject;
+use pyo3_async_runtimes::tokio::{future_into_py, get_current_loop};
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::{Handle, Runtime};
@@ -88,7 +89,7 @@ impl RuntimeManager {
     pub fn execute_future<F, T>(&self, py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
-        T: IntoPy<PyObject>,
+        T: for<'py> IntoPyObject<'py>,
     {
         if Self::is_async_context(py)? {
             // We're in an async context - return a coroutine
@@ -97,7 +98,10 @@ impl RuntimeManager {
             // We're in a sync context - block on the future
             let runtime = self.get_runtime();
             let result = runtime.block_on(future)?;
-            Ok(result.into_py(py))
+            Ok(result.into_pyobject(py)
+                .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Conversion error"))?
+                .into_any()
+                .unbind())
         }
     }
 
@@ -106,9 +110,10 @@ impl RuntimeManager {
     pub fn create_coroutine<F, T>(py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
-        T: IntoPy<PyObject>,
+        T: for<'py> IntoPyObject<'py>,
     {
-        Ok(future_into_py(py, future)?.into())
+        let coroutine = future_into_py(py, future)?;
+        Ok(coroutine.into_any().unbind())
     }
 
     /// Block on a future in sync context

@@ -157,7 +157,7 @@ impl From<RequestxError> for PyErr {
 }
 
 /// Helper function to register all custom exceptions with the Python module
-pub fn register_exceptions(_py: Python, _m: &PyModule) -> PyResult<()> {
+pub fn register_exceptions(_py: Python, _m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Don't register the exceptions here - they will be defined in Python
     // The Rust exceptions are only used for conversion to Python exceptions
     Ok(())

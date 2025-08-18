@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyList};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -109,6 +109,7 @@ impl Response {
 
         pythonize::pythonize(py, &value)
             .map_err(|e| RequestxError::PythonError(e.to_string()).into())
+            .map(|bound| bound.unbind())
     }
 
     /// Raise an exception for HTTP error status codes
@@ -169,7 +170,7 @@ impl Response {
     fn history(&self, py: Python) -> PyResult<PyObject> {
         // For now, return an empty list
         // TODO: Implement redirect history tracking
-        Ok(py.eval("[]", None, None)?.into())
+        Ok(PyList::empty(py).into())
     }
 
     /// Get response links (placeholder - returns empty dict for now)

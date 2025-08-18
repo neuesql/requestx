@@ -52,43 +52,43 @@ impl Session {
 
     /// HTTP GET request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn get(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn get(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "GET".to_string(), url, kwargs)
     }
 
     /// HTTP POST request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn post(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn post(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "POST".to_string(), url, kwargs)
     }
 
     /// HTTP PUT request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn put(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn put(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "PUT".to_string(), url, kwargs)
     }
 
     /// HTTP DELETE request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn delete(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn delete(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "DELETE".to_string(), url, kwargs)
     }
 
     /// HTTP HEAD request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn head(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn head(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "HEAD".to_string(), url, kwargs)
     }
 
     /// HTTP OPTIONS request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn options(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn options(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "OPTIONS".to_string(), url, kwargs)
     }
 
     /// HTTP PATCH request using session
     #[pyo3(signature = (url, /, **kwargs))]
-    fn patch(&self, py: Python, url: String, kwargs: Option<&PyDict>) -> PyResult<PyObject> {
+    fn patch(&self, py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
         self.request(py, "PATCH".to_string(), url, kwargs)
     }
 
@@ -99,7 +99,7 @@ impl Session {
         py: Python,
         method: String,
         url: String,
-        kwargs: Option<&PyDict>,
+        kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyObject> {
         // Validate HTTP method
         let method_upper = method.to_uppercase();
@@ -185,7 +185,7 @@ impl Session {
 
     /// Set session headers from a dictionary
     #[setter]
-    fn set_headers(&self, headers_dict: &PyDict) -> PyResult<()> {
+    fn set_headers(&self, headers_dict: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut headers = self.headers.lock().unwrap();
         headers.clear();
 
@@ -296,9 +296,9 @@ impl Session {
     /// Context manager support - exit
     fn __exit__(
         &self,
-        _exc_type: Option<&PyAny>,
-        _exc_value: Option<&PyAny>,
-        _traceback: Option<&PyAny>,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_value: Option<&Bound<'_, PyAny>>,
+        _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         self.close()?;
         Ok(false) // Don't suppress exceptions
