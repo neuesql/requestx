@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""
+Main benchmark runner script for RequestX performance testing.
+
+This script runs comprehensive benchmarks comparing RequestX against other
+HTTP libraries and exports results in multiple formats including CSV, JSON,
+and OpenTelemetry.
+"""
+
+import os
+import sys
+import argparse
+import json
+from typing import List, Dict, Any
+from datetime import datetime
+
+# Add the parent directory to sys.path to import requestx
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
+
+import requestx
+from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
+from requestx import export_to_grafana_cloud, export_to_otlp as export_to_custom_otlp
+
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Run RequestX performance benchmarks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run quick benchmarks
+  ./requestx-benchmark --quick
+  
+  # Run full benchmarks with custom parameters
+  ./requestx-benchmark --concurrency 1,10,100,1000 --requests 200
+  
+  # Run benchmarks and export to Grafana Cloud
+  ./requestx-benchmark --grafana-cloud
+  
+  # Run specific HTTP methods only
+  ./requestx-benchmark --methods GET,POST --sizes small,medium
+  
+  # Run with custom output directory
+  ./requestx-benchmark --output-dir ./my_results
+        """
+    )
+    
+    # Test configuration
+    parser.add_argument(
+        '--concurrency', 
+        type=str, 
+        default='1,10,100',
+        help='Comma-separated concurrency levels (default: 1,10,100)'
+    )
+    
+    parser.add_argument(
+        '--requests', 
+        type=int, 
+        default=100,
+        help='Number of requests per test (default: 100)'
+    )
+    
+    parser.add_argument(
+        '--methods', 
+        type=str, 
+        default='GET,POST,PUT,DELETE,HEAD,OPTIONS,PATCH',
+        help='Comma-separated HTTP methods to test (default: all)'
+    )
+    
+    parser.add_argument(
+        '--sizes', 
+        type=str, 
+        default='small,medium,large',
+        help='Comma-separated request sizes to test (default: small,medium,large)'
+    )
+    
+    parser.add_argument(
+        '--timeout', 
+        type=float, 
+        default=300.0,
+        help='Request timeout in seconds (default: 300.0)'
+    )
+    
+    parser.add_argument(
+        '--warmup', 
+        type=int, 
+        default=5,
+        help='Number of warmup requests (default: 5)'
+    )
+    
+    # Quick test mode
+    parser.add_argument(
+        '--quick', 
+        action='store_true',
+        help='Run quick benchmarks (fewer requests and concurrency levels)'
+    )
+    
+    # Output configuration
+    parser.add_argument(
+        '--output-dir', 
+        type=str, 
+        default='tests/benchmark/results',
+        help='Output directory for results (default: tests/benchmark/results)'
+    )
+    
+    parser.add_argument(
+        '--no-csv', 
+        action='store_true',
+        help='Disable CSV output'
+    )
+    
+    parser.add_argument(
+        '--no-json', 
+        action='store_true',
+        help='Disable JSON output'
+    )
+    
+    # OpenTelemetry configuration
+    parser.add_argument(
+        '--grafana-cloud', 
+        action='store_true',
+        help='Export results to Grafana Cloud (requires GRAFANA_INSTANCE_ID and GRAFANA_API_KEY env vars)'
+    )
+    
+    parser.add_argument(
+        '--otlp-endpoint', 
+        type=str,
+        help='Custom OTLP endpoint for exporting metrics'
+    )
+    
+    parser.add_argument(
+        '--otlp-headers', 
+        type=str,
+        help='Custom OTLP headers in format "key1=value1,key2=value2"'
+    )
+    
+    # Library selection
+    parser.add_argument(
+        '--libraries', 
+        type=str, 
+        default='requestx,requests,httpx,aiohttp',
+        help='Comma-separated libraries to test (default: all available)'
+    )
+    
+    # Verbose output
+    parser.add_argument(
+        '--verbose', '-v', 
+        action='store_true',
+        help='Enable verbose output'
+    )
+    
+    return parser.parse_args()
+
+
+def create_config_from_args(args) -> BenchmarkConfig:
+    """Create BenchmarkConfig from command line arguments."""
+    
+    # Parse concurrency levels
+    concurrency_levels = [int(x.strip()) for x in args.concurrency.split(',')]
+    
+    # Parse HTTP methods
+    http_methods = [x.strip().upper() for x in args.methods.split(',')]
+    
+    # Parse request sizes
+    request_sizes = [x.strip() for x in args.sizes.split(',')]
+    
+    # Quick mode adjustments
+    if args.quick:
+        concurrency_levels = [1, 10]
+        request_sizes = ['small']
+        test_requests = 20
+        warmup_requests = 2
+    else:
+        test_requests = args.requests
+        warmup_requests = args.warmup
+    
+    return BenchmarkConfig(
+        concurrency_levels=concurrency_levels,
+        request_sizes=request_sizes,
+        http_methods=http_methods,
+        warmup_requests=warmup_requests,
+        test_requests=test_requests,
+        timeout=args.timeout,
+        output_dir=args.output_dir,
+        csv_output=not args.no_csv,
+        json_output=not args.no_json
+    )
+
+
+def filter_libraries(runner: BenchmarkRunner, libraries: str) -> None:
+    """Filter benchmarkers based on requested libraries."""
+    requested = [lib.strip().lower() for lib in libraries.split(',')]
+    
+    # Remove unwanted benchmarkers
+    to_remove = []
+    for lib_name in runner.benchmarkers.keys():
+        if lib_name not in requested:
+            to_remove.append(lib_name)
+    
+    for lib_name in to_remove:
+        del runner.benchmarkers[lib_name]
+
+
+def export_results(results: List[BenchmarkResult], args) -> None:
+    """Export results to configured destinations."""
+    
+    # Export to Grafana Cloud
+    if args.grafana_cloud:
+        print("\nExporting to Grafana Cloud...")
+        try:
+            export_to_grafana_cloud(results)
+        except Exception as e:
+            print(f"Failed to export to Grafana Cloud: {e}")
+    
+    # Export to custom OTLP endpoint
+    if args.otlp_endpoint:
+        print(f"\nExporting to OTLP endpoint: {args.otlp_endpoint}")
+        
+        headers = {}
+        if args.otlp_headers:
+            for header in args.otlp_headers.split(','):
+                if '=' in header:
+                    key, value = header.split('=', 1)
+                    headers[key.strip()] = value.strip()
+        
+        try:
+            export_to_custom_otlp(results, args.otlp_endpoint, headers)
+        except Exception as e:
+            print(f"Failed to export to OTLP endpoint: {e}")
+
+
+def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
+    """Generate a comprehensive benchmark report."""
+    
+    if not results:
+        return
+    
+    report_file = os.path.join(output_dir, f"benchmark_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+    
+    with open(report_file, 'w') as f:
+        f.write("# RequestX Benchmark Report\n\n")
+        f.write(f"Generated: {datetime.now().isoformat()}\n\n")
+        
+        # Summary statistics
+        f.write("## Summary\n\n")
+        
+        # Group by library
+        library_stats = {}
+        for result in results:
+            lib = result.library
+            if lib not in library_stats:
+                library_stats[lib] = {
+                    'total_tests': 0,
+                    'avg_rps': 0,
+                    'avg_response_time': 0,
+                    'avg_memory': 0,
+                    'total_errors': 0,
+                    'total_requests': 0
+                }
+            
+            stats = library_stats[lib]
+            stats['total_tests'] += 1
+            stats['avg_rps'] += result.requests_per_second
+            stats['avg_response_time'] += result.average_response_time
+            stats['avg_memory'] += result.memory_usage_mb
+            stats['total_errors'] += result.failed_requests
+            stats['total_requests'] += result.total_requests
+        
+        # Calculate averages
+        for lib, stats in library_stats.items():
+            if stats['total_tests'] > 0:
+                stats['avg_rps'] /= stats['total_tests']
+                stats['avg_response_time'] /= stats['total_tests']
+                stats['avg_memory'] /= stats['total_tests']
+        
+        # Write summary table
+        f.write("| Library | Avg RPS | Avg Response Time (ms) | Avg Memory (MB) | Error Rate (%) |\n")
+        f.write("|---------|---------|------------------------|-----------------|----------------|\n")
+        
+        for lib, stats in sorted(library_stats.items()):
+            error_rate = (stats['total_errors'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+            f.write(f"| {lib} | {stats['avg_rps']:.2f} | {stats['avg_response_time']*1000:.2f} | {stats['avg_memory']:.2f} | {error_rate:.2f} |\n")
+        
+        # Best performers
+        f.write("\n## Best Performers\n\n")
+        
+        best_rps = max(results, key=lambda r: r.requests_per_second)
+        f.write(f"**Highest RPS:** {best_rps.library} - {best_rps.requests_per_second:.2f} RPS\n")
+        
+        best_latency = min(results, key=lambda r: r.average_response_time)
+        f.write(f"**Lowest Latency:** {best_latency.library} - {best_latency.average_response_time*1000:.2f}ms\n")
+        
+        best_memory = min(results, key=lambda r: r.memory_usage_mb)
+        f.write(f"**Lowest Memory:** {best_memory.library} - {best_memory.memory_usage_mb:.2f}MB\n")
+        
+        # Detailed results
+        f.write("\n## Detailed Results\n\n")
+        f.write("| Library | Method | Concurrency | Size | RPS | Response Time (ms) | Memory (MB) | Success Rate (%) |\n")
+        f.write("|---------|--------|-------------|------|-----|-------------------|-------------|------------------|\n")
+        
+        for result in sorted(results, key=lambda r: (r.library, r.method, r.concurrency)):
+            success_rate = (result.successful_requests / result.total_requests * 100) if result.total_requests > 0 else 0
+            f.write(f"| {result.library} | {result.method} | {result.concurrency} | {result.request_size} | "
+                   f"{result.requests_per_second:.2f} | {result.average_response_time*1000:.2f} | "
+                   f"{result.memory_usage_mb:.2f} | {success_rate:.2f} |\n")
+    
+    print(f"Detailed report saved to: {report_file}")
+
+
+def main():
+    """Main entry point."""
+    args = parse_arguments()
+    
+    # Create configuration
+    config = create_config_from_args(args)
+    
+    print("RequestX Benchmark Suite")
+    print("=" * 50)
+    print(f"Configuration:")
+    print(f"  Concurrency levels: {config.concurrency_levels}")
+    print(f"  HTTP methods: {config.http_methods}")
+    print(f"  Request sizes: {config.request_sizes}")
+    print(f"  Requests per test: {config.test_requests}")
+    print(f"  Timeout: {config.timeout}s")
+    print(f"  Output directory: {config.output_dir}")
+    
+    # Create benchmark runner
+    runner = BenchmarkRunner(config)
+    
+    # Filter libraries if specified
+    if args.libraries != 'requestx,requests,httpx,aiohttp':
+        filter_libraries(runner, args.libraries)
+        print(f"  Testing libraries: {list(runner.benchmarkers.keys())}")
+    
+    # Run benchmarks
+    print("\nStarting benchmarks...")
+    results = runner.run_all_benchmarks()
+    
+    if not results:
+        print("No benchmark results generated")
+        return 1
+    
+    # Save results
+    print("\nSaving results...")
+    runner.save_results()
+    
+    # Generate report
+    generate_report(results, config.output_dir)
+    
+    # Export to external systems
+    export_results(results, args)
+    
+    # Print summary
+    runner.print_summary()
+    
+    print(f"\nBenchmark completed successfully!")
+    print(f"Results saved to: {config.output_dir}")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
