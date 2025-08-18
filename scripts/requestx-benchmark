@@ -18,8 +18,10 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
 import requestx
-from requestx import BenchmarkRunner, BenchmarkConfig, BenchmarkResult
 from requestx.benchmark import (
+    BenchmarkRunner, 
+    BenchmarkConfig, 
+    BenchmarkResult,
     RequestXSyncBenchmarker,
     RequestXAsyncBenchmarker,
     HttpxSyncBenchmarker,
