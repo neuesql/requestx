@@ -1,5 +1,6 @@
 use cookie_store::CookieStore;
 use hyper::{Client, HeaderMap, Method, Uri};
+use hyper_tls::HttpsConnector;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, Mutex};
@@ -23,12 +24,7 @@ impl Session {
     #[new]
     fn new() -> PyResult<Self> {
         // Create a custom hyper client for the session with optimized settings
-        let https = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_native_roots()
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
+        let https = HttpsConnector::new();
         let hyper_client = Client::builder()
             .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for session reuse
             .pool_max_idle_per_host(50) // More connections per host for sessions
