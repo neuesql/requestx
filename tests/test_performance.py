@@ -13,7 +13,7 @@ import psutil
 from tabulate import tabulate
 
 # Global host constant for all performance tests
-HOST = "http://localhost:8000/"
+HOST = "http://localhost:8080/"
 
 # Import HTTP clients for comparison
 import requestx
