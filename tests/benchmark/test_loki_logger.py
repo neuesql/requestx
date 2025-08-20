@@ -33,7 +33,7 @@ class TestLokiLogger(unittest.TestCase):
         self.logger.addHandler(self.handler)
 
     def test_send_log_to_loki(self):
-        self.logger.error(
+        self.logger.info(
             "Something happened in Unit Test",
             extra={"tags": {"service": "my-service"}},
         )
@@ -57,7 +57,7 @@ class TestLokiLogger(unittest.TestCase):
             "memory_usage_mb": 128.5,
             "timestamp": 60.0,
         }
-        self.logger.error(json.dumps(row))
+        self.logger.info(json.dumps(row))
 
 
 if __name__ == "__main__":
