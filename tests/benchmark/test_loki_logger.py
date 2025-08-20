@@ -19,7 +19,7 @@ class TestLokiLogger(unittest.TestCase):
         self.handler = logging_loki.LokiHandler(
             url=loki_url,
             tags={
-                "source": "requestx",
+                "service": "requestx",
                 "application": "benchmark-benchmark",
                 "type": "cloud-logs",
                 "environment": "test"
@@ -29,6 +29,7 @@ class TestLokiLogger(unittest.TestCase):
         )
 
         self.logger = logging.getLogger("test-logger")
+        self.logger.setLevel(logging.INFO)
         self.logger.addHandler(self.handler)
 
     def test_send_log_to_loki(self):
@@ -56,7 +57,7 @@ class TestLokiLogger(unittest.TestCase):
             "memory_usage_mb": 128.5,
             "timestamp": 60.0,
         }
-        self.logger.info(json.dumps(row))
+        self.logger.error(json.dumps(row))
 
 
 if __name__ == "__main__":
