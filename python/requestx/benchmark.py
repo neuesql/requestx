@@ -3,7 +3,7 @@
 This module provides core benchmarking functionality for comparing RequestX
 performance against other HTTP libraries.
 """
-
+import os
 import time
 import asyncio
 import statistics
@@ -24,7 +24,7 @@ class BenchmarkConfig:
     warmup_requests: int = 10
     libraries: List[str] = None
     endpoints: List[str] = None
-    
+
     def __post_init__(self):
         if self.libraries is None:
             self.libraries = ['requestx', 'requests', 'httpx', 'aiohttp']
@@ -50,7 +50,7 @@ class BenchmarkResult:
     cpu_usage_percent: float
     memory_usage_mb: float
     timestamp: float
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
         return asdict(self)
@@ -58,19 +58,19 @@ class BenchmarkResult:
 
 class Benchmarker(ABC):
     """Abstract base class for benchmarking HTTP libraries."""
-    
+
     def __init__(self, library_name: str):
         self.library_name = library_name
         self.session = None
-    
+
     def setup(self):
         """Setup the HTTP client session."""
         pass
-    
+
     def teardown(self):
         """Cleanup the HTTP client session."""
         pass
-    
+
     @abstractmethod
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Make a single HTTP request.
@@ -79,7 +79,7 @@ class Benchmarker(ABC):
             True if request was successful, False otherwise
         """
         pass
-    
+
     @abstractmethod
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Make a single async HTTP request.
@@ -92,30 +92,35 @@ class Benchmarker(ABC):
 
 class BenchmarkerSync(Benchmarker):
     """Synchronous benchmarker for HTTP libraries like requests, requestx-sync, httpx-sync."""
-    
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Default async implementation that runs sync method in executor."""
         import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
-    
-    def benchmark_sync(self, url: str, method: str, num_requests: int, 
+
+    def benchmark_sync(self, url: str, method: str, num_requests: int,
                       concurrent_requests: int, timeout: float) -> BenchmarkResult:
         """Run synchronous benchmark."""
         self.setup()
-        
+
         # Initialize process and CPU measurement
-        process = psutil.Process()
+        process = psutil.Process(os.getpid())
         process.cpu_percent()  # First call to initialize CPU measurement
-        
+        time.sleep(0.1)  # Small delay for accurate CPU measurement
+
         start_time = time.time()
-        start_cpu = process.cpu_percent()
-        start_memory = process.memory_info().rss / 1024 / 1024
+        start_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
+        start_memory_bytes = process.memory_info().rss
+        start_memory_mb = start_memory_bytes / 1024 / 1024
         
+        # Print start resource usage
+        print(f"Benchmark Start - CPU: {start_cpu:.2f}%, Memory: {start_memory_mb:.2f} MB ({start_memory_bytes:,} bytes)")
+
         successful_requests = 0
         failed_requests = 0
         response_times = []
-        
+
         def make_single_request():
             request_start = time.time()
             try:
@@ -126,10 +131,10 @@ class BenchmarkerSync(Benchmarker):
             except Exception:
                 response_times.append(time.time() - request_start)
                 return False
-        
+
         with ThreadPoolExecutor(max_workers=concurrent_requests) as executor:
             futures = [executor.submit(make_single_request) for _ in range(num_requests)]
-            
+
             for future in as_completed(futures):
                 try:
                     if future.result():
@@ -138,17 +143,28 @@ class BenchmarkerSync(Benchmarker):
                         failed_requests += 1
                 except Exception:
                     failed_requests += 1
-        
+
         end_time = time.time()
-        end_cpu = process.cpu_percent()
-        end_memory = process.memory_info().rss / 1024 / 1024
+        end_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
+        end_memory_bytes = process.memory_info().rss
+        end_memory_mb = end_memory_bytes / 1024 / 1024
         
+        # Print end resource usage
+        print(f"Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes)")
+        
+        # Calculate differences
+        cpu_usage_diff = end_cpu - start_cpu
+        memory_usage_diff_mb = end_memory_mb - start_memory_mb
+        memory_usage_diff_bytes = end_memory_bytes - start_memory_bytes
+        
+        print(f"Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes)")
+
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
         error_rate = (failed_requests / num_requests) * 100 if num_requests > 0 else 0
-        
+
         self.teardown()
-        
+
         return BenchmarkResult(
             library=self.library_name,
             concurrency=concurrent_requests,
@@ -162,13 +178,13 @@ class BenchmarkerSync(Benchmarker):
             total_requests=num_requests,
             successful_requests=successful_requests,
             failed_requests=failed_requests,
-            cpu_usage_percent=end_cpu,  # Use absolute CPU usage
-            memory_usage_mb=end_memory,  # Use absolute memory usage
-            timestamp=time.time()
+            cpu_usage_percent=cpu_usage_diff,  # Use CPU usage difference
+            memory_usage_mb=memory_usage_diff_mb,  # Use memory usage difference in MB
+            timestamp=total_time
         )
-    
 
-    
+
+
     @staticmethod
     def _percentile(data: List[float], percentile: int) -> float:
         """Calculate percentile of response times."""
@@ -183,49 +199,54 @@ class BenchmarkerSync(Benchmarker):
 
 class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
     """Asynchronous benchmarker for HTTP libraries like requestx-async, httpx-async, aiohttp."""
-    
+
     def __init__(self, library_name: str):
         Benchmarker.__init__(self, library_name)
         unittest.IsolatedAsyncioTestCase.__init__(self)
         self._loop = None
-    
+
     async def asyncSetUp(self):
         """Async setup method called before each test."""
         await self.async_setup()
-    
+
     async def asyncTearDown(self):
         """Async teardown method called after each test."""
         await self.async_teardown()
-    
+
     async def async_setup(self):
         """Override this method in subclasses for async setup."""
         pass
-    
+
     async def async_teardown(self):
         """Override this method in subclasses for async teardown."""
         pass
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Sync method not supported in async benchmarker."""
         raise NotImplementedError("BenchmarkerAsync only supports async operations. Use make_async_request instead.")
-    
+
     async def benchmark_async(self, url: str, method: str, num_requests: int,
                              concurrent_requests: int, timeout: float) -> BenchmarkResult:
         """Run asynchronous benchmark."""
         await self.async_setup()
-        
+
         # Initialize process and CPU measurement
         process = psutil.Process()
         process.cpu_percent()  # First call to initialize CPU measurement
-        
+        await asyncio.sleep(0.1)  # Small delay for accurate CPU measurement
+
         start_time = time.time()
-        start_cpu = process.cpu_percent()
-        start_memory = process.memory_info().rss / 1024 / 1024
+        start_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
+        start_memory_bytes = process.memory_info().rss
+        start_memory_mb = start_memory_bytes / 1024 / 1024
         
+        # Print start resource usage
+        print(f"Async Benchmark Start - CPU: {start_cpu:.2f}%, Memory: {start_memory_mb:.2f} MB ({start_memory_bytes:,} bytes)")
+
         successful_requests = 0
         failed_requests = 0
         response_times = []
-        
+
         async def make_single_request():
             request_start = time.time()
             try:
@@ -236,17 +257,17 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             except Exception:
                 response_times.append(time.time() - request_start)
                 return False
-        
+
         # Create semaphore to limit concurrent requests
         semaphore = asyncio.Semaphore(concurrent_requests)
-        
+
         async def bounded_request():
             async with semaphore:
                 return await make_single_request()
-        
+
         tasks = [bounded_request() for _ in range(num_requests)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         for result in results:
             if isinstance(result, Exception):
                 failed_requests += 1
@@ -254,17 +275,28 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
                 successful_requests += 1
             else:
                 failed_requests += 1
-        
+
         end_time = time.time()
-        end_cpu = process.cpu_percent()
-        end_memory = process.memory_info().rss / 1024 / 1024
+        end_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
+        end_memory_bytes = process.memory_info().rss
+        end_memory_mb = end_memory_bytes / 1024 / 1024
         
+        # Print end resource usage
+        print(f"Async Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes)")
+        
+        # Calculate differences
+        cpu_usage_diff = end_cpu - start_cpu
+        memory_usage_diff_mb = end_memory_mb - start_memory_mb
+        memory_usage_diff_bytes = end_memory_bytes - start_memory_bytes
+        
+        print(f"Async Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes)")
+
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
         error_rate = (failed_requests / num_requests) * 100 if num_requests > 0 else 0
-        
+
         await self.async_teardown()
-        
+
         return BenchmarkResult(
             library=self.library_name,
             concurrency=concurrent_requests,
@@ -278,11 +310,11 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             total_requests=num_requests,
             successful_requests=successful_requests,
             failed_requests=failed_requests,
-            cpu_usage_percent=end_cpu,  # Use absolute CPU usage
-            memory_usage_mb=end_memory,  # Use absolute memory usage
+            cpu_usage_percent=cpu_usage_diff,  # Use CPU usage difference
+            memory_usage_mb=memory_usage_diff_mb,  # Use memory usage difference in MB
             timestamp=time.time()
         )
-    
+
     @staticmethod
     def _percentile(data: List[float], percentile: float) -> float:
         """Calculate percentile of a list of values."""
@@ -300,21 +332,21 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
 
 class HttpxAsyncBenchmarker(BenchmarkerAsync):
     """Benchmarker for httpx library (async variant)."""
-    
+
     def __init__(self):
         super().__init__('httpx-async')
         self.session = None
-    
+
     async def async_setup(self):
         """Async setup method for httpx."""
         import httpx
         self.session = httpx.AsyncClient()
-    
+
     async def async_teardown(self):
         """Async teardown method for httpx."""
         if self.session:
             await self.session.aclose()
-    
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Make async request using httpx."""
         try:
@@ -326,21 +358,21 @@ class HttpxAsyncBenchmarker(BenchmarkerAsync):
 
 class RequestXBenchmarker(BenchmarkerSync):
     """Benchmarker for RequestX library (legacy name for backward compatibility)."""
-    
+
     def __init__(self):
         super().__init__('requestx')
-    
+
     def setup(self):
         try:
             import requestx
             self.session = requestx.Session()
         except ImportError:
             raise ImportError("RequestX library not found")
-    
+
     def teardown(self):
         if self.session:
             self.session.close()
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             if self.session is None:
@@ -352,7 +384,7 @@ class RequestXBenchmarker(BenchmarkerSync):
         except Exception as e:
             print(f"RequestX sync error: {e}")
             return False
-    
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
         import asyncio
@@ -367,28 +399,28 @@ class RequestXBenchmarker(BenchmarkerSync):
 
 class RequestXSyncBenchmarker(BenchmarkerSync):
     """Benchmarker for RequestX library (sync variant)."""
-    
+
     def __init__(self):
         super().__init__('requestx-sync')
-    
+
     def setup(self):
         try:
             import requestx
             self.session = requestx.Session()
         except ImportError:
             raise ImportError("RequestX library not found")
-    
+
     def teardown(self):
         if self.session:
             self.session.close()
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             response = self.session.request(method, url, **kwargs)
             return 200 <= response.status_code < 400
         except Exception:
             return False
-    
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
         import asyncio
@@ -398,18 +430,18 @@ class RequestXSyncBenchmarker(BenchmarkerSync):
 
 class RequestsBenchmarker(BenchmarkerSync):
     """Benchmarker for requests library."""
-    
+
     def __init__(self):
         super().__init__('requests')
-    
+
     def setup(self):
         import requests
         self.session = requests.Session()
-    
+
     def teardown(self):
         if self.session:
             self.session.close()
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             response = self.session.request(method, url, **kwargs)
@@ -420,18 +452,18 @@ class RequestsBenchmarker(BenchmarkerSync):
 
 class HttpxBenchmarker(BenchmarkerSync):
     """Benchmarker for httpx library (legacy name for backward compatibility)."""
-    
+
     def __init__(self):
         super().__init__('httpx')
-    
+
     def setup(self):
         import httpx
         self.session = httpx.Client()
-    
+
     def teardown(self):
         if self.session:
             self.session.close()
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             response = self.session.request(method, url, **kwargs)
@@ -442,18 +474,18 @@ class HttpxBenchmarker(BenchmarkerSync):
 
 class HttpxSyncBenchmarker(BenchmarkerSync):
     """Benchmarker for httpx library (sync variant)."""
-    
+
     def __init__(self):
         super().__init__('httpx-sync')
-    
+
     def setup(self):
         import httpx
         self.session = httpx.Client()
-    
+
     def teardown(self):
         if self.session:
             self.session.close()
-    
+
     def make_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         try:
             response = self.session.request(method, url, **kwargs)
@@ -464,11 +496,11 @@ class HttpxSyncBenchmarker(BenchmarkerSync):
 
 class RequestXAsyncBenchmarker(BenchmarkerAsync):
     """Benchmarker for RequestX library (async variant)."""
-    
+
     def __init__(self):
         super().__init__('requestx-async')
         self.session = None
-    
+
     async def async_setup(self):
         """Async setup method for RequestX."""
         try:
@@ -479,14 +511,14 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
         except ImportError:
             print("RequestX library not found!")
             raise ImportError("RequestX library not found")
-    
+
     async def async_teardown(self):
         """Async teardown method for RequestX."""
         if self.session:
             self.session.close()
-    
+
     # Remove the make_request method - BenchmarkerAsync handles this with NotImplementedError
-    
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
         import asyncio
@@ -498,7 +530,7 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
                 return 200 <= response.status_code < 400
             except Exception:
                 return False
-        
+
         return await loop.run_in_executor(None, sync_request)
 
 
@@ -507,23 +539,23 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
 
 class AiohttpBenchmarker(BenchmarkerAsync):
     """Benchmarker for aiohttp library."""
-    
+
     def __init__(self):
         super().__init__('aiohttp')
         self.session = None
-    
+
     async def async_setup(self):
         """Async setup method for aiohttp."""
         import aiohttp
         self.session = aiohttp.ClientSession()
-    
+
     async def async_teardown(self):
         """Async teardown method for aiohttp."""
         if self.session and not self.session.closed:
             await self.session.close()
-    
 
-    
+
+
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Make async request using aiohttp."""
         try:
@@ -543,12 +575,12 @@ class AiohttpBenchmarker(BenchmarkerAsync):
 
 class BenchmarkRunner:
     """Main benchmark runner class."""
-    
+
     def __init__(self, config: BenchmarkConfig):
         self.config = config
         self.results: List[BenchmarkResult] = []
-    
-    def run_benchmark(self, benchmarker: Benchmarker, 
+
+    def run_benchmark(self, benchmarker: Benchmarker,
                      url: str, method: str = 'GET') -> BenchmarkResult:
         """Run a single benchmark."""
         # Warmup
@@ -560,18 +592,18 @@ class BenchmarkRunner:
                 except Exception:
                     pass
             benchmarker.teardown()
-        
+
         # Actual benchmark
         result = benchmarker.benchmark_sync(
-            url, method, 
+            url, method,
             self.config.num_requests,
             self.config.concurrent_requests,
             self.config.timeout
         )
-        
+
         self.results.append(result)
         return result
-    
+
     async def run_async_benchmark(self, benchmarker: Benchmarker,
                                  url: str, method: str = 'GET') -> BenchmarkResult:
         """Run a single async benchmark."""
@@ -588,7 +620,7 @@ class BenchmarkRunner:
                     pass
             if hasattr(benchmarker, 'teardown') and not isinstance(benchmarker, BenchmarkerAsync):
                 benchmarker.teardown()
-        
+
         # Actual benchmark
         result = await benchmarker.benchmark_async(
             url, method,
@@ -596,18 +628,18 @@ class BenchmarkRunner:
             self.config.concurrent_requests,
             self.config.timeout
         )
-        
+
         self.results.append(result)
         return result
-    
+
     def get_results(self) -> List[BenchmarkResult]:
         """Get all benchmark results."""
         return self.results.copy()
-    
+
     def clear_results(self):
         """Clear all stored results."""
         self.results.clear()
-    
+
     def export_results(self, format: str = 'json') -> Union[str, Dict[str, Any]]:
         """Export results in specified format."""
         if format.lower() == 'json':
