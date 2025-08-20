@@ -765,10 +765,10 @@ class TestBenchmarkComparison(unittest.TestCase):
 
                 print(f"\n{scenario_name} Analysis:")
                 print(
-                    f"  Sync:  {sync_metrics.requests_per_second:.1f} RPS, {sync_metrics.average_response_time:.1f}ms avg"
+                    f"  Sync:  {sync_metrics.requests_per_second:.1f} RPS, {sync_metrics.average_response_time_ms:.1f}ms avg"
                 )
                 print(
-                    f"  Async: {async_metrics.requests_per_second:.1f} RPS, {async_metrics.average_response_time:.1f}ms avg"
+                    f"  Async: {async_metrics.requests_per_second:.1f} RPS, {async_metrics.average_response_time_ms:.1f}ms avg"
                 )
 
                 if sync_metrics.requests_per_second > 0:
@@ -781,13 +781,13 @@ class TestBenchmarkComparison(unittest.TestCase):
                     ) * 100
                     print(f"  Async RPS improvement: {rps_improvement:+.1f}%")
 
-                if sync_metrics.average_response_time > 0:
+                if sync_metrics.average_response_time_ms > 0:
                     time_improvement = (
                         (
-                            sync_metrics.average_response_time
-                            - async_metrics.average_response_time
+                            sync_metrics.average_response_time_ms
+                            - async_metrics.average_response_time_ms
                         )
-                        / sync_metrics.average_response_time
+                        / sync_metrics.average_response_time_ms
                     ) * 100
                     print(f"  Async time improvement: {time_improvement:+.1f}%")
 
@@ -1134,7 +1134,7 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
                             print(
                                 f"  Concurrency {metrics.concurrency_level}: "
                                 f"{metrics.requests_per_second:.1f} RPS, "
-                                f"{metrics.average_response_time:.1f}ms avg, "
+                                f"{metrics.average_response_time_ms:.1f}ms avg, "
                                 f"{metrics.success_rate:.1%} success"
                             )
 
@@ -1236,7 +1236,7 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
                             [
                                 metrics.concurrency_level,
                                 f"{metrics.requests_per_second:.1f}",
-                                f"{metrics.average_response_time:.1f}",
+                                f"{metrics.average_response_time_ms:.1f}",
                                 f"{metrics.cpu_usage_percent:.1f}",
                                 f"{metrics.success_rate:.1%}",
                             ]
@@ -1277,7 +1277,7 @@ class TestConcurrencyBenchmarks(unittest.TestCase):
                         library_name = name.split("_c")[0]
                         print(
                             f"  {library_name:<10}: {metrics.requests_per_second:>8.1f} RPS, "
-                            f"{metrics.average_response_time:>6.1f}ms, {metrics.success_rate:>6.1%} success"
+                            f"{metrics.average_response_time_ms:>6.1f}ms, {metrics.success_rate:>6.1%} success"
                         )
 
     def test_async_concurrency_comparison(self):

@@ -95,10 +95,10 @@ class TestQuickBenchmark(unittest.TestCase):
             print(f"Successful requests: {result.successful_requests}")
             print(f"Failed requests: {result.failed_requests}")
             print(f"Requests per second: {result.requests_per_second:.2f}")
-            print(f"Average response time: {result.average_response_time*1000:.2f} ms")
-            print(f"Median response time: {result.median_response_time*1000:.2f} ms")
-            print(f"95th percentile: {result.p95_response_time*1000:.2f} ms")
-            print(f"99th percentile: {result.p99_response_time*1000:.2f} ms")
+            print(f"Average response time: {result.average_response_time_ms * 1000:.2f} ms")
+            print(f"Median response time: {result.median_response_time_ms * 1000:.2f} ms")
+            print(f"95th percentile: {result.p95_response_time_ms * 1000:.2f} ms")
+            print(f"99th percentile: {result.p99_response_time_ms * 1000:.2f} ms")
             print(f"Error rate: {result.error_rate:.2f}%")
             print(f"CPU usage: {result.cpu_usage_percent:.1f}%")
             print(f"Memory usage: {result.memory_usage_mb:.2f} MB")
@@ -111,8 +111,8 @@ class TestQuickBenchmark(unittest.TestCase):
             
             # Performance assertions
             self.assertGreater(result.requests_per_second, 0, "RPS should be positive")
-            self.assertGreater(result.average_response_time, 0, "Response time should be positive")
-            self.assertLessEqual(result.average_response_time, 5.0, "Response time should be reasonable (<5s)")
+            self.assertGreater(result.average_response_time_ms, 0, "Response time should be positive")
+            self.assertLessEqual(result.average_response_time_ms, 5.0, "Response time should be reasonable (<5s)")
             self.assertGreaterEqual(result.successful_requests, 1, "Should have at least 1 successful request")
             
             # Resource usage assertions
@@ -210,10 +210,10 @@ class TestQuickBenchmark(unittest.TestCase):
                 print(f"Successful requests: {result.successful_requests}")
                 print(f"Failed requests: {result.failed_requests}")
                 print(f"Requests per second: {result.requests_per_second:.2f}")
-                print(f"Average response time: {result.average_response_time*1000:.2f} ms")
-                print(f"Median response time: {result.median_response_time*1000:.2f} ms")
-                print(f"95th percentile: {result.p95_response_time*1000:.2f} ms")
-                print(f"99th percentile: {result.p99_response_time*1000:.2f} ms")
+                print(f"Average response time: {result.average_response_time_ms * 1000:.2f} ms")
+                print(f"Median response time: {result.median_response_time_ms * 1000:.2f} ms")
+                print(f"95th percentile: {result.p95_response_time_ms * 1000:.2f} ms")
+                print(f"99th percentile: {result.p99_response_time_ms * 1000:.2f} ms")
                 print(f"Error rate: {result.error_rate:.2f}%")
                 print(f"CPU usage: {result.cpu_usage_percent:.1f}%")
                 print(f"Memory usage: {result.memory_usage_mb:.2f} MB")
@@ -226,8 +226,8 @@ class TestQuickBenchmark(unittest.TestCase):
                 
                 # Performance assertions
                 self.assertGreater(result.requests_per_second, 0, "RPS should be positive")
-                self.assertGreater(result.average_response_time, 0, "Response time should be positive")
-                self.assertLessEqual(result.average_response_time, 5.0, "Response time should be reasonable (<5s)")
+                self.assertGreater(result.average_response_time_ms, 0, "Response time should be positive")
+                self.assertLessEqual(result.average_response_time_ms, 5.0, "Response time should be reasonable (<5s)")
                 self.assertGreaterEqual(result.successful_requests, 1, "Should have at least 1 successful request")
                 
                 # Resource usage assertions

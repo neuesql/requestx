@@ -39,10 +39,10 @@ class BenchmarkResult:
     concurrency: int
     method: str
     requests_per_second: float
-    average_response_time: float
-    median_response_time: float
-    p95_response_time: float
-    p99_response_time: float
+    average_response_time_ms: float
+    median_response_time_ms: float
+    p95_response_time_ms: float
+    p99_response_time_ms: float
     error_rate: float
     total_requests: int
     successful_requests: int
@@ -170,10 +170,10 @@ class BenchmarkerSync(Benchmarker):
             concurrency=concurrent_requests,
             method=method,
             requests_per_second=requests_per_second,
-            average_response_time=statistics.mean(response_times) if response_times else 0,
-            median_response_time=statistics.median(response_times) if response_times else 0,
-            p95_response_time=self._percentile(response_times, 95) if response_times else 0,
-            p99_response_time=self._percentile(response_times, 99) if response_times else 0,
+            average_response_time_ms=statistics.mean(response_times) if response_times else 0,
+            median_response_time_ms=statistics.median(response_times) if response_times else 0,
+            p95_response_time_ms=self._percentile(response_times, 95) if response_times else 0,
+            p99_response_time_ms=self._percentile(response_times, 99) if response_times else 0,
             error_rate=error_rate,
             total_requests=num_requests,
             successful_requests=successful_requests,
@@ -302,10 +302,10 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             concurrency=concurrent_requests,
             method=method,
             requests_per_second=requests_per_second,
-            average_response_time=statistics.mean(response_times) if response_times else 0,
-            median_response_time=statistics.median(response_times) if response_times else 0,
-            p95_response_time=self._percentile(response_times, 95) if response_times else 0,
-            p99_response_time=self._percentile(response_times, 99) if response_times else 0,
+            average_response_time_ms=statistics.mean(response_times) if response_times else 0,
+            median_response_time_ms=statistics.median(response_times) if response_times else 0,
+            p95_response_time_ms=self._percentile(response_times, 95) if response_times else 0,
+            p99_response_time_ms=self._percentile(response_times, 99) if response_times else 0,
             error_rate=error_rate,
             total_requests=num_requests,
             successful_requests=successful_requests,

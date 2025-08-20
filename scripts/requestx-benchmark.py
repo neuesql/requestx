@@ -279,7 +279,7 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
         stats = library_stats[lib]
         stats['total_tests'] += 1
         stats['avg_rps'] += result.requests_per_second
-        stats['avg_response_time'] += result.average_response_time
+        stats['avg_response_time'] += result.average_response_time_ms
         stats['avg_memory'] += result.memory_usage_mb
         stats['total_errors'] += result.failed_requests
         stats['total_requests'] += result.total_requests
@@ -306,8 +306,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
     best_rps = max(results, key=lambda r: r.requests_per_second)
     print(f"Highest RPS: {best_rps.library} - {best_rps.requests_per_second:.2f} RPS")
     
-    best_latency = min(results, key=lambda r: r.average_response_time)
-    print(f"Lowest Latency: {best_latency.library} - {best_latency.average_response_time*1000:.2f}ms")
+    best_latency = min(results, key=lambda r: r.average_response_time_ms)
+    print(f"Lowest Latency: {best_latency.library} - {best_latency.average_response_time_ms * 1000:.2f}ms")
     
     if hasattr(results[0], 'memory_usage_mb'):
         best_memory = min(results, key=lambda r: r.memory_usage_mb)
@@ -339,7 +339,7 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
             stats = library_stats[lib]
             stats['total_tests'] += 1
             stats['avg_rps'] += result.requests_per_second
-            stats['avg_response_time'] += result.average_response_time
+            stats['avg_response_time'] += result.average_response_time_ms
             stats['avg_memory'] += result.memory_usage_mb
             stats['total_errors'] += result.failed_requests
             stats['total_requests'] += result.total_requests
@@ -365,8 +365,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
         best_rps = max(results, key=lambda r: r.requests_per_second)
         f.write(f"**Highest RPS:** {best_rps.library} - {best_rps.requests_per_second:.2f} RPS\n")
         
-        best_latency = min(results, key=lambda r: r.average_response_time)
-        f.write(f"**Lowest Latency:** {best_latency.library} - {best_latency.average_response_time*1000:.2f}ms\n")
+        best_latency = min(results, key=lambda r: r.average_response_time_ms)
+        f.write(f"**Lowest Latency:** {best_latency.library} - {best_latency.average_response_time_ms * 1000:.2f}ms\n")
         
         best_memory = min(results, key=lambda r: r.memory_usage_mb)
         f.write(f"**Lowest Memory:** {best_memory.library} - {best_memory.memory_usage_mb:.2f}MB\n")
@@ -379,7 +379,7 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
         for result in sorted(results, key=lambda r: (r.library, r.method, r.concurrency)):
             success_rate = (result.successful_requests / result.total_requests * 100) if result.total_requests > 0 else 0
             f.write(f"| {result.library} | {result.method} | {result.concurrency} | "
-                   f"{result.requests_per_second:.2f} | {result.average_response_time*1000:.2f} | "
+                   f"{result.requests_per_second:.2f} | {result.average_response_time_ms * 1000:.2f} | "
                    f"{result.memory_usage_mb:.2f} | {success_rate:.2f} |\n")
     
     print(f"Detailed report saved to: {report_file}")
@@ -498,7 +498,7 @@ def main():
                     
                     if args.verbose:
                         print(f"    RPS: {result.requests_per_second:.2f}")
-                        print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
+                        print(f"    Avg Response Time: {result.average_response_time_ms:.2f}ms")
                         print(f"    Error Rate: {result.error_rate:.2f}%")
                         print(f"    CPU Usage: {result.cpu_usage_percent:.2f}%")
                         print(f"    Memory Usage: {result.memory_usage_mb:.2f}MB")
