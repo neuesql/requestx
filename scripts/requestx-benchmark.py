@@ -6,17 +6,24 @@ This script runs comprehensive benchmarks comparing RequestX against other
 HTTP libraries and exports results in multiple formats including CSV and JSON.
 """
 
-import os
-import sys
 import argparse
 import json
-from typing import List, Dict, Any
+import logging
+import os
+import sys
+from dataclasses import asdict
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+import logging_loki
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+
 
 # Add the parent directory to sys.path to import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
-import requestx
 from requestx.benchmark import (
     BenchmarkRunner, 
     BenchmarkConfig, 
@@ -28,7 +35,113 @@ from requestx.benchmark import (
     RequestsBenchmarker,
     AiohttpBenchmarker
 )
-from requestx.profiler import profile_context, PerformanceMetrics
+
+# Cloud export constants and functionality
+DEFAULT_LOKI_TAGS = {
+    "service": "requestx",
+    "type": "benchmark",
+    "environment": "production"
+}
+
+# Global Loki logger instance
+_loki_logger = None
+
+
+def _get_loki_logger(
+    source_name: str = "requestx-benchmark",
+    tags: Optional[Dict[str, str]] = None
+) -> Optional[logging.Logger]:
+    """Get or create a Loki logger instance.
+    
+    Args:
+        source_name: Identifier for the log source
+        tags: Additional tags to include with logs
+        
+    Returns:
+        Logger instance or None if configuration is invalid
+    """
+    global _loki_logger
+
+    # Get configuration from environment variables
+    loki_url = os.getenv("LOKI_URL")
+    loki_user = os.getenv("LOKI_USER")
+    loki_password = os.getenv("LOKI_PASSWORD")
+    
+    if not loki_url or not loki_user or not loki_password:
+        print("Error: LOKI_URL, LOKI_USER, and LOKI_PASSWORD must be set in environment variables")
+        return None
+    
+    # Create logger if it doesn't exist or needs updating
+    if _loki_logger is None:
+        # Default tags for filtering in Grafana
+        default_tags = DEFAULT_LOKI_TAGS.copy()
+        default_tags["application"] = source_name
+        
+        if tags:
+            default_tags.update(tags)
+        
+        try:
+            # Create Loki handler
+            handler = logging_loki.LokiHandler(
+                url=loki_url,
+                tags=default_tags,
+                auth=(loki_user, loki_password),
+                version="1"
+            )
+            
+            # Create logger
+            _loki_logger = logging.getLogger("requestx-benchmark")
+            _loki_logger.setLevel(logging.INFO)
+            
+            # Remove existing handlers to avoid duplicates
+            for h in _loki_logger.handlers[:]:
+                _loki_logger.removeHandler(h)
+            
+            _loki_logger.addHandler(handler)
+            
+        except Exception as e:
+            print(f"Error creating Loki logger: {e}")
+            return None
+    
+    return _loki_logger
+
+
+def export_to_cloud(
+    results: List[Dict[str, Any]],
+    source_name: str = "requestx-benchmark",
+    tags: Optional[Dict[str, str]] = None
+) -> bool:
+    if not results:
+        print("No results to export")
+        return False
+    
+    # Get Loki logger
+    logger = _get_loki_logger(source_name, tags)
+    if logger is None:
+        return False
+    
+    try:
+        # Send each result as JSON log entry
+        exported_count = 0
+        for result in results:
+            # Convert result to dict if needed
+            if hasattr(result, '__dict__'):
+                log_data = asdict(result)
+            elif hasattr(result, 'to_dict'):
+                log_data = result.to_dict()
+            else:
+                log_data = dict(result)
+            
+            # Send benchmark data as JSON (following test pattern)
+            logger.info(json.dumps(log_data))
+            exported_count += 1
+        
+        print(f"Successfully exported {exported_count} benchmark results to Grafana Cloud Logs")
+        return True
+        
+    except Exception as e:
+        print(f"Error exporting to Grafana Cloud: {e}")
+        return False
 
 
 def parse_arguments():
@@ -142,6 +255,12 @@ Examples:
         '--no-json', 
         action='store_true',
         help='Disable JSON output'
+    )
+    
+    parser.add_argument(
+        '--no-cloud', 
+        action='store_true',
+        help='Disable cloud export to Grafana Loki'
     )
     
     # Library selection
@@ -507,6 +626,27 @@ def main():
                     for result in all_results:
                         writer.writerow(result.to_dict())
             print(f"Results saved to {csv_file}")
+        
+        # Export to cloud if not disabled
+        if not args.no_cloud:
+            print("\nExporting results to Grafana Cloud Logs...")
+            # Convert results to dictionaries for cloud export
+            results_dicts = [result.to_dict() for result in all_results]
+            
+            # Add timestamp and additional metadata
+            for result_dict in results_dicts:
+                result_dict['timestamp'] = timestamp
+                result_dict['benchmark_version'] = '1.0'
+            
+            # Export to cloud with additional tags
+            cloud_tags = {
+                'timestamp': timestamp,
+                'total_results': str(len(all_results))
+            }
+            
+            success = export_to_cloud(results_dicts, tags=cloud_tags)
+            if not success:
+                print("Warning: Failed to export results to cloud")
         
         # Generate report
         if args.verbose:

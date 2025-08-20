@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 class TestLokiLogger(unittest.TestCase):
     def setUp(self):
         loki_url = os.getenv("LOKI_URL")
