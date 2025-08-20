@@ -40,7 +40,6 @@ from ._requestx import (
 )
 from .profiler import Profile, PerformanceMetrics, ResourceMonitor, profile_context, aggregate_metrics, get_last_metrics
 from .benchmark import BenchmarkConfig, BenchmarkResult, Benchmarker, BenchmarkerSync, BenchmarkerAsync, RequestXBenchmarker, BenchmarkRunner
-from .exporter import OpenTelemetryExporter, GrafanaCloudExporter, export_to_grafana_cloud, export_to_otlp, convert_performance_metrics_to_dict
 
 
 # Exception hierarchy matching requests library
@@ -233,12 +232,6 @@ __all__ = [
     "BenchmarkerAsync",
     "RequestXBenchmarker",
     "BenchmarkRunner",
-    # OpenTelemetry Exporter
-    "OpenTelemetryExporter",
-    "GrafanaCloudExporter",
-    "export_to_grafana_cloud",
-    "export_to_otlp",
-    "convert_performance_metrics_to_dict",
     # Exceptions
     "RequestException",
     "ConnectionError",

@@ -3,8 +3,7 @@
 Main benchmark runner script for RequestX performance testing.
 
 This script runs comprehensive benchmarks comparing RequestX against other
-HTTP libraries and exports results in multiple formats including CSV, JSON,
-and OpenTelemetry.
+HTTP libraries and exports results in multiple formats including CSV and JSON.
 """
 
 import os
@@ -29,9 +28,7 @@ from requestx.benchmark import (
     RequestsBenchmarker,
     AiohttpBenchmarker
 )
-from requestx.exporter import export_to_grafana_cloud, export_to_otlp
 from requestx.profiler import profile_context, PerformanceMetrics
-
 
 
 def parse_arguments():
@@ -61,11 +58,6 @@ Examples:
   # Custom output and reporting
   ./requestx-benchmark --output-dir ./my_results --verbose
   ./requestx-benchmark --no-csv --output-dir ./json_only
-  
-  # Export results to monitoring systems
-  ./requestx-benchmark --grafana-cloud --quick
-  ./requestx-benchmark --otlp-endpoint http://localhost:4317
-  ./requestx-benchmark --otlp-endpoint http://jaeger:14268/api/traces --otlp-headers '{"Authorization":"Bearer token"}'
   
   # Performance testing scenarios
   ./requestx-benchmark --concurrency 1,50,100,500 --requests 1000 --timeout 60
@@ -150,25 +142,6 @@ Examples:
         '--no-json', 
         action='store_true',
         help='Disable JSON output'
-    )
-    
-    # OpenTelemetry configuration
-    parser.add_argument(
-        '--grafana-cloud', 
-        action='store_true',
-        help='Export results to Grafana Cloud (requires GRAFANA_INSTANCE_ID and GRAFANA_API_KEY env vars)'
-    )
-    
-    parser.add_argument(
-        '--otlp-endpoint', 
-        type=str,
-        help='Custom OTLP endpoint for exporting metrics'
-    )
-    
-    parser.add_argument(
-        '--otlp-headers', 
-        type=str,
-        help='Custom OTLP headers in format "key1=value1,key2=value2"'
     )
     
     # Library selection
@@ -541,38 +514,6 @@ def main():
             print("BENCHMARK REPORT")
             print("="*50)
             generate_report(all_results, args.output_dir)
-        
-        # Export to external systems
-        if args.grafana_cloud:
-            try:
-                instance_id = os.getenv('GRAFANA_INSTANCE_ID')
-                api_key = os.getenv('GRAFANA_API_KEY')
-                region = os.getenv('GRAFANA_REGION', 'us-central1')
-                
-                if not instance_id or not api_key:
-                    print("Error: GRAFANA_INSTANCE_ID and GRAFANA_API_KEY environment variables are required")
-                else:
-                    # Convert results to dict format
-                    results_dict = [result.to_dict() for result in all_results]
-                    export_to_grafana_cloud(results_dict, instance_id, api_key, region)
-            except Exception as e:
-                print(f"Failed to export to Grafana Cloud: {e}")
-        
-        if args.otlp_endpoint:
-            try:
-                # Parse headers if provided
-                headers = None
-                if args.otlp_headers:
-                    try:
-                        headers = json.loads(args.otlp_headers)
-                    except json.JSONDecodeError:
-                        print("Warning: Invalid JSON format for OTLP headers, ignoring")
-                
-                # Convert results to dict format
-                results_dict = [result.to_dict() for result in all_results]
-                export_to_otlp(results_dict, args.otlp_endpoint, headers)
-            except Exception as e:
-                print(f"Failed to export to OTLP endpoint: {e}")
     
     else:
         print("No benchmark results to save.")
