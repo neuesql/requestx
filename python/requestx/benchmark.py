@@ -105,7 +105,7 @@ class BenchmarkerSync(Benchmarker):
         self.setup()
 
         # Initialize process and CPU measurement
-        process = psutil.Process(os.getpid())
+        process = psutil.Process()
         process.cpu_percent()  # First call to initialize CPU measurement
         time.sleep(0.1)  # Small delay for accurate CPU measurement
 
