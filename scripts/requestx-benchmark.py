@@ -485,32 +485,23 @@ def main():
                     # Create runner with current config
                     current_runner = BenchmarkRunner(current_config)
                     
-                    # Use profiler context to monitor performance
-                    with profile_context(cpu=True, memory=True, request=True, detailed=True) as profiler_metrics:
-                        # Check if benchmarker is async and use appropriate method
-                        from requestx.benchmark import BenchmarkerAsync
-                        if isinstance(benchmarker, BenchmarkerAsync):
-                            import asyncio
-                            result = asyncio.run(current_runner.run_async_benchmark(benchmarker, url, method))
-                        else:
-                            result = current_runner.run_benchmark(benchmarker, url, method)
+                    # Run benchmark directly without profiler override
+                    from requestx.benchmark import BenchmarkerAsync
+                    if isinstance(benchmarker, BenchmarkerAsync):
+                        import asyncio
+                        result = asyncio.run(current_runner.run_async_benchmark(benchmarker, url, method))
+                    else:
+                        result = current_runner.run_benchmark(benchmarker, url, method)
                     
-                        # Enhance result with profiler metrics
-                        if hasattr(result, 'cpu_usage_percent'):
-                            result.cpu_usage_percent = profiler_metrics.cpu_usage_percent
-                        if hasattr(result, 'memory_usage_mb'):
-                            result.memory_usage_mb = profiler_metrics.memory_usage_mb
-                        if hasattr(result, 'peak_memory_mb'):
-                            result.peak_memory_mb = profiler_metrics.peak_memory_mb
-                        
-                        all_results.append(result)
-                        
-                        if args.verbose:
-                            print(f"    RPS: {result.requests_per_second:.2f}")
-                            print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
-                            print(f"    Error Rate: {result.error_rate:.2f}%")
-                            print(f"    CPU Usage: {profiler_metrics.cpu_usage_percent:.2f}%")
-                            print(f"    Memory Usage: {profiler_metrics.memory_usage_mb:.2f}MB")
+                    # No need to override - the benchmark methods already calculate CPU/memory correctly
+                    all_results.append(result)
+                    
+                    if args.verbose:
+                        print(f"    RPS: {result.requests_per_second:.2f}")
+                        print(f"    Avg Response Time: {result.average_response_time:.2f}ms")
+                        print(f"    Error Rate: {result.error_rate:.2f}%")
+                        print(f"    CPU Usage: {result.cpu_usage_percent:.2f}%")
+                        print(f"    Memory Usage: {result.memory_usage_mb:.2f}MB")
                     
                 except Exception as e:
                     print(f"    Error: {e}")
