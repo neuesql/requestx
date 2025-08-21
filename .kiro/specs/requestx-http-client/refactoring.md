@@ -37,7 +37,7 @@ git checkout -b refactor/optimization-{strategy-name}
 - [ ] Focus on single performance factor per iteration
 - [ ] Build and validate changes based on modification type:
 
-#### For Rust Code Changes (src/ folder modifications)
+#### For Rust Code Changes (only src/ folder modifications)
 ```bash
 make clean && make build
 ```
@@ -80,7 +80,7 @@ uv run python scripts/requestx-benchmark.py \
   --concurrency {strategy-specific-value} \
   --requests {strategy-specific-value} \
   --factor optimization-{strategy-name} \
-  --reasoning "{improvement-description}" \
+  --value "{improvement-description}" \
   --commit $(git rev-parse HEAD) \
   --branch refactor/optimization-{strategy-name}
 ```
