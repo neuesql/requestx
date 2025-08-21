@@ -27,8 +27,9 @@ impl Session {
         let https = HttpsConnector::new();
         let hyper_client = Client::builder()
             .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for session reuse
-            .pool_max_idle_per_host(50) // More connections per host for sessions
-            .http2_only(false) // Allow HTTP/1.1 fallback
+            .pool_max_idle_per_host(512) // More connections per host for sessions
+            .http2_only(true) // Allow HTTP/1.1 fallback
+            .http2_keep_alive_interval(Some(Duration::from_secs(30))).http2_keep_alive_timeout(Duration::from_secs(10))
             .http2_initial_stream_window_size(Some(65536)) // Optimize HTTP/2 streams
             .http2_initial_connection_window_size(Some(1048576)) // 1MB connection window
             .build::<_, hyper::Body>(https);

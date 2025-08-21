@@ -19,7 +19,7 @@ fn get_global_runtime() -> &'static Arc<Runtime> {
             .worker_threads(worker_threads)
             .max_blocking_threads(512)
             .thread_name("requestx-worker")
-            .thread_stack_size(1024 * 1024)
+            .thread_stack_size(512 * 1024)
             .enable_all()
             .build()
             .expect("Failed to create optimized global tokio runtime");
