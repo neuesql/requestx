@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
 import sys
 from dataclasses import asdict
 from datetime import datetime
@@ -144,6 +145,96 @@ def export_to_cloud(
         return False
 
 
+def save_to_database(results: List[BenchmarkResult], db_path: str) -> bool:
+    """Save benchmark results to SQLite database.
+    
+    Args:
+        results: List of BenchmarkResult objects to save
+        db_path: Path to the SQLite database file
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not results:
+        print("No results to save to database")
+        return False
+    
+    try:
+        # Connect to database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create table if it doesn't exist (with schema matching performance.db)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS benchmark (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                test_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                
+                library TEXT NOT NULL,
+                concurrency INTEGER NOT NULL,
+                method TEXT NOT NULL,
+                requests_per_second REAL NOT NULL,
+                average_response_time_ms REAL NOT NULL,
+                median_response_time_ms REAL NOT NULL,
+                p95_response_time_ms REAL NOT NULL,
+                p99_response_time_ms REAL NOT NULL,
+                error_rate REAL NOT NULL,
+                total_requests INTEGER NOT NULL,
+                successful_requests INTEGER NOT NULL,
+                failed_requests INTEGER NOT NULL,
+                cpu_usage_percent REAL NOT NULL,
+                memory_usage_mb REAL NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        """)
+        
+        # Create indexes if they don't exist
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library ON benchmark(library)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_method ON benchmark(method)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_concurrency ON benchmark(concurrency)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_test_time ON benchmark(test_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON benchmark(test_time)")
+        
+        # Insert results (excluding id and test_time as they are auto-generated)
+        saved_count = 0
+        for result in results:
+            cursor.execute("""
+                INSERT INTO benchmark (
+                    library, concurrency, method, requests_per_second,
+                    average_response_time_ms, median_response_time_ms,
+                    p95_response_time_ms, p99_response_time_ms, error_rate,
+                    total_requests, successful_requests, failed_requests,
+                    cpu_usage_percent, memory_usage_mb, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                result.library,
+                result.concurrency,
+                result.method,
+                result.requests_per_second,
+                result.average_response_time_ms,
+                result.median_response_time_ms,
+                result.p95_response_time_ms,
+                result.p99_response_time_ms,
+                result.error_rate,
+                result.total_requests,
+                result.successful_requests,
+                result.failed_requests,
+                result.cpu_usage_percent,
+                result.memory_usage_mb,
+                result.timestamp
+            ))
+            saved_count += 1
+        
+        # Commit changes
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        print(f"Error saving to database: {e}")
+        return False
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -261,6 +352,19 @@ Examples:
         '--no-cloud', 
         action='store_true',
         help='Disable cloud export to Grafana Loki'
+    )
+    
+    parser.add_argument(
+        '--no-db', 
+        action='store_true',
+        help='Disable database persistence to SQLite'
+    )
+    
+    parser.add_argument(
+        '--db-path', 
+        type=str, 
+        default='performance.db',
+        help='Path to SQLite database file (default: performance.db)'
     )
     
     # Library selection
@@ -647,6 +751,15 @@ def main():
             success = export_to_cloud(results_dicts, tags=cloud_tags)
             if not success:
                 print("Warning: Failed to export results to cloud")
+        
+        # Save to database if not disabled
+        if not args.no_db:
+            print("\nSaving results to database...")
+            try:
+                save_to_database(all_results, args.db_path)
+                print(f"Successfully saved {len(all_results)} results to database: {args.db_path}")
+            except Exception as e:
+                print(f"Warning: Failed to save results to database: {e}")
         
         # Generate report
         if args.verbose:
