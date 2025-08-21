@@ -3,16 +3,24 @@
 This module provides core benchmarking functionality for comparing RequestX
 performance against other HTTP libraries.
 """
-import os
-import time
+
+# Standard library imports
 import asyncio
+import json
 import statistics
-import psutil
+import time
 import unittest
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union
-from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, asdict
+from typing import Dict, Any, List, Optional, Union
+
+# Third-party imports
+import aiohttp
+import httpx
+import psutil
+import requests
+import requestx
 
 
 @dataclass
@@ -95,7 +103,6 @@ class BenchmarkerSync(Benchmarker):
 
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         """Default async implementation that runs sync method in executor."""
-        import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
 
@@ -339,7 +346,6 @@ class HttpxAsyncBenchmarker(BenchmarkerAsync):
 
     async def async_setup(self):
         """Async setup method for httpx."""
-        import httpx
         self.session = httpx.AsyncClient()
 
     async def async_teardown(self):
@@ -363,11 +369,7 @@ class RequestXBenchmarker(BenchmarkerSync):
         super().__init__('requestx')
 
     def setup(self):
-        try:
-            import requestx
-            self.session = requestx.Session()
-        except ImportError:
-            raise ImportError("RequestX library not found")
+        self.session = requestx.Session()
 
     def teardown(self):
         if self.session:
@@ -387,7 +389,6 @@ class RequestXBenchmarker(BenchmarkerSync):
 
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
-        import asyncio
         loop = asyncio.get_event_loop()
         try:
             result = await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
@@ -404,11 +405,7 @@ class RequestXSyncBenchmarker(BenchmarkerSync):
         super().__init__('requestx-sync')
 
     def setup(self):
-        try:
-            import requestx
-            self.session = requestx.Session()
-        except ImportError:
-            raise ImportError("RequestX library not found")
+        self.session = requestx.Session()
 
     def teardown(self):
         if self.session:
@@ -423,7 +420,6 @@ class RequestXSyncBenchmarker(BenchmarkerSync):
 
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
-        import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.make_request, url, method, **kwargs)
 
@@ -435,7 +431,6 @@ class RequestsBenchmarker(BenchmarkerSync):
         super().__init__('requests')
 
     def setup(self):
-        import requests
         self.session = requests.Session()
 
     def teardown(self):
@@ -457,7 +452,6 @@ class HttpxBenchmarker(BenchmarkerSync):
         super().__init__('httpx')
 
     def setup(self):
-        import httpx
         self.session = httpx.Client()
 
     def teardown(self):
@@ -479,7 +473,6 @@ class HttpxSyncBenchmarker(BenchmarkerSync):
         super().__init__('httpx-sync')
 
     def setup(self):
-        import httpx
         self.session = httpx.Client()
 
     def teardown(self):
@@ -504,7 +497,6 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
     async def async_setup(self):
         """Async setup method for RequestX."""
         try:
-            import requestx
             # RequestX doesn't have asyncsession yet, will use sync session
             self.session = requestx.Session()
             print(f"RequestX async_setup completed, session: {self.session}")
@@ -521,7 +513,6 @@ class RequestXAsyncBenchmarker(BenchmarkerAsync):
 
     async def make_async_request(self, url: str, method: str = 'GET', **kwargs) -> bool:
         # RequestX doesn't have async support yet, so we'll use sync in thread
-        import asyncio
         loop = asyncio.get_event_loop()
         # Since we removed make_request, we need to implement the sync logic here
         def sync_request():
@@ -546,7 +537,6 @@ class AiohttpBenchmarker(BenchmarkerAsync):
 
     async def async_setup(self):
         """Async setup method for aiohttp."""
-        import aiohttp
         self.session = aiohttp.ClientSession()
 
     async def async_teardown(self):
@@ -565,7 +555,6 @@ class AiohttpBenchmarker(BenchmarkerAsync):
                     return 200 <= response.status < 400
             else:
                 # Fallback: create temporary session if none exists
-                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.request(method, url, **kwargs) as response:
                         return 200 <= response.status < 400
@@ -643,7 +632,6 @@ class BenchmarkRunner:
     def export_results(self, format: str = 'json') -> Union[str, Dict[str, Any]]:
         """Export results in specified format."""
         if format.lower() == 'json':
-            import json
             return json.dumps([result.to_dict() for result in self.results], indent=2)
         elif format.lower() == 'dict':
             return {'results': [result.to_dict() for result in self.results]}

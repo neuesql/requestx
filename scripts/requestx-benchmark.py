@@ -6,6 +6,7 @@ This script runs comprehensive benchmarks comparing RequestX against other
 HTTP libraries and exports results in multiple formats including CSV and JSON.
 """
 
+# Standard library imports
 import argparse
 import json
 import logging
@@ -14,27 +15,29 @@ import sqlite3
 import sys
 from dataclasses import asdict
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
+# Third-party imports
 import logging_loki
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv(".env")
-
 
 # Add the parent directory to sys.path to import requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
+# Local imports
 from requestx.benchmark import (
-    BenchmarkRunner, 
-    BenchmarkConfig, 
+    AiohttpBenchmarker,
+    BenchmarkConfig,
     BenchmarkResult,
-    RequestXSyncBenchmarker,
-    RequestXAsyncBenchmarker,
-    HttpxSyncBenchmarker,
+    BenchmarkRunner,
     HttpxAsyncBenchmarker,
+    HttpxSyncBenchmarker,
+    RequestXAsyncBenchmarker,
+    RequestXSyncBenchmarker,
     RequestsBenchmarker,
-    AiohttpBenchmarker
 )
 
 # Cloud export constants and functionality
