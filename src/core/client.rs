@@ -8,27 +8,35 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
+use crate::config::get_http_client_config;
 use crate::error::RequestxError;
 
 // Pre-allocated common strings to reduce allocations
 const CONTENT_TYPE_JSON: &str = "application/json";
 const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 
+/// Create a configured hyper client with standard settings
+pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
+    let config = get_http_client_config();
+    let https = HttpsConnector::new();
+    
+    Client::builder()
+        .pool_idle_timeout(config.pool_idle_timeout())
+        .pool_max_idle_per_host(config.pool_max_idle_per_host)
+        .http2_only(config.http2_only)
+        .http2_initial_stream_window_size(Some(config.http2_initial_stream_window_size))
+        .http2_initial_connection_window_size(Some(config.http2_initial_connection_window_size))
+        .http2_keep_alive_interval(Some(config.http2_keep_alive_interval()))
+        .http2_keep_alive_timeout(config.http2_keep_alive_timeout())
+        .build::<_, hyper::Body>(https)
+}
+
 // Global shared client for connection pooling
 static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
     OnceLock::new();
 
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
-    GLOBAL_CLIENT.get_or_init(|| {
-        let https = HttpsConnector::new();
-        Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for better reuse
-            .pool_max_idle_per_host(50) // More connections per host
-            .http2_only(false) // Allow HTTP/1.1 fallback
-            .http2_initial_stream_window_size(Some(65536)) // Optimize HTTP/2 streams
-            .http2_initial_connection_window_size(Some(1048576)) // 1MB connection window
-            .build::<_, hyper::Body>(https)
-    })
+    GLOBAL_CLIENT.get_or_init(|| create_client())
 }
 
 /// Create a custom client with specific SSL verification settings
@@ -36,16 +44,11 @@ fn create_custom_client(
     verify: bool,
 ) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
     if verify {
-        // For verify=true, just use the default HTTPS connector
-        let https = HttpsConnector::new();
-        return Ok(Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(50)
-            .http2_only(false)
-            .http2_initial_stream_window_size(Some(65536))
-            .http2_initial_connection_window_size(Some(1048576))
-            .build::<_, hyper::Body>(https));
+        // For verify=true, use the standard configured client
+        return Ok(create_client());
     }
+    
+    let config = get_http_client_config();
 
     // For verify=false, create a custom TLS connector that accepts invalid certs
     let mut https_builder = hyper_tls::native_tls::TlsConnector::builder();
@@ -62,11 +65,11 @@ fn create_custom_client(
     let https_connector = HttpsConnector::from((http_connector, tls_connector.into()));
 
     Ok(Client::builder()
-        .pool_idle_timeout(Duration::from_secs(90))
-        .pool_max_idle_per_host(50)
-        .http2_only(false)
-        .http2_initial_stream_window_size(Some(65536))
-        .http2_initial_connection_window_size(Some(1048576))
+        .pool_idle_timeout(config.pool_idle_timeout())
+        .pool_max_idle_per_host(config.pool_max_idle_per_host)
+        .http2_only(config.http2_only)
+        .http2_initial_stream_window_size(Some(config.http2_initial_stream_window_size))
+        .http2_initial_connection_window_size(Some(config.http2_initial_connection_window_size))
         .build::<_, hyper::Body>(https_connector))
 }
 

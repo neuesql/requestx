@@ -1,12 +1,10 @@
 use cookie_store::CookieStore;
-use hyper::{Client, HeaderMap, Method, Uri};
-use hyper_tls::HttpsConnector;
+use hyper::{HeaderMap, Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use crate::core::client::{RequestxClient, ResponseData};
+use crate::core::client::{create_client, RequestxClient, ResponseData};
 use crate::core::runtime::get_global_runtime_manager;
 use crate::error::RequestxError;
 use crate::{parse_kwargs, response_data_to_py_response};
@@ -23,16 +21,7 @@ pub struct Session {
 impl Session {
     #[new]
     fn new() -> PyResult<Self> {
-        // Create a custom hyper client for the session with optimized settings
-        let https = HttpsConnector::new();
-        let hyper_client = Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90)) // Longer idle timeout for session reuse
-            .pool_max_idle_per_host(512) // More connections per host for sessions
-            .http2_only(false) // Allow HTTP/1.1 fallback
-            .http2_keep_alive_interval(Some(Duration::from_secs(30))).http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_initial_stream_window_size(Some(65536)) // Optimize HTTP/2 streams
-            .http2_initial_connection_window_size(Some(1048576)) // 1MB connection window
-            .build::<_, hyper::Body>(https);
+        let hyper_client = create_client();
 
         let client = RequestxClient::with_custom_client(hyper_client).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(

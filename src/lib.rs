@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use std::time::Duration;
 
+mod config;
 mod core;
 mod error;
 mod response;

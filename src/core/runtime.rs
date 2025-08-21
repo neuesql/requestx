@@ -5,21 +5,21 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::{Handle, Runtime};
 
+use crate::config::get_runtime_config;
+
 /// Global shared runtime for optimal performance and resource management
 static GLOBAL_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 /// Get the global tokio runtime instance
 fn get_global_runtime() -> &'static Arc<Runtime> {
     GLOBAL_RUNTIME.get_or_init(|| {
-        let worker_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() * 2).clamp(4, 16))
-            .unwrap_or(8);
+        let config = get_runtime_config();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads)
-            .max_blocking_threads(512)
-            .thread_name("requestx-worker")
-            .thread_stack_size(512 * 1024)
+            .worker_threads(config.worker_threads)
+            .max_blocking_threads(config.max_blocking_threads)
+            .thread_name(&config.thread_name)
+            .thread_stack_size(config.thread_stack_size)
             .enable_all()
             .build()
             .expect("Failed to create optimized global tokio runtime");
