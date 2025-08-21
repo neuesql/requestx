@@ -295,6 +295,15 @@ release-pipeline: ## GitHub Actions release pipeline entry point
 	@echo "$(GREEN)Release pipeline ready!$(RESET)"
 
 # =============================================================================
+# Benchmarking
+# =============================================================================
+
+benchmark: ## Run custom benchmarks (use BENCHMARK_ARGS for custom arguments)
+	@echo "$(BLUE)Running custom RequestX benchmarks...$(RESET)"
+	uv run python scripts/requestx-benchmark.py $(BENCHMARK_ARGS)
+	@echo "$(GREEN)Custom benchmark complete!$(RESET)"
+
+# =============================================================================
 # Utility Commands
 # =============================================================================
 

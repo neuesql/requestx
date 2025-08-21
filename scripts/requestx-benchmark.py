@@ -471,6 +471,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
                 'avg_rps': 0,
                 'avg_response_time': 0,
                 'avg_memory': 0,
+                'avg_cpu': 0,
+                'avg_concurrency': 0,
                 'total_errors': 0,
                 'total_requests': 0
             }
@@ -480,6 +482,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
         stats['avg_rps'] += result.requests_per_second
         stats['avg_response_time'] += result.average_response_time_ms
         stats['avg_memory'] += result.memory_usage_mb
+        stats['avg_cpu'] += result.cpu_usage_percent
+        stats['avg_concurrency'] += result.concurrency
         stats['total_errors'] += result.failed_requests
         stats['total_requests'] += result.total_requests
     
@@ -489,15 +493,17 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
             stats['avg_rps'] /= stats['total_tests']
             stats['avg_response_time'] /= stats['total_tests']
             stats['avg_memory'] /= stats['total_tests']
+            stats['avg_cpu'] /= stats['total_tests']
+            stats['avg_concurrency'] /= stats['total_tests']
     
     # Print summary
     print("\nSUMMARY:")
-    print(f"{'Library':<15} {'Avg RPS':<10} {'Avg RT (ms)':<12} {'Memory (MB)':<12} {'Error Rate':<10}")
-    print("-" * 70)
+    print(f"{'Library':<15} {'Avg RPS':<10} {'Avg RT (ms)':<12} {'Memory (MB)':<12} {'CPU (%)':<10} {'Concurrency':<12} {'Error Rate':<10}")
+    print("-" * 90)
     
     for lib, stats in sorted(library_stats.items()):
         error_rate = (stats['total_errors'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
-        print(f"{lib:<15} {stats['avg_rps']:<10.2f} {stats['avg_response_time']*1000:<12.2f} {stats['avg_memory']:<12.2f} {error_rate:<10.2f}%")
+        print(f"{lib:<15} {stats['avg_rps']:<10.2f} {stats['avg_response_time']*1000:<12.2f} {stats['avg_memory']:<12.2f} {stats['avg_cpu']:<10.2f} {stats['avg_concurrency']:<12.0f} {error_rate:<10.2f}%")
     
     # Best performers
     print("\nBEST PERFORMERS:")
@@ -531,6 +537,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
                     'avg_rps': 0,
                     'avg_response_time': 0,
                     'avg_memory': 0,
+                    'avg_cpu': 0,
+                    'avg_concurrency': 0,
                     'total_errors': 0,
                     'total_requests': 0
                 }
@@ -540,6 +548,8 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
             stats['avg_rps'] += result.requests_per_second
             stats['avg_response_time'] += result.average_response_time_ms
             stats['avg_memory'] += result.memory_usage_mb
+            stats['avg_cpu'] += result.cpu_usage_percent
+            stats['avg_concurrency'] += result.concurrency
             stats['total_errors'] += result.failed_requests
             stats['total_requests'] += result.total_requests
         
@@ -549,14 +559,16 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
                 stats['avg_rps'] /= stats['total_tests']
                 stats['avg_response_time'] /= stats['total_tests']
                 stats['avg_memory'] /= stats['total_tests']
+                stats['avg_cpu'] /= stats['total_tests']
+                stats['avg_concurrency'] /= stats['total_tests']
         
         # Write summary table
-        f.write("| Library | Avg RPS | Avg Response Time (ms) | Avg Memory (MB) | Error Rate (%) |\n")
-        f.write("|---------|---------|------------------------|-----------------|----------------|\n")
+        f.write("| Library | Avg RPS | Avg Response Time (ms) | Avg Memory (MB) | Avg CPU (%) | Avg Concurrency | Error Rate (%) |\n")
+        f.write("|---------|---------|------------------------|-----------------|-------------|-----------------|----------------|\n")
         
         for lib, stats in sorted(library_stats.items()):
             error_rate = (stats['total_errors'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
-            f.write(f"| {lib} | {stats['avg_rps']:.2f} | {stats['avg_response_time']*1000:.2f} | {stats['avg_memory']:.2f} | {error_rate:.2f} |\n")
+            f.write(f"| {lib} | {stats['avg_rps']:.2f} | {stats['avg_response_time']*1000:.2f} | {stats['avg_memory']:.2f} | {stats['avg_cpu']:.2f} | {stats['avg_concurrency']:.0f} | {error_rate:.2f} |\n")
         
         # Best performers
         f.write("\n## Best Performers\n\n")
@@ -572,14 +584,14 @@ def generate_report(results: List[BenchmarkResult], output_dir: str) -> None:
         
         # Detailed results
         f.write("\n## Detailed Results\n\n")
-        f.write("| Library | Method | Concurrency | RPS | Response Time (ms) | Memory (MB) | Success Rate (%) |\n")
-        f.write("|---------|--------|-------------|-----|-------------------|-------------|------------------|\n")
+        f.write("| Library | Method | Concurrency | RPS | Response Time (ms) | Memory (MB) | CPU (%) | Success Rate (%) |\n")
+        f.write("|---------|--------|-------------|-----|-------------------|-------------|---------|------------------|\n")
         
         for result in sorted(results, key=lambda r: (r.library, r.method, r.concurrency)):
             success_rate = (result.successful_requests / result.total_requests * 100) if result.total_requests > 0 else 0
             f.write(f"| {result.library} | {result.method} | {result.concurrency} | "
                    f"{result.requests_per_second:.2f} | {result.average_response_time_ms * 1000:.2f} | "
-                   f"{result.memory_usage_mb:.2f} | {success_rate:.2f} |\n")
+                   f"{result.memory_usage_mb:.2f} | {result.cpu_usage_percent:.2f} | {success_rate:.2f} |\n")
     
     print(f"Detailed report saved to: {report_file}")
 
