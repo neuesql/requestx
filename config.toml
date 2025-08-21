@@ -14,7 +14,7 @@ pool_idle_timeout_secs = 90
 # pool_max_idle_per_host: Maximum number of idle connections to keep per host
 # Higher values improve performance for repeated requests to the same host but use more memory.
 # Range: 10-1000 connections. Default: 512
-pool_max_idle_per_host = 512
+pool_max_idle_per_host = 1024
 
 # HTTP/2 Protocol Settings
 # Fine-tune HTTP/2 behavior for optimal performance
@@ -50,7 +50,7 @@ http2_initial_connection_window_size = 1048576
 # worker_threads: Number of worker threads for async tasks
 # 0 = auto-detect (CPU cores * 2, clamped between 4-16)
 # Manual values: 1-64 threads. Default: 0 (auto)
-worker_threads = 0
+worker_threads = 16
 
 # max_blocking_threads: Maximum threads for blocking operations (file I/O, DNS, etc.)
 # Higher values allow more concurrent blocking operations but use more system resources.
@@ -64,4 +64,4 @@ thread_name = "requestx-worker"
 # thread_stack_size: Stack size (in bytes) for each worker thread
 # Larger stacks support deeper recursion but use more memory per thread.
 # Range: 131072-8388608 bytes (128KB-8MB). Default: 524288 (512KB)
-thread_stack_size = 524288  # 512 * 1024
+thread_stack_size = 1048576  # 1024 * 1024

@@ -148,12 +148,16 @@ def export_to_cloud(
         return False
 
 
-def save_to_database(results: List[BenchmarkResult], db_path: str) -> bool:
+def save_to_database(results: List[BenchmarkResult], db_path: str, factor: str = None, value: str = None, commit: str = None, branch: str = None) -> bool:
     """Save benchmark results to SQLite database.
     
     Args:
         results: List of BenchmarkResult objects to save
         db_path: Path to the SQLite database file
+        factor: Factor being tested (optional)
+        value: Value of the factor being tested (optional)
+        commit: Git commit hash (optional)
+        branch: Git branch name (optional)
         
     Returns:
         True if successful, False otherwise
@@ -187,16 +191,14 @@ def save_to_database(results: List[BenchmarkResult], db_path: str) -> bool:
                 failed_requests INTEGER NOT NULL,
                 cpu_usage_percent REAL NOT NULL,
                 memory_usage_mb REAL NOT NULL,
-                timestamp REAL NOT NULL
+                timestamp REAL NOT NULL,
+                
+                factor TEXT,
+                value TEXT,
+                [commit] TEXT,
+                branch TEXT
             )
         """)
-        
-        # Create indexes if they don't exist
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library ON benchmark(library)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_method ON benchmark(method)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_concurrency ON benchmark(concurrency)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_test_time ON benchmark(test_time)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON benchmark(test_time)")
         
         # Insert results (excluding id and test_time as they are auto-generated)
         saved_count = 0
@@ -207,8 +209,9 @@ def save_to_database(results: List[BenchmarkResult], db_path: str) -> bool:
                     average_response_time_ms, median_response_time_ms,
                     p95_response_time_ms, p99_response_time_ms, error_rate,
                     total_requests, successful_requests, failed_requests,
-                    cpu_usage_percent, memory_usage_mb, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cpu_usage_percent, memory_usage_mb, timestamp,
+                    factor, value, [commit], branch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 result.library,
                 result.concurrency,
@@ -224,7 +227,11 @@ def save_to_database(results: List[BenchmarkResult], db_path: str) -> bool:
                 result.failed_requests,
                 result.cpu_usage_percent,
                 result.memory_usage_mb,
-                result.timestamp
+                result.timestamp,
+                factor,
+                value,
+                commit,
+                branch
             ))
             saved_count += 1
         
@@ -264,7 +271,9 @@ Examples:
   
   # Custom output and reporting
   ./requestx-benchmark --output-dir ./my_results --verbose
-  ./requestx-benchmark --no-csv --output-dir ./json_only
+  ./requestx-benchmark --json --output-dir ./json_enabled
+  ./requestx-benchmark --csv --json --output-dir ./csv_and_json
+  ./requestx-benchmark --json --output-dir ./json_only
   
   # Performance testing scenarios
   ./requestx-benchmark --concurrency 1,50,100,500 --requests 1000 --timeout 60
@@ -273,6 +282,14 @@ Examples:
   # Development and debugging
   ./requestx-benchmark --quick --verbose --libraries requestx
   ./requestx-benchmark --host http://localhost:3000 --methods GET --requests 10 --verbose
+  
+  # Benchmark with tracking parameters and database storage
+  ./requestx-benchmark --factor optimization-pool_max_idle_per_host --value 100 --commit abc123 --branch feature/optimization --db
+  ./requestx-benchmark --quick --factor timeout-optimization --value 30 --commit def456 --branch main --db
+  
+  # Enable cloud logging (disabled by default)
+  ./requestx-benchmark --quick --cloud
+  ./requestx-benchmark --factor test-param --value 50 --cloud
         """
     )
     
@@ -340,27 +357,27 @@ Examples:
     )
     
     parser.add_argument(
-        '--no-csv', 
+        '--csv',
         action='store_true',
-        help='Disable CSV output'
+        help='Enable CSV output'
     )
     
     parser.add_argument(
-        '--no-json', 
+        '--json',
         action='store_true',
-        help='Disable JSON output'
+        help='Enable JSON output'
     )
     
     parser.add_argument(
-        '--no-cloud', 
+        '--cloud', 
         action='store_true',
-        help='Disable cloud export to Grafana Loki'
+        help='Enable cloud export to Grafana Loki'
     )
     
     parser.add_argument(
-        '--no-db', 
+        '--db',
         action='store_true',
-        help='Disable database persistence to SQLite'
+        help='Enable database persistence to SQLite'
     )
     
     parser.add_argument(
@@ -391,6 +408,31 @@ Examples:
         '--verbose', '-v', 
         action='store_true',
         help='Enable verbose output'
+    )
+    
+    # New benchmark tracking arguments
+    parser.add_argument(
+        '--factor',
+        type=str,
+        help='Factor being tested (e.g., optimization-pool_max_idle_per_host)'
+    )
+    
+    parser.add_argument(
+        '--value',
+        type=str,
+        help='Value of the factor being tested (e.g., 100)'
+    )
+    
+    parser.add_argument(
+        '--commit',
+        type=str,
+        help='Git commit hash for this benchmark run'
+    )
+    
+    parser.add_argument(
+        '--branch',
+        type=str,
+        help='Git branch name for this benchmark run'
     )
     
     return parser.parse_args()
@@ -617,6 +659,14 @@ def main():
         print(f"  Endpoints: {', '.join(config.endpoints)}")
         print(f"  Timeout: {config.timeout}s")
         print(f"  Warmup requests: {config.warmup_requests}")
+        if args.factor:
+            print(f"  Factor: {args.factor}")
+        if args.value:
+            print(f"  Value: {args.value}")
+        if args.commit:
+            print(f"  Commit: {args.commit}")
+        if args.branch:
+            print(f"  Branch: {args.branch}")
         print()
     
     # Initialize benchmark runner
@@ -724,7 +774,7 @@ def main():
         timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
         
         # Save to JSON
-        if not args.no_json:
+        if args.json:
             json_file = os.path.join(args.output_dir, f'benchmark_results_{timestamp}.json')
             os.makedirs(args.output_dir, exist_ok=True)
             
@@ -733,7 +783,7 @@ def main():
             print(f"\nResults saved to {json_file}")
         
         # Save to CSV
-        if not args.no_csv:
+        if args.csv:
             csv_file = os.path.join(args.output_dir, f'benchmark_results_{timestamp}.csv')
             os.makedirs(args.output_dir, exist_ok=True)
             
@@ -746,8 +796,8 @@ def main():
                         writer.writerow(result.to_dict())
             print(f"Results saved to {csv_file}")
         
-        # Export to cloud if not disabled
-        if not args.no_cloud:
+        # Export to cloud if enabled
+        if args.cloud:
             print("\nExporting results to Grafana Cloud Logs...")
             # Convert results to dictionaries for cloud export
             results_dicts = [result.to_dict() for result in all_results]
@@ -756,22 +806,40 @@ def main():
             for result_dict in results_dicts:
                 result_dict['timestamp'] = timestamp
                 result_dict['benchmark_version'] = '1.0'
+                # Add new tracking parameters if provided
+                if args.factor:
+                    result_dict['factor'] = args.factor
+                if args.value:
+                    result_dict['value'] = args.value
+                if args.commit:
+                    result_dict['commit'] = args.commit
+                if args.branch:
+                    result_dict['branch'] = args.branch
             
             # Export to cloud with additional tags
             cloud_tags = {
                 'timestamp': timestamp,
                 'total_results': str(len(all_results))
             }
+            # Add new parameters as tags if provided
+            if args.factor:
+                cloud_tags['factor'] = args.factor
+            if args.value:
+                cloud_tags['value'] = args.value
+            if args.commit:
+                cloud_tags['commit'] = args.commit
+            if args.branch:
+                cloud_tags['branch'] = args.branch
             
             success = export_to_cloud(results_dicts, tags=cloud_tags)
             if not success:
                 print("Warning: Failed to export results to cloud")
         
-        # Save to database if not disabled
-        if not args.no_db:
+        # Save to database if enabled
+        if args.db:
             print("\nSaving results to database...")
             try:
-                save_to_database(all_results, args.db_path)
+                save_to_database(all_results, args.db_path, args.factor, args.value, args.commit, args.branch)
                 print(f"Successfully saved {len(all_results)} results to database: {args.db_path}")
             except Exception as e:
                 print(f"Warning: Failed to save results to database: {e}")
