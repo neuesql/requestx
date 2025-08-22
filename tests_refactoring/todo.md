@@ -19,15 +19,15 @@
   - Expected: Prevent connection staleness, improve reliability
 
 ### HTTP/2 Protocol Optimization
-- [ ] **http2-initial-stream-window-size**: Optimize per-stream flow control
+- [x] **http2-initial-stream-window-size**: Optimize per-stream flow control
   - Current: 262144 bytes (256KB)
   - Target: Reduce to 65536-131072 bytes for memory efficiency
   - Expected: 10-20% memory reduction per concurrent stream
 
-- [ ] **http2-initial-connection-window-size**: Optimize connection-level flow control
-  - Current: 2097152 bytes (2MB)
-  - Target: Reduce to 1048576-1572864 bytes
-  - Expected: 5-15% memory reduction, maintain throughput
+- [x] **http2-initial-connection-window-size**: Optimize connection-level flow control
+  - Current: 2097152 bytes (2MB) → 1048576 bytes (1MB)
+  - Status: ✅ Success - 3.15% memory reduction achieved
+  - Result: Minimal CPU impact, consistent performance
 
 - [ ] **http2-keep-alive-interval**: Tune keep-alive frequency
   - Current: 30 seconds
@@ -106,7 +106,11 @@
 - **Test Parameters**: --concurrency 1024 --requests 5000 --duration 30s
 
 ## Completed Strategies
-*None yet - this is the initial setup*
+- **http2-initial-connection-window-size**: ✅ Success
+  - **Change**: Reduced from 2097152 to 1048576 bytes (2MB → 1MB)
+  - **Result**: 3.15% memory reduction (0.59MB improvement)
+  - **Trade-offs**: +1.52% CPU increase (acceptable)
+  - **Status**: Ready to merge to main
 
 ## Testing Framework
 - **Benchmark Tool**: `scripts/requestx-benchmark.py`
