@@ -295,3 +295,4 @@ An optimization is considered successful if it achieves:
 ### Keep feature branch
 - whatever success or failed, commit the feature branch and push the branch to remote 
 - keep the refactoring branch as it is
+- git add changes and git commit and git push to remote branch again
