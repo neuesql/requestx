@@ -49,7 +49,7 @@ make clean && make build
 
 - [ ] Ensure successful validation before proceeding to benchmarking
 
-### 2.3 Commit Standards
+### 2.3 Commit Standards and Push to remote directly
 - [ ] Use descriptive commit messages:
   ```
   feat(perf): implement {strategy-name} optimization
@@ -58,6 +58,7 @@ make clean && make build
   - Target: {improvement metric}
   - Affects: {components modified}
   ```
+
 
 ## Phase 3: Performance Measurement
 
@@ -68,6 +69,8 @@ Run comprehensive benchmarks with strategy-specific parameters. Adjust concurren
 - Use `requestx-sync` for synchronous optimizations
 - Use `requestx-async` for asynchronous optimizations  
 - Use both for comparative analysis
+- flow benchmark script and arguments 
+- Run it for 3 times
 
 ```bash
 # Example command - adjust parameters per strategy
@@ -89,17 +92,17 @@ uv run python scripts/requestx-benchmark.py \
 
 #### Connection Pool Optimizations
 ```bash
---concurrency 100 --requests 5000  # Test connection reuse
+--concurrency 1024 --requests 5000  # Test connection reuse
 ```
 
 #### High Throughput Optimizations  
 ```bash
---concurrency 1000 --requests 10000  # Stress test performance
+--concurrency 1024 --requests 10000  # Stress test performance
 ```
 
 #### Memory Optimizations
 ```bash
---concurrency 50 --requests 1000  # Monitor memory patterns
+--concurrency 1,10,100,1000 --requests 1000  # Monitor memory patterns
 ```
 
 #### Single Request Optimizations
@@ -207,6 +210,7 @@ If performance improvement is achieved:
   Achieved {percentage}% improvement in {metric}
   Benchmark results: {key metrics}
   ```
+If Not, git commit and git push to remote
 
 ### 5.2 Failed Optimizations
 If no improvement or regression occurs:
@@ -286,3 +290,8 @@ An optimization is considered successful if it achieves:
 - **Acceptable variation**: Standard deviation ≤10% of mean
 - **Significance threshold**: Improvement must exceed measurement noise
 - **Regression tolerance**: Other metrics may degrade by ≤2%
+
+
+### Keep feature branch
+- whatever success or failed, commit the feature branch and push the branch to remote 
+- keep the refactoring branch as it is
