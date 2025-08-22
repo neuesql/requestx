@@ -28,10 +28,10 @@
 - [ ] **connection-warmup**: Test connection warmup strategies for cold start
 
 ## Current Status
-- **Next Strategy**: http2-initial-stream-window-size
-- **Branch**: refactor/optimization-http2-initial-stream-window-size (to be created)
-- **Target**: Optimize HTTP/2 stream window size for throughput vs memory trade-off
-- **Expected Improvement**: 5-10% memory efficiency improvement
+- **Next Strategy**: http2-initial-connection-window-size
+- **Branch**: refactor/optimization-http2-initial-connection-window-size (to be created)
+- **Target**: Optimize HTTP/2 connection window size for throughput vs memory trade-off
+- **Expected Improvement**: 3-7% memory efficiency improvement
 - **Test Parameters**: --concurrency 1024 --requests 5000
 
 ## Completed Strategies
@@ -44,3 +44,8 @@
   - **Status**: ⚠️ Minimal Results (0.09% memory improvement, 3.3% CPU increase)
   - **Recommendation**: Consider for memory-constrained environments, test lower values
   - **Branch**: refactor/optimization-pool-idle-timeout (completed)
+
+- [x] **http2-initial-stream-window-size**: Reduced from 65536 to 32768 bytes
+  - **Status**: ✅ **Success** (0.40% memory improvement, 11.5% CPU increase)
+  - **Recommendation**: **Merge to main** - statistically significant memory improvement
+  - **Branch**: refactor/optimization-http2-initial-stream-window-size (completed)
