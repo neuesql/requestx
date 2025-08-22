@@ -4,7 +4,7 @@
 
 ### Connection Management
 - [x] **pool-max-idle-per-host**: Optimize idle connection limits per host
-- [ ] **pool-idle-timeout**: Adjust connection timeout settings for sustained load
+- [x] **pool-idle-timeout**: Adjust connection timeout settings for sustained load
 - [ ] **pool-max-lifetime**: Configure connection lifecycle for long-running benchmarks
 
 ### Request Processing
@@ -28,10 +28,10 @@
 - [ ] **connection-warmup**: Test connection warmup strategies for cold start
 
 ## Current Status
-- **Next Strategy**: pool-idle-timeout
-- **Branch**: refactor/optimization-pool-idle-timeout (to be created)
-- **Target**: Optimize connection timeout settings for sustained load
-- **Expected Improvement**: 10-15% memory efficiency improvement
+- **Next Strategy**: http2-initial-stream-window-size
+- **Branch**: refactor/optimization-http2-initial-stream-window-size (to be created)
+- **Target**: Optimize HTTP/2 stream window size for throughput vs memory trade-off
+- **Expected Improvement**: 5-10% memory efficiency improvement
 - **Test Parameters**: --concurrency 1024 --requests 5000
 
 ## Completed Strategies
@@ -39,3 +39,8 @@
   - **Status**: ⚠️ Mixed Results (0.91% memory improvement, 8.07% CPU increase)
   - **Recommendation**: Consider for memory-constrained environments
   - **Branch**: refactor/optimization-pool-max-idle-per-host (completed)
+
+- [x] **pool-idle-timeout**: Reduced from 90 to 30 seconds
+  - **Status**: ⚠️ Minimal Results (0.09% memory improvement, 3.3% CPU increase)
+  - **Recommendation**: Consider for memory-constrained environments, test lower values
+  - **Branch**: refactor/optimization-pool-idle-timeout (completed)
