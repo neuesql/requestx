@@ -36,12 +36,12 @@ http2_keep_alive_timeout_secs = 10
 # http2_initial_stream_window_size: Initial flow control window size (in bytes) per HTTP/2 stream
 # Controls how much data can be sent before waiting for acknowledgment.
 # Larger values improve throughput but use more memory. Default: 65536 (64KB)
-http2_initial_stream_window_size = 65536
+http2_initial_stream_window_size = 262144
 
 # http2_initial_connection_window_size: Initial flow control window size (in bytes) per HTTP/2 connection
 # Controls total data flow across all streams in a connection.
 # Should be larger than stream window size. Default: 1048576 (1MB)
-http2_initial_connection_window_size = 1048576
+http2_initial_connection_window_size = 2097152
 
 [runtime]
 # Tokio Async Runtime Settings
