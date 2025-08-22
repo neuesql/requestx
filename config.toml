@@ -9,7 +9,7 @@
 # pool_idle_timeout_secs: How long (in seconds) to keep idle connections alive
 # before closing them. Longer timeouts reduce connection overhead but use more memory.
 # Range: 30-300 seconds. Default: 90
-pool_idle_timeout_secs = 90
+pool_idle_timeout_secs = 30
 
 # pool_max_idle_per_host: Maximum number of idle connections to keep per host
 # Higher values improve performance for repeated requests to the same host but use more memory.
