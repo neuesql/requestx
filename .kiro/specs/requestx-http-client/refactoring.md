@@ -295,3 +295,6 @@ An optimization is considered successful if it achieves:
 ### Keep feature branch
 - whatever success or failed, commit the feature branch and push the branch to remote 
 - keep the refactoring branch as it is
+- check out the main branch to continue next strategy
+- make todo.md, and make the stragey is done. 
+- git add, git commit, git push to main branch. 
