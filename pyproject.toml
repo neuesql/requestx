@@ -35,6 +35,7 @@ dependencies = [
     "python-logging-loki-v2>=0.4.4",
     "certifi>=2023.7.22",
     "python-dotenv>=1.1.1",
+    "pandas>=2.3.2",
 ]
 
 [project.optional-dependencies]

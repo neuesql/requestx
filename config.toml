@@ -50,12 +50,12 @@ http2_initial_connection_window_size = 2097152
 # worker_threads: Number of worker threads for async tasks
 # 0 = auto-detect (CPU cores * 2, clamped between 4-16)
 # Manual values: 1-64 threads. Default: 0 (auto)
-worker_threads = 16
+worker_threads = 4
 
 # max_blocking_threads: Maximum threads for blocking operations (file I/O, DNS, etc.)
 # Higher values allow more concurrent blocking operations but use more system resources.
 # Range: 10-2000 threads. Default: 512
-max_blocking_threads = 512
+max_blocking_threads = 2048
 
 # thread_name: Prefix for thread names (helps with debugging and profiling)
 # Threads will be named: "<prefix>-<number>". Default: "requestx-worker"

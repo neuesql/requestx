@@ -57,6 +57,7 @@ class BenchmarkResult:
     failed_requests: int
     cpu_usage_percent: float
     memory_usage_mb: float
+    num_threads: int
     timestamp: float
 
     def to_dict(self) -> Dict[str, Any]:
@@ -155,16 +156,16 @@ class BenchmarkerSync(Benchmarker):
         end_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
         end_memory_bytes = process.memory_info().rss
         end_memory_mb = end_memory_bytes / 1024 / 1024
-        
+        num_threads = process.num_threads()
         # Print end resource usage
-        print(f"Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes)")
+        print(f"Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes), Threads: {num_threads}")
         
         # Calculate differences
         cpu_usage_diff = end_cpu - start_cpu
         memory_usage_diff_mb = end_memory_mb - start_memory_mb
         memory_usage_diff_bytes = end_memory_bytes - start_memory_bytes
         
-        print(f"Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes)")
+        print(f"Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes), Threads: {num_threads}")
 
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
@@ -187,6 +188,7 @@ class BenchmarkerSync(Benchmarker):
             failed_requests=failed_requests,
             cpu_usage_percent=cpu_usage_diff,  # Use CPU usage difference
             memory_usage_mb=memory_usage_diff_mb,  # Use memory usage difference in MB
+            num_threads=num_threads,  # Current thread count
             timestamp=total_time
         )
 
@@ -248,7 +250,7 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
         start_memory_mb = start_memory_bytes / 1024 / 1024
         
         # Print start resource usage
-        print(f"Async Benchmark Start - CPU: {start_cpu:.2f}%, Memory: {start_memory_mb:.2f} MB ({start_memory_bytes:,} bytes)")
+        print(f"Benchmark Start - CPU: {start_cpu:.2f}%, Memory: {start_memory_mb:.2f} MB ({start_memory_bytes:,} bytes)")
 
         successful_requests = 0
         failed_requests = 0
@@ -287,16 +289,16 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
         end_cpu = process.cpu_percent(interval=None)  # Get current CPU usage
         end_memory_bytes = process.memory_info().rss
         end_memory_mb = end_memory_bytes / 1024 / 1024
-        
+        num_threads = process.num_threads()
         # Print end resource usage
-        print(f"Async Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes)")
+        print(f"Benchmark End - CPU: {end_cpu:.2f}%, Memory: {end_memory_mb:.2f} MB ({end_memory_bytes:,} bytes), Threads: {num_threads}")
         
         # Calculate differences
         cpu_usage_diff = end_cpu - start_cpu
         memory_usage_diff_mb = end_memory_mb - start_memory_mb
         memory_usage_diff_bytes = end_memory_bytes - start_memory_bytes
         
-        print(f"Async Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes)")
+        print(f"Resource Usage - CPU Change: {cpu_usage_diff:+.2f}%, Memory Change: {memory_usage_diff_mb:+.2f} MB ({memory_usage_diff_bytes:+,} bytes), Threads: {num_threads}")
 
         total_time = end_time - start_time
         requests_per_second = num_requests / total_time if total_time > 0 else 0
@@ -319,6 +321,7 @@ class BenchmarkerAsync(Benchmarker, unittest.IsolatedAsyncioTestCase):
             failed_requests=failed_requests,
             cpu_usage_percent=cpu_usage_diff,  # Use CPU usage difference
             memory_usage_mb=memory_usage_diff_mb,  # Use memory usage difference in MB
+            num_threads=num_threads,  # Current thread count
             timestamp=time.time()
         )
 
