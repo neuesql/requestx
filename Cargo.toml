@@ -16,8 +16,10 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.25.0", features = ["extension-module", "abi3-py38"] }
 pyo3-async-runtimes = { version = "0.25.0", features = ["tokio-runtime"] }
-hyper = { version = "0.14", features = ["full"] }
-hyper-tls = "0.5"
+hyper = { version = "1.0", features = ["full", "client", "http1", "http2"] }
+hyper-tls = "0.6"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2"] }
 tokio = { version = "1.47.1", features = ["full"] }
 cookie_store = "0.21"
 serde = { version = "1.0", features = ["derive"] }

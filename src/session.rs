@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, Mutex};
 
-use crate::core::client::{create_client, RequestxClient, ResponseData};
+use crate::core::client::{RequestxClient, ResponseData};
 use crate::core::runtime::get_global_runtime_manager;
 use crate::error::RequestxError;
 use crate::{parse_kwargs, response_data_to_py_response};
@@ -21,9 +21,7 @@ pub struct Session {
 impl Session {
     #[new]
     fn new() -> PyResult<Self> {
-        let hyper_client = create_client();
-
-        let client = RequestxClient::with_custom_client(hyper_client).map_err(|e| {
+        let client = RequestxClient::new().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to create session client: {e}"
             ))

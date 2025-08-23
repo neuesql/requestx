@@ -85,30 +85,9 @@ fn parse_kwargs(py: Python, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Requ
             }
         }
 
-        // Parse allow_redirects
-        if let Some(redirects_obj) = kwargs.get_item("allow_redirects")? {
-            builder.allow_redirects = redirects_obj.is_truthy()?;
-        }
-
         // Parse verify
         if let Some(verify_obj) = kwargs.get_item("verify")? {
             builder.verify = verify_obj.is_truthy()?;
-        }
-
-        // Parse cert
-        if let Some(cert_obj) = kwargs.get_item("cert")? {
-            if !cert_obj.is_none() {
-                let cert = parse_cert(&cert_obj)?;
-                builder.cert = Some(cert);
-            }
-        }
-
-        // Parse proxies
-        if let Some(proxies_obj) = kwargs.get_item("proxies")? {
-            if !proxies_obj.is_none() {
-                let proxies = parse_proxies(&proxies_obj)?;
-                builder.proxies = Some(proxies);
-            }
         }
 
         // Parse auth
@@ -119,10 +98,8 @@ fn parse_kwargs(py: Python, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Requ
             }
         }
 
-        // Parse stream
-        if let Some(stream_obj) = kwargs.get_item("stream")? {
-            builder.stream = stream_obj.is_truthy()?;
-        }
+        // Ignore unsupported parameters for compatibility
+        // allow_redirects, cert, proxies, stream are not supported in simplified implementation
     }
 
     Ok(builder)
@@ -136,12 +113,8 @@ struct RequestConfigBuilder {
     pub data: Option<RequestData>,
     pub json: Option<Value>,
     pub timeout: Option<Duration>,
-    pub allow_redirects: bool,
     pub verify: bool,
-    pub cert: Option<String>,
-    pub proxies: Option<HashMap<String, String>>,
     pub auth: Option<(String, String)>,
-    pub stream: bool,
 }
 
 impl RequestConfigBuilder {
@@ -152,30 +125,28 @@ impl RequestConfigBuilder {
             data: None,
             json: None,
             timeout: None,
-            allow_redirects: true,
             verify: true,
-            cert: None,
-            proxies: None,
             auth: None,
-            stream: false,
         }
     }
 
     fn build(self, method: Method, url: Uri) -> RequestConfig {
+        // Handle JSON data by converting it to RequestData::Json
+        let data = if let Some(json_value) = self.json {
+            Some(RequestData::Json(json_value))
+        } else {
+            self.data
+        };
+        
         RequestConfig {
             method,
             url,
             headers: self.headers,
             params: self.params,
-            data: self.data,
-            json: self.json,
+            data,
             timeout: self.timeout,
-            allow_redirects: self.allow_redirects,
             verify: self.verify,
-            cert: self.cert,
-            proxies: self.proxies,
             auth: self.auth,
-            stream: self.stream,
         }
     }
 }
@@ -293,43 +264,7 @@ fn parse_timeout(timeout_obj: &Bound<'_, PyAny>) -> PyResult<Duration> {
     }
 }
 
-/// Parse certificate from Python object
-fn parse_cert(cert_obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(cert_path) = cert_obj.extract::<String>() {
-        Ok(cert_path)
-    } else {
-        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Certificate must be a string path",
-        ))
-    }
-}
-
-/// Parse proxies from Python object
-fn parse_proxies(proxies_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, String>> {
-    let mut proxies = HashMap::new();
-
-    if let Ok(dict) = proxies_obj.downcast::<PyDict>() {
-        for (key, value) in dict.iter() {
-            let protocol = key.extract::<String>()?;
-            let proxy_url = value.extract::<String>()?;
-
-            // Validate proxy URL format
-            if !proxy_url.contains("://") {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid proxy URL format: {proxy_url}"
-                )));
-            }
-
-            proxies.insert(protocol, proxy_url);
-        }
-    } else {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Proxies must be a dictionary",
-        ));
-    }
-
-    Ok(proxies)
-}
+// Removed parse_cert and parse_proxies functions as they are not supported in the simplified implementation
 
 /// Parse authentication from Python object
 fn parse_auth(auth_obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
