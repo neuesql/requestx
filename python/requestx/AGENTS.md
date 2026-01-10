@@ -6,10 +6,7 @@ Python wrapper for the Rust-based RequestX core, providing a requests-compatible
 ## WHERE TO LOOK
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| **Public API** | `__init__.py` | Entry point, requests-compatible interface, method wrapping. |
-| **Exception Hierarchy** | `__init__.py` | Mapping Rust/PyO3 exceptions to `RequestException` classes. |
-| **Benchmarking** | `benchmark.py` | Comparative performance testing framework for multiple libraries. |
-| **Performance Profiling** | `profiler.py` | Decorators and context managers for CPU, memory, and timing metrics. |
+| **Public API** | `__init__.py` | Entry point, requests-compatible interface, method wrapping, exception hierarchy. |
 
 ## CONVENTIONS
 - **Requests Compatibility**: Maintain strict parity with the `requests` library's API and response object structure.
@@ -17,7 +14,7 @@ Python wrapper for the Rust-based RequestX core, providing a requests-compatible
 - **PyO3 Method Wrapping**: Use `_wrap_request_function` to inject exception mapping and telemetry into raw Rust bindings.
 - **Monkey-patching Extensions**: Enhance Rust `Response` objects (e.g., `json()`, `raise_for_status()`) via Python-side wrapping.
 - **Context-Aware Execution**: Support both sync and async callers with automatic detection where possible.
-- **Granular Metrics**: Use `psutil` and `tracemalloc` for sub-millisecond timing and precise memory growth tracking.
+
 
 ## ANTI-PATTERNS
 - **Direct Binding Exposure**: Never expose `_requestx` members directly to users; always through the `__init__.py` facade.

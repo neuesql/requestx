@@ -38,8 +38,7 @@ from ._requestx import (
 from ._requestx import (
     request as _request,
 )
-from .profiler import Profile, PerformanceMetrics, ResourceMonitor, profile_context, aggregate_metrics, get_last_metrics
-from .benchmark import BenchmarkConfig, BenchmarkResult, Benchmarker, BenchmarkerSync, BenchmarkerAsync, RequestXBenchmarker, BenchmarkRunner
+
 
 
 # Exception hierarchy matching requests library
@@ -217,21 +216,6 @@ __all__ = [
     # Classes
     "Response",
     "Session",
-    # Profiler
-    "Profile",
-    "PerformanceMetrics",
-    "ResourceMonitor",
-    "profile_context",
-    "aggregate_metrics",
-    "get_last_metrics",
-    # Benchmark
-    "BenchmarkConfig",
-    "BenchmarkResult",
-    "Benchmarker",
-    "BenchmarkerSync", 
-    "BenchmarkerAsync",
-    "RequestXBenchmarker",
-    "BenchmarkRunner",
     # Exceptions
     "RequestException",
     "ConnectionError",
