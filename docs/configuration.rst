@@ -1,139 +1,85 @@
-RequestX Configuration System Implementation
-===========================================
+Configuration System
+====================
 
-This document describes the implementation of the externalized configuration system for RequestX performance settings.
+RequestX features a flexible configuration system that allows you to fine-tune performance and runtime behavior without modifying your code.
 
 Overview
 --------
 
-The configuration system has been successfully implemented to externalize "magic numbers" from the core RequestX modules into a configurable TOML file. This allows users to customize performance settings without modifying the source code.
+The configuration system externalizes "magic numbers" from the core RequestX modules into a configurable TOML file. By default, RequestX looks for a ``config.toml`` file in your project root. If the file is missing or invalid, sensible defaults are used.
 
-Files Modified/Created
-----------------------
+Configuration File (``config.toml``)
+------------------------------------
 
-1. ``config.toml`` - Configuration File
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Contains all performance-related settings with sensible defaults::
+The ``config.toml`` file is divided into two main sections: ``[client]`` and ``[runtime]``.
 
-    [http_client]
+.. code-block:: toml
+
+    [client]
+    # HTTP Connection Pool Settings
     pool_idle_timeout_secs = 90
-    pool_max_idle_per_host = 50
-    http2_only = false
-    http2_initial_stream_window_size = 65536
-    http2_initial_connection_window_size = 1048576
-
-    [runtime]
-    worker_threads = 8
-    max_blocking_threads = 512
-    thread_name = "requestx-worker"
-    thread_stack_size = 524288
-
-    [session]
-    pool_idle_timeout_secs = 90
-    pool_max_idle_per_host = 512
+    pool_max_idle_per_host = 1024
+    
+    # HTTP/2 Protocol Settings
     http2_only = false
     http2_keep_alive_interval_secs = 30
     http2_keep_alive_timeout_secs = 10
-    http2_initial_stream_window_size = 65536
-    http2_initial_connection_window_size = 1048576
-2. ``src/config.rs`` - Configuration Module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Defines configuration structures and loading logic:
+    http2_initial_stream_window_size = 262144
+    http2_initial_connection_window_size = 2097152
 
-- ``HttpClientConfig`` - HTTP client performance settings
-- ``RuntimeConfig`` - Tokio runtime configuration
-- ``SessionConfig`` - Session-specific settings
-- Configuration loading with fallback to defaults
-- Thread-safe global configuration access
+    [runtime]
+    # Tokio Async Runtime Settings
+    worker_threads = 32
+    max_blocking_threads = 512
+    thread_name = "requestx-worker"
+    thread_stack_size = 1048576
 
-3. Updated Core Modules
+Client Configuration (``[client]``)
+-----------------------------------
+
+*   **pool_idle_timeout_secs**: How long (in seconds) to keep idle connections alive before closing them. Longer timeouts reduce connection overhead but use more memory. (Default: 90)
+*   **pool_max_idle_per_host**: Maximum number of idle connections to keep per host. Increasing this significantly improves performance for applications that make many concurrent requests to the same service. (Default: 1024)
+*   **http2_only**: Force all connections to use HTTP/2 protocol only. (Default: false)
+*   **http2_keep_alive_interval_secs**: Interval between HTTP/2 ping frames to keep connections alive. (Default: 30)
+*   **http2_keep_alive_timeout_secs**: Timeout waiting for a ping response before considering the connection dead. (Default: 10)
+*   **http2_initial_stream_window_size**: Initial flow control window size per HTTP/2 stream. Larger values improve throughput for high-bandwidth connections. (Default: 262144)
+*   **http2_initial_connection_window_size**: Initial flow control window size per HTTP/2 connection. (Default: 2097152)
+
+Runtime Configuration (``[runtime]``)
+-------------------------------------
+
+*   **worker_threads**: Number of worker threads for the asynchronous runtime. Set to ``0`` for auto-detection (typically CPU cores * 2). For high-concurrency workloads, manual tuning may be beneficial. (Default: 32)
+*   **max_blocking_threads**: Maximum threads for blocking operations like file I/O or DNS resolution. (Default: 512)
+*   **thread_name**: Prefix for threads created by RequestX. (Default: "requestx-worker")
+*   **thread_stack_size**: Stack size for each worker thread in bytes. (Default: 1048576)
+
+Performance Tuning
+------------------
+
+For optimal performance in different environments, consider the following adjustments:
+
+High-Concurrency API Clients
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you are building a service that makes thousands of requests to a few backend APIs:
+
+*   Increase ``pool_max_idle_per_host`` to 1024 or higher.
+*   Ensure ``worker_threads`` matches your available CPU resources.
+*   Use ``requestx.Session()`` to take advantage of connection pooling.
+
+Low-Memory Environments
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``src/core/client.rs``
-^^^^^^^^^^^^^^^^^^^^^^
-- Replaced hardcoded values in ``get_global_client()``
-- Updated ``create_custom_client()`` to use configuration
-- Added import for ``get_http_client_config``
+In resource-constrained environments (like small containers):
 
-``src/core/runtime.rs``
-^^^^^^^^^^^^^^^^^^^^^^^
-- Replaced hardcoded runtime settings
-- Updated ``get_global_runtime()`` to use ``get_runtime_config()``
-- Added import for ``get_runtime_config``
+*   Decrease ``pool_max_idle_per_host`` to 64 or 128.
+*   Reduce ``worker_threads`` to match the number of allocated CPU cores.
+*   Lower ``thread_stack_size`` to 524288 (512KB).
 
-``src/session.rs``
-^^^^^^^^^^^^^^^^^^
-- Updated ``Session::new()`` to use session configuration
-- Replaced hardcoded HTTP/2 and connection pool settings
-- Added import for ``get_session_config``
+High-Latency Networks
+~~~~~~~~~~~~~~~~~~~~~
 
-``src/lib.rs``
-^^^^^^^^^^^^^^
-- Added ``mod config;`` to expose the configuration module
+If your requests travel over the public internet or high-latency links:
 
-``Cargo.toml``
-^^^^^^^^^^^^^^
-- Added ``toml = "0.8"`` dependency for TOML parsing
-
-Configuration Structure
------------------------
-
-The configuration system consists of two main sections:
-
-1. Client Configuration (``[client]``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-- ``pool_idle_timeout_secs``: Connection pool idle timeout (default: 90 seconds)
-- ``pool_max_idle_per_host``: Maximum idle connections per host (default: 512)
-- ``http2_only``: Force HTTP/2 only connections (default: false)
-- ``http2_keep_alive_interval_secs``: HTTP/2 keep-alive interval (default: 30 seconds)
-- ``http2_keep_alive_timeout_secs``: HTTP/2 keep-alive timeout (default: 10 seconds)
-- ``http2_initial_stream_window_size``: HTTP/2 stream window size (default: 65536)
-- ``http2_initial_connection_window_size``: HTTP/2 connection window size (default: 1048576)
-
-2. Runtime Configuration (``[runtime]``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-- ``worker_threads``: Number of worker threads (0 = auto-detect, default: 0)
-- ``max_blocking_threads``: Maximum blocking threads (default: 512)
-- ``thread_name``: Thread name prefix (default: "requestx-worker")
-- ``thread_stack_size``: Thread stack size in bytes (default: 524288)
-
-Key Features
-------------
-
-1. **Fallback to Defaults**: If ``config.toml`` is missing or invalid, the system uses sensible defaults
-2. **Thread-Safe**: Configuration is loaded once and cached globally
-3. **Type Safety**: All configuration values are properly typed
-4. **Performance Optimized**: Configuration loading happens once at startup
-5. **Backward Compatible**: Existing code continues to work without changes
-
-Usage
------
-
-Users can now customize RequestX performance by:
-
-1. Creating/modifying ``config.toml`` in the project root
-2. Adjusting values based on their specific use case:
-   - High-performance scenarios: Increase connection pools and worker threads
-   - Low-resource environments: Reduce thread counts and connection limits
-   - HTTP/2 optimization: Adjust window sizes and keep-alive settings
-
-Benefits
---------
-
-1. **Maintainability**: No more scattered "magic numbers" in the codebase
-2. **Flexibility**: Easy performance tuning without code changes
-3. **Documentation**: All settings are clearly documented in the TOML file
-4. **Testing**: Different configurations can be tested easily
-5. **Deployment**: Different environments can use different configurations
-
-Verification
-------------
-
-The implementation has been verified through:
-
-- Successful compilation with ``cargo check``
-- All hardcoded values replaced with configuration calls
-- Proper error handling for missing/invalid configuration files
-- Thread-safe global configuration access
-
-The configuration system is now ready for production use and provides a clean, maintainable way to manage RequestX performance settings.
+*   Increase ``http2_initial_stream_window_size`` and ``http2_initial_connection_window_size`` to allow more data in flight.
+*   Ensure ``pool_idle_timeout_secs`` is high enough to keep connections alive during periods of inactivity.

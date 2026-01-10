@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use serde_json::Value;
@@ -16,7 +17,8 @@ pub struct Response {
 
     headers: HashMap<String, String>,
     text_content: Option<String>,
-    binary_content: Option<Vec<u8>>,
+    // Use Bytes internally for zero-copy from hyper, Vec<u8> for Python compatibility
+    binary_content: Option<Bytes>,
     encoding: Option<String>,
 
     // Additional fields for requests compatibility
@@ -44,7 +46,7 @@ impl Response {
             url,
             headers,
             text_content: None,
-            binary_content: Some(content),
+            binary_content: Some(content.into()), // Convert Vec<u8> to Bytes efficiently
             encoding: None,
             ok,
             reason,
@@ -101,14 +103,22 @@ impl Response {
         }
     }
 
-    /// Parse response as JSON
+    /// Parse response as JSON - optimized to use from_slice on Bytes
     fn json(&mut self, py: Python) -> PyResult<PyObject> {
-        let text = self.text()?;
-        let value: Value = serde_json::from_str(&text).map_err(RequestxError::JsonDecodeError)?;
+        // Use from_slice directly on binary content for better performance
+        // Bytes Deref to [u8], so this works without copying
+        if let Some(ref content) = self.binary_content {
+            let value: Value =
+                serde_json::from_slice(content).map_err(|e| RequestxError::JsonDecodeError(e))?;
 
-        pythonize::pythonize(py, &value)
-            .map_err(|e| RequestxError::PythonError(e.to_string()).into())
-            .map(Bound::unbind)
+            pythonize::pythonize(py, &value)
+                .map_err(|e| RequestxError::PythonError(e.to_string()).into())
+                .map(Bound::unbind)
+        } else {
+            // Empty response - return empty dict
+            let dict = PyDict::new(py);
+            Ok(dict.into())
+        }
     }
 
     /// Raise an exception for HTTP error status codes

@@ -277,15 +277,33 @@ To get the best performance from RequestX:
        response = session.get(f'https://api.example.com/item/{i}')
        process_response(response)
 
-   # Even better: Use async for concurrent requests
-   import asyncio
+    # Even better: Use async for concurrent requests
+    import asyncio
 
-   async def fetch_all():
-       session = requestx.Session()
-       tasks = []
-       for i in range(10):
-           task = session.get(f'https://api.example.com/item/{i}')
-           tasks.append(task)
-       
-       responses = await asyncio.gather(*tasks)
-       return responses
+    async def fetch_all():
+        async with requestx.Session() as session:
+            tasks = []
+            for i in range(10):
+                task = session.get(f'https://api.example.com/item/{i}')
+                tasks.append(task)
+            
+            responses = await asyncio.gather(*tasks)
+            return responses
+
+Performance Tips
+----------------
+
+To get the best performance from RequestX:
+
+1. **Use sessions** for multiple requests to the same host. This enables connection pooling and reuse.
+2. **Enable connection pooling** by reusing session objects.
+3. **Use async/await** for I/O-bound operations to handle many concurrent requests efficiently.
+4. **Set appropriate timeouts** to avoid hanging requests.
+5. **Consider HTTP/2** for modern APIs (automatically handled by RequestX).
+
+RequestX is configured by default with high-performance settings:
+* Connection pool: Up to 1024 idle connections per host.
+* Runtime: 32 worker threads for parallel execution.
+* GIL release: Automatic GIL release during network I/O in sync mode.
+
+For more details on tuning performance, see the :doc:`configuration` guide.

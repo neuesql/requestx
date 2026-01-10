@@ -7,11 +7,6 @@ This section contains practical examples of using RequestX for common tasks.
    :maxdepth: 2
 
    basic-usage
-   async-usage
-   sessions
-   advanced
-   migration-examples
-   performance-examples
 
 Overview
 --------
@@ -137,18 +132,9 @@ Use Case Categories
 Getting Started
 --------------
 
-If you're new to RequestX:
+If you're new to RequestX, start with :doc:`basic-usage` for fundamental patterns.
 
-1. Start with :doc:`basic-usage` for fundamental patterns
-2. Move to :doc:`async-usage` for performance-critical applications
-3. Check :doc:`sessions` for advanced connection management
-4. Explore :doc:`advanced` for complex scenarios
-
-If you're migrating from ``requests``:
-
-1. Review :doc:`migration-examples` for side-by-side comparisons
-2. Check :doc:`performance-examples` to see the benefits
-3. Use :doc:`../migration` for a complete migration guide
+If you're migrating from ``requests``, check out the :doc:`../migration` guide.
 
 Code Organization
 ----------------

@@ -151,7 +151,7 @@ impl Session {
         // Parse kwargs and merge with session headers
         let mut config_builder = parse_kwargs(py, kwargs)?;
 
-        // Merge session headers with request headers
+        // Merge session headers with request headers (only if session has headers)
         let session_headers = self.headers.lock().unwrap();
         if !session_headers.is_empty() {
             let mut merged_headers = session_headers.clone();
@@ -159,7 +159,7 @@ impl Session {
             // If request has headers, merge them (request headers take precedence)
             if let Some(ref request_headers) = config_builder.headers {
                 for (name, value) in request_headers.iter() {
-                    merged_headers.insert(name, value.clone());
+                    merged_headers.insert(name.clone(), value.clone());
                 }
             }
 

@@ -19,7 +19,7 @@ const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
     let config = get_http_client_config();
     let https = HttpsConnector::new();
-    
+
     Client::builder()
         .pool_idle_timeout(config.pool_idle_timeout())
         .pool_max_idle_per_host(config.pool_max_idle_per_host)
@@ -35,8 +35,24 @@ pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
 static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
     OnceLock::new();
 
+// Cached no-verify client (lazy initialized)
+static NOVERIFY_CLIENT: OnceLock<Option<Client<HttpsConnector<hyper::client::HttpConnector>>>> =
+    OnceLock::new();
+
+#[inline]
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
     GLOBAL_CLIENT.get_or_init(|| create_client())
+}
+
+/// Get cached no-verify client (avoids creating new TLS connector per request)
+#[inline]
+fn get_noverify_client(
+) -> Result<&'static Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+    let client_opt = NOVERIFY_CLIENT.get_or_init(|| create_custom_client(false).ok());
+
+    client_opt.as_ref().ok_or_else(|| {
+        RequestxError::SslError("No-verify client initialization failed".to_string())
+    })
 }
 
 /// Create a custom client with specific SSL verification settings
@@ -47,7 +63,7 @@ fn create_custom_client(
         // For verify=true, use the standard configured client
         return Ok(create_client());
     }
-    
+
     let config = get_http_client_config();
 
     // For verify=false, create a custom TLS connector that accepts invalid certs
@@ -305,9 +321,9 @@ impl RequestxClient {
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
-        // Use custom client only if SSL verification is disabled
+        // Use cached no-verify client instead of creating new one each request
         let actual_client = if !config.verify {
-            create_custom_client(false)?
+            get_noverify_client()?.clone()
         } else {
             client
         };
@@ -354,13 +370,13 @@ impl RequestxClient {
             request_builder = request_builder.header("authorization", format!("Basic {encoded}"));
         }
 
-        // Build request body more efficiently
-        let body = match (&config.data, &config.json) {
+        // Build request body efficiently (config is owned, so we can take from it)
+        let body = match (config.data, config.json) {
             (Some(RequestData::Text(text)), None) => {
-                Body::from(text.clone()) // Need to clone for lifetime
+                Body::from(text) // Move instead of clone
             }
             (Some(RequestData::Bytes(bytes)), None) => {
-                Body::from(bytes.clone()) // Need to clone for lifetime
+                Body::from(bytes) // Move instead of clone
             }
             (Some(RequestData::Form(form)), None) => {
                 // More efficient form encoding with pre-allocated capacity
@@ -385,7 +401,7 @@ impl RequestxClient {
                 Body::from(form_data)
             }
             (None, Some(json)) => {
-                let json_string = serde_json::to_string(json)?;
+                let json_string = serde_json::to_string(&json)?;
                 request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
                 Body::from(json_string)
             }

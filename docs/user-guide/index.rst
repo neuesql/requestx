@@ -37,6 +37,48 @@ Key Concepts
 **Performance Optimization**
    Built with Rust, RequestX offers superior performance while maintaining full compatibility with the ``requests`` API.
 
+Performance Best Practices
+--------------------------
+
+To get the most out of RequestX, follow these performance best practices:
+
+**1. Reuse Session Objects**
+   Always use a ``requestx.Session()`` when making multiple requests to the same host. This allows RequestX to reuse underlying TCP connections (and TLS handshakes), significantly reducing latency and CPU usage.
+
+   .. code-block:: python
+
+       import requestx
+       
+       # Efficient: Connection is reused
+       with requestx.Session() as session:
+           for i in range(100):
+               session.get(f"https://api.example.com/items/{i}")
+
+**2. Use Async for Concurrency**
+   If you need to make many independent requests, use the asynchronous API with ``asyncio.gather``.
+
+   .. code-block:: python
+
+       import asyncio
+       import requestx
+       
+       async def main():
+           async with requestx.Session() as session:
+               tasks = [session.get(f"https://api.example.com/items/{i}") for i in range(10)]
+               responses = await asyncio.gather(*tasks)
+
+**3. Configure Connection Pools**
+   For high-load applications, adjust the ``pool_max_idle_per_host`` in your ``config.toml``. The default is 1024, which is suitable for most high-concurrency use cases.
+
+**4. Stream Large Responses**
+   When downloading large files, use ``stream=True`` to avoid loading the entire response into memory at once.
+
+   .. code-block:: python
+
+       response = requestx.get("https://example.com/large-file.zip", stream=True)
+       for chunk in response.iter_content(chunk_size=8192):
+           process_chunk(chunk)
+
 Getting Started
 --------------
 
