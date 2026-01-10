@@ -30,7 +30,6 @@ pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
         .build::<_, hyper::Body>(https)
 }
 
-// Global shared client for connection pooling
 static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
     OnceLock::new();
 
@@ -314,7 +313,6 @@ impl RequestxClient {
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
-        // Use cached no-verify client if SSL verification is disabled
         let actual_client = if !config.verify {
             get_noverify_client()?.clone()
         } else {
