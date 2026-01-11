@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "requestx"
-version = "0.4.2"
+version = "0.4.3"
 description = "High-performance HTTP client for Python with requests-compatible API"
 authors = [
     {name = "RequestX", email = "wu.qunfei@gmail.com"},

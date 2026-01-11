@@ -7,7 +7,8 @@
         5-build 6-test-rust 6-test-python 6-test-all 6-test-coverage \
         7-doc-build 7-doc-serve \
         8-release-github 8-release-docs 8-release-pypi \
-        9-clean version-patch version-minor version-major
+        9-clean version-patch version-minor version-major \
+        benchmark-get-test benchmark-run benchmark-compare
 
 .DEFAULT_GOAL := help
 
@@ -29,6 +30,9 @@ help: ## Show available commands
 	@echo ""
 	@echo "$(YELLOW)Development:$(RESET)"
 	@awk 'BEGIN {FS = ":.*?## "} /^[1-9]-.*:.*?## / {printf "  make %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "$(YELLOW)Benchmark:$(RESET)"
+	@awk 'BEGIN {FS = ":.*?## "} /^benchmark-.*:.*?## / {printf "  make %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "$(YELLOW)Version bumping:$(RESET)"
 	@awk 'BEGIN {FS = ":.*?## "} /^version-.*:.*?## / {printf "  make %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -110,6 +114,7 @@ help: ## Show available commands
 	uv run python -m coverage xml
 	@echo "$(GREEN)✓ Coverage report generated$(RESET)"
 
+
 # =============================================================================
 # 7. Documentation
 # =============================================================================
@@ -186,3 +191,18 @@ version-major: ## Bump major version (x.0.0)
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
+
+# =============================================================================
+# 10. Benchmark
+# =============================================================================
+
+benchmark-get-sync-test: ## Run GET benchmark (localhost, concurrency=1, duration=3s)
+	@echo "$(BLUE)Running GET Sync benchmark...$(RESET)"
+	.venv/bin/http-benchmark --url http://localhost/get --compare requestx requests httpx urllib3 pycurl --concurrency 1 --duration 3
+	@echo "$(GREEN)✓ Benchmark complete$(RESET)"
+
+
+benchmark-get-async-test: ## Run GET benchmark (localhost, concurrency=1, duration=3s)
+	@echo "$(BLUE)Running GET Async benchmark...$(RESET)"
+	.venv/bin/http-benchmark --url http://localhost/get --compare requestx httpx aiohttp --concurrency 1 --duration 3 --async
+	@echo "$(GREEN)✓ Benchmark complete$(RESET)"
