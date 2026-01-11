@@ -1,0 +1,95 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="500" fill="#f8f9fa" stroke="#e9ecef" stroke-width="1"/>
+  
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#212529">RequestX: Async vs Sync Performance</text>
+  
+  <!-- Chart area -->
+  <rect x="80" y="60" width="640" height="360" fill="white" stroke="#dee2e6" stroke-width="1"/>
+  
+  <!-- Y-axis labels -->
+  <text x="70" y="70" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">3000</text>
+  <text x="70" y="110" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">2500</text>
+  <text x="70" y="150" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">2000</text>
+  <text x="70" y="190" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">1500</text>
+  <text x="70" y="230" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">1000</text>
+  <text x="70" y="270" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">800</text>
+  <text x="70" y="310" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">600</text>
+  <text x="70" y="350" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">400</text>
+  <text x="70" y="390" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">200</text>
+  <text x="70" y="420" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">0</text>
+  
+  <!-- Y-axis title -->
+  <text x="25" y="250" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#495057" transform="rotate(-90 25 250)">Requests Per Second (RPS)</text>
+  
+  <!-- X-axis labels -->
+  <text x="200" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 1</text>
+  <text x="350" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 10</text>
+  <text x="500" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 20</text>
+  <text x="650" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6c757d">Concurrency 50</text>
+  
+  <!-- X-axis title -->
+  <text x="400" y="480" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#495057">Concurrency Level</text>
+  
+  <!-- Grid lines -->
+  <line x1="80" y1="110" x2="720" y2="110" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="150" x2="720" y2="150" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="190" x2="720" y2="190" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="230" x2="720" y2="230" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="270" x2="720" y2="270" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="310" x2="720" y2="310" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="350" x2="720" y2="350" stroke="#e9ecef" stroke-width="1"/>
+  <line x1="80" y1="390" x2="720" y2="390" stroke="#e9ecef" stroke-width="1"/>
+  
+  <!-- Bars for Concurrency 1 -->
+  <!-- Async: 476 RPS -->
+  <rect x="170" y="382" width="30" height="38" fill="#007bff"/>
+  <text x="185" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#007bff">476</text>
+  
+  <!-- Sync: 476 RPS -->
+  <rect x="205" y="382" width="30" height="38" fill="#6c757d"/>
+  <text x="220" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#6c757d">476</text>
+  
+  <!-- Bars for Concurrency 10 -->
+  <!-- Async: 1176 RPS -->
+  <rect x="320" y="326" width="30" height="94" fill="#007bff"/>
+  <text x="335" y="321" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#007bff">1176</text>
+  
+  <!-- Sync: 118 RPS -->
+  <rect x="355" y="408" width="30" height="12" fill="#6c757d"/>
+  <text x="370" y="403" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#6c757d">118</text>
+  
+  <!-- Bars for Concurrency 20 -->
+  <!-- Async: 2352 RPS -->
+  <rect x="470" y="232" width="30" height="188" fill="#007bff"/>
+  <text x="485" y="227" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#007bff">2352</text>
+  
+  <!-- Sync: 24 RPS -->
+  <rect x="505" y="418" width="30" height="2" fill="#6c757d"/>
+  <text x="520" y="413" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#6c757d">24</text>
+  
+  <!-- Bars for Concurrency 50 -->
+  <!-- Async: 2941 RPS -->
+  <rect x="620" y="185" width="30" height="235" fill="#007bff"/>
+  <text x="635" y="180" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#007bff">2941</text>
+  
+  <!-- Sync: 11 RPS -->
+  <rect x="655" y="419" width="30" height="1" fill="#6c757d"/>
+  <text x="670" y="414" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#6c757d">11</text>
+  
+  <!-- Legend -->
+  <rect x="550" y="80" width="150" height="60" fill="white" stroke="#dee2e6" stroke-width="1"/>
+  <rect x="560" y="95" width="15" height="10" fill="#007bff"/>
+  <text x="580" y="103" font-family="Arial, sans-serif" font-size="12" fill="#495057">RequestX Async</text>
+  <rect x="560" y="115" width="15" height="10" fill="#6c757d"/>
+  <text x="580" y="123" font-family="Arial, sans-serif" font-size="12" fill="#495057">RequestX Sync</text>
+  
+  <!-- Performance indicators -->
+  <text x="400" y="50" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#007bff" font-style="italic">Async shows up to 267x performance improvement at high concurrency</text>
+  
+  <!-- Improvement percentages -->
+  <text x="335" y="300" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745" font-weight="bold">+896%</text>
+  <text x="485" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745" font-weight="bold">+9700%</text>
+  <text x="635" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#28a745" font-weight="bold">+26636%</text>
+</svg>
