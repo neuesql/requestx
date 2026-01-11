@@ -466,7 +466,7 @@ impl RequestxClient {
             client
         };
         // Build URL with query parameters if provided
-        let final_url = if let Some(ref params) = config.params {
+        let mut final_url = if let Some(ref params) = config.params {
             if params.is_empty() {
                 config.url.clone()
             } else {
@@ -644,22 +644,20 @@ impl RequestxClient {
         // Handle redirects with optimized logic
         if config.allow_redirects && response.status().is_redirection() {
             let mut redirect_count = 0;
-            // Use config max_redirects if set, otherwise default to 30
             let max_redirects = config.max_redirects.unwrap_or(30) as u8;
             let mut history: Vec<ResponseData> = Vec::new();
+            let original_method = config.method.clone();
 
             while response.status().is_redirection() && redirect_count < max_redirects {
-                // Capture redirect response in history (before following redirect)
                 let redirect_status = response.status().as_u16();
                 let redirect_headers = response.headers().clone();
+                let current_url = final_url.clone();
 
-                // Get the redirect URL from the Location header
-                let redirect_url_str = if let Some(location) = response.headers().get("location") {
-                    if let Ok(s) = location.to_str() {
-                        if s.starts_with("http") {
-                            s.to_string()
-                        } else {
-                            // Relative URL - resolve against the current URL
+                // Get redirect URL from Location header
+                let redirect_url_str = match response.headers().get("location") {
+                    Some(location) => match location.to_str() {
+                        Ok(s) if s.starts_with("http") => s.to_string(),
+                        Ok(s) => {
                             let base_scheme = final_url.scheme_str().unwrap_or("https");
                             let base_host = final_url.host().unwrap_or("");
                             let base_port = final_url
@@ -668,96 +666,61 @@ impl RequestxClient {
                                 .unwrap_or_default();
                             format!("{base_scheme}://{base_host}{base_port}{s}")
                         }
-                    } else {
-                        final_url.to_string()
-                    }
-                } else {
-                    final_url.to_string()
+                        Err(_) => final_url.to_string(),
+                    },
+                    None => final_url.to_string(),
                 };
 
-                let redirect_url: Uri = redirect_url_str.parse().map_err(|e| {
-                    RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
-                })?;
+                // Determine redirect method per RFC 7231
+                let redirect_method = match redirect_status {
+                    307 | 308 => original_method.clone(),
+                    303 if original_method != Method::HEAD => Method::GET,
+                    302 | 301 if original_method == Method::POST => Method::GET,
+                    _ => original_method.clone(),
+                };
+
+                let redirect_request = Request::builder()
+                    .method(redirect_method.clone())
+                    .uri(&redirect_url_str)
+                    .body(Body::empty())
+                    .map_err(|e| {
+                        RequestxError::RuntimeError(format!(
+                            "Failed to build redirect request: {e}"
+                        ))
+                    })?;
 
                 let history_item = ResponseData {
                     status_code: redirect_status,
                     headers: redirect_headers,
-                    body: Bytes::new(), // 3xx redirects typically have empty bodies
-                    url: redirect_url.clone(),
+                    body: Bytes::new(),
+                    url: current_url,
                     is_stream: false,
-                    elapsed_us: 0, // Not tracked for history items
+                    elapsed_us: 0,
                     history: Vec::new(),
                     body_chunks: None,
                 };
                 history.push(history_item);
 
-                if let Some(location) = response.headers().get("location") {
-                    if let Ok(location_str) = location.to_str() {
-                        let redirect_url: Uri = if location_str.starts_with("http") {
-                            location_str.parse().map_err(|e| {
-                                RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
-                            })?
-                        } else {
-                            let base_scheme = final_url.scheme_str().unwrap_or("https");
-                            let base_host = final_url.host().unwrap_or("");
-                            let base_port = final_url
-                                .port_u16()
-                                .map(|p| format!(":{p}"))
-                                .unwrap_or_default();
-                            format!("{base_scheme}://{base_host}{base_port}{location_str}")
-                                .parse()
-                                .map_err(|e| {
-                                    RequestxError::RuntimeError(format!(
-                                        "Invalid redirect URL: {e}"
-                                    ))
-                                })?
-                        };
-
-                        let redirect_request = Request::builder()
-                            .method(Method::GET)
-                            .uri(&redirect_url)
-                            .body(Body::empty())
-                            .map_err(|e| {
-                                RequestxError::RuntimeError(format!(
-                                    "Failed to build redirect request: {e}"
-                                ))
-                            })?;
-
-                        response = actual_client.request(redirect_request).await?;
-                        redirect_count += 1;
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
+                response = actual_client.request(redirect_request).await?;
+                if let Ok(new_uri) = redirect_url_str.parse::<Uri>() {
+                    final_url = new_uri;
                 }
+                redirect_count += 1;
             }
 
-            // Check if we exceeded max redirects
-            let max_redirects = config.max_redirects.unwrap_or(30) as u8;
-            if redirect_count >= max_redirects {
-                return Err(RequestxError::TooManyRedirects);
-            }
-
-            // Include history in the final response
-            // Recalculate elapsed time including all redirects
             let elapsed_us = start_time.elapsed().as_micros() as u64;
-
-            // Extract response data efficiently
             let status_code = response.status().as_u16();
             let headers = response.headers().clone();
-            let url = config.url;
             let is_stream = config.stream;
 
             if is_stream {
-                // Read body in chunks for streaming
                 let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
 
                 Ok(ResponseData {
                     status_code,
                     headers,
                     body: body_bytes,
-                    url,
+                    url: final_url,
                     is_stream,
                     elapsed_us,
                     history,
@@ -770,7 +733,7 @@ impl RequestxClient {
                     status_code,
                     headers,
                     body: body_bytes,
-                    url,
+                    url: final_url,
                     is_stream,
                     elapsed_us,
                     history,
@@ -778,23 +741,19 @@ impl RequestxClient {
                 })
             }
         } else {
-            // No redirect - calculate elapsed and return response without history
             let elapsed_us = start_time.elapsed().as_micros() as u64;
-
             let status_code = response.status().as_u16();
             let headers = response.headers().clone();
-            let url = config.url;
             let is_stream = config.stream;
 
             if is_stream {
-                // Read body in chunks for streaming
                 let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
 
                 Ok(ResponseData {
                     status_code,
                     headers,
                     body: body_bytes,
-                    url,
+                    url: final_url,
                     is_stream,
                     elapsed_us,
                     history: Vec::new(),
@@ -807,7 +766,7 @@ impl RequestxClient {
                     status_code,
                     headers,
                     body: body_bytes,
-                    url,
+                    url: final_url,
                     is_stream,
                     elapsed_us,
                     history: Vec::new(),
@@ -827,14 +786,11 @@ impl Default for RequestxClient {
 impl Clone for RequestxClient {
     fn clone(&self) -> Self {
         if self.use_global_client {
-            // For global client usage, just create a new instance
             RequestxClient::new().expect("Failed to clone RequestxClient")
         } else if let Some(ref custom_client) = self.custom_client {
-            // For custom client, create a new instance with the same client
             RequestxClient::with_custom_client(custom_client.clone())
                 .expect("Failed to clone RequestxClient with custom client")
         } else {
-            // Fallback to default
             RequestxClient::new().expect("Failed to clone RequestxClient")
         }
     }
