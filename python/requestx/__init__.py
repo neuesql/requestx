@@ -40,7 +40,6 @@ from ._requestx import (
 )
 
 
-
 # Exception hierarchy matching requests library
 class RequestException(Exception):
     """Base exception for all requestx errors.

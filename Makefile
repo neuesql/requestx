@@ -1,362 +1,181 @@
-# RequestX Makefile
-# Abstracts the release pipeline commands following tech.md steering file
+# RequestX - Simplified Build System
+# Use numbered commands for clear sequencing: make 1-setup, make 2-format, etc.
 
-.PHONY: help setup clean format lint test build release publish all
+.PHONY: help \
+        1-setup 2-format 2-format-check \
+        3-lint 4-quality-check \
+        5-build 6-test-rust 6-test-python 6-test-all \
+        7-doc-build 7-doc-serve \
+        8-release-github 8-release-docs 8-release-pypi \
+        9-clean version-patch version-minor version-major
+
 .DEFAULT_GOAL := help
 
 # Colors for output
-BLUE := \033[34m
+BLUE  := \033[34m
 GREEN := \033[32m
-YELLOW := \033[33m
-RED := \033[31m
+YELLOW:= \033[33m
+RED   := \033[31m
 RESET := \033[0m
 
 # Version extraction from Cargo.toml
 VERSION := $(shell grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
-help: ## Show this help message
-	@echo "$(BLUE)RequestX Build System$(RESET)"
-	@echo "Version: $(GREEN)$(VERSION)$(RESET)"
+# UV version
+UV_VERSION := $(shell uv version --short 2>/dev/null || echo "not installed")
+
+help: ## Show available commands
+	@echo "$(BLUE)RequestX v$(VERSION)$(RESET) | UV: $(GREEN)$(UV_VERSION)$(RESET)"
 	@echo ""
-	@echo "$(YELLOW)Available targets:$(RESET)"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(GREEN)%-20s$(RESET) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo "$(YELLOW)Development:$(RESET)"
+	@awk 'BEGIN {FS = ":.*?## "} /^[1-9]-.*:.*?## / {printf "  make %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "$(YELLOW)Version bumping:$(RESET)"
+	@awk 'BEGIN {FS = ":.*?## "} /^version-.*:.*?## / {printf "  make %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # =============================================================================
-# Development Setup
+# 1. Setup
 # =============================================================================
 
-setup: ## Install development dependencies and setup environment
-	@echo "$(BLUE)Setting up development environment...$(RESET)"
-	@command -v uv >/dev/null 2>&1 || { echo "$(RED)uv not found. Installing...$(RESET)"; curl -LsSf https://astral.sh/uv/install.sh | sh; }
+1-setup: ## Setup development environment
+	@echo "$(BLUE)Setting up dev environment...$(RESET)"
+	@command -v uv >/dev/null 2>&1 || { echo "$(RED)Installing uv...$(RESET)"; curl -LsSf https://astral.sh/uv/install.sh | sh; }
 	uv sync --dev
-	@echo "$(GREEN)Development environment setup complete!$(RESET)"
+	@echo "$(GREEN)✓ Setup complete$(RESET)"
 
 # =============================================================================
-# Code Quality & Formatting
+# 2. Formatting
 # =============================================================================
 
-format: ## Format all code (Rust and Python)
+2-format: ## Format Rust + Python code
 	@echo "$(BLUE)Formatting code...$(RESET)"
-	@echo "$(YELLOW)Formatting Rust code...$(RESET)"
 	cargo fmt
-	@echo "$(YELLOW)Formatting Python code...$(RESET)"
 	uv run black .
-	@echo "$(GREEN)Code formatting complete!$(RESET)"
+	@echo "$(GREEN)✓ Formatted$(RESET)"
 
-format-check: ## Check code formatting without making changes
-	@echo "$(BLUE)Checking code formatting...$(RESET)"
-	@echo "$(YELLOW)Checking Rust formatting...$(RESET)"
+2-format-check: ## Check formatting (no changes)
+	@echo "$(BLUE)Checking formatting...$(RESET)"
 	cargo fmt --check
-	@echo "$(YELLOW)Checking Python formatting...$(RESET)"
 	uv run black --check .
-	@echo "$(GREEN)Format check complete!$(RESET)"
+	@echo "$(GREEN)✓ Format OK$(RESET)"
 
-lint: ## Run all linting checks
-	@echo "$(BLUE)Running linting checks...$(RESET)"
-	@echo "$(YELLOW)Rust linting with clippy...$(RESET)"
+# =============================================================================
+# 3. Linting
+# =============================================================================
+
+3-lint: ## Run linters (clippy + ruff)
+	@echo "$(BLUE)Running linters...$(RESET)"
 	cargo clippy -- -D warnings
-	@echo "$(YELLOW)Python linting with ruff...$(RESET)"
 	uv run ruff check .
-	# @echo "$(YELLOW)Python type checking with mypy...$(RESET)"
-	# uv run mypy .
-	# @echo "$(GREEN)Linting complete!$(RESET)"
-
-quality-check: format-check lint ## Run all code quality checks (CI stage 1)
-	@echo "$(GREEN)All quality checks passed!$(RESET)"
+	@echo "$(GREEN)✓ Linting passed$(RESET)"
 
 # =============================================================================
-# Building
+# 4. Quality Check (CI Stage 1)
 # =============================================================================
 
-build-dev: ## Build extension for development
-	@echo "$(BLUE)Building development extension...$(RESET)"
+4-quality-check: 2-format-check 3-lint ## Combined format check + lint
+	@echo "$(GREEN)✓ All quality checks passed$(RESET)"
+
+# =============================================================================
+# 5. Build
+# =============================================================================
+
+5-build: ## Build Rust/Python extension (dev)
+	@echo "$(BLUE)Building...$(RESET)"
 	uv run maturin develop
-	@echo "$(GREEN)Development build complete!$(RESET)"
-
-build: build-dev ## Alias for build-dev
-
-build-release: ## Build release version
-	@echo "$(BLUE)Building release version...$(RESET)"
-	uv run maturin build --release
-	@echo "$(GREEN)Release build complete!$(RESET)"
-
-build-wheels: ## Build wheels for distribution
-	@echo "$(BLUE)Building distribution wheels...$(RESET)"
-	uv run maturin build --release --strip --out dist
-	@echo "$(GREEN)Wheel build complete!$(RESET)"
-
-build-wheels-ci: ## Build wheels for CI (platform-specific)
-	@echo "$(BLUE)Building wheels for CI...$(RESET)"
-	uv run maturin build --release --strip --out dist --find-interpreter
-	@echo "$(GREEN)CI wheel build complete!$(RESET)"
-
-build-sdist: ## Build source distribution
-	@echo "$(BLUE)Building source distribution...$(RESET)"
-	uv run maturin sdist
-	@echo "$(GREEN)Source distribution build complete!$(RESET)"
-
-verify-import: build-dev ## Verify Python package can be imported (CI stage 2)
-	@echo "$(BLUE)Verifying package import...$(RESET)"
-	uv run python -c "import requestx; print('Import successful')"
-	@echo "$(GREEN)Import verification complete!$(RESET)"
+	@echo "$(GREEN)✓ Build complete$(RESET)"
 
 # =============================================================================
-# Testing
+# 6. Testing
 # =============================================================================
 
-test-rust: ## Run Rust unit tests (CI stage 3)
-	@echo "$(BLUE)Running Rust unit tests...$(RESET)"
+6-test-rust: ## Run Rust tests
+	@echo "$(BLUE)Running Rust tests...$(RESET)"
 	cargo test --verbose
 	cargo test --doc
-	@echo "$(GREEN)Rust tests complete!$(RESET)"
+	@echo "$(GREEN)✓ Rust tests passed$(RESET)"
 
-test-python: build-dev ## Run Python unit tests (CI stage 4)
-	@echo "$(BLUE)Running Python unit tests...$(RESET)"
+6-test-python: 5-build ## Run Python tests (requires build)
+	@echo "$(BLUE)Running Python tests...$(RESET)"
 	uv run python -m unittest discover tests/ -v
-	@echo "$(GREEN)Python tests complete!$(RESET)"
+	@echo "$(GREEN)✓ Python tests passed$(RESET)"
 
-test-core: build-dev ## Run core client tests specifically
-	@echo "$(BLUE)Running core client tests...$(RESET)"
-	uv run python -m unittest tests.test_core_client -v
-	@echo "$(GREEN)Core client tests complete!$(RESET)"
+6-test-all: 6-test-rust 6-test-python ## Run all tests
+	@echo "$(GREEN)✓ All tests passed$(RESET)"
 
-test-integration: build-dev ## Run integration tests (CI stage 5)
-	@echo "$(BLUE)Running integration tests...$(RESET)"
-	@if [ -f tests/test_integration.py ]; then \
-		uv run python -m unittest tests.test_integration -v; \
-	else \
-		echo "$(YELLOW)Integration tests not yet implemented$(RESET)"; \
-	fi
-	@if [ -f tests/test_async.py ]; then \
-		uv run python -m unittest tests.test_async -v; \
-	else \
-		echo "$(YELLOW)Async tests not yet implemented$(RESET)"; \
-	fi
-	@echo "$(GREEN)Integration tests complete!$(RESET)"
+# =============================================================================
+# 7. Documentation
+# =============================================================================
 
-
-
-test-comprehensive: build-dev ## Run comprehensive test suite (Task 9)
-	@echo "$(BLUE)Running comprehensive test suite...$(RESET)"
-	uv run python tests/test_final_suite.py
-	@echo "$(GREEN)Comprehensive test suite complete!$(RESET)"
-
-test-all-modules: build-dev ## Run all test modules with summary
-	@echo "$(BLUE)Running all test modules...$(RESET)"
-	uv run python -m unittest discover -s tests -v
-	@echo "$(GREEN)All test modules complete!$(RESET)"
-
-test-coverage: build-dev ## Run tests with coverage measurement
-	@echo "$(BLUE)Running tests with coverage measurement...$(RESET)"
-	@if command -v coverage >/dev/null 2>&1; then \
-		uv run python -m coverage run -m unittest discover tests/ -v && uv run python -m coverage report; \
-	else \
-		echo "$(YELLOW)Coverage package not available, running tests without coverage$(RESET)"; \
-		uv run python -m unittest discover tests/ -v; \
-	fi
-	@echo "$(GREEN)Coverage tests complete!$(RESET)"
-
-test: test-rust test-python ## Run all tests
-	@echo "$(GREEN)All tests complete!$(RESET)"
-
-test-all: test test-integration test-performance test-comprehensive ## Run all tests including integration and performance
-	@echo "$(GREEN)All tests (including integration and performance) complete!$(RESET)"
-
-test-task9: test-comprehensive ## Run Task 9 comprehensive test suite
-	@echo "$(GREEN)Task 9 comprehensive test suite complete!$(RESET)"
-
-test-installation: build-dev ## Test installation process and bundled dependencies (Task 10)
-	@echo "$(BLUE)Testing installation process...$(RESET)"
-	uv run python scripts/test_installation.py
-	@echo "$(GREEN)Installation tests complete!$(RESET)"
-
-test-wheel-installation: build-wheels ## Test wheel installation in clean environment
-	@echo "$(BLUE)Testing wheel installation...$(RESET)"
-	uv run python scripts/test_installation.py --test-wheel
-	@echo "$(GREEN)Wheel installation tests complete!$(RESET)"
-
-task10: quality-check build-wheels build-sdist test-installation ## Complete Task 10: Set up build system and packaging
-	@echo "$(GREEN)🎉 Task 10 completed successfully!$(RESET)"
-	@echo "$(YELLOW)Build system and packaging setup complete:$(RESET)"
-	@echo "  ✓ Maturin configured for cross-platform wheel building"
-	@echo "  ✓ GitHub Actions CI/CD pipeline set up"
-	@echo "  ✓ Cross-platform wheel building configured"
-	@echo "  ✓ Installation process tested and verified"
-
-docs-build: ## Build documentation with Sphinx
-	@echo "$(BLUE)Building documentation...$(RESET)"
+7-doc-build: ## Build Sphinx docs
+	@echo "$(BLUE)Building docs...$(RESET)"
 	@if [ -d docs ]; then \
 		cd docs && make html; \
-		echo "$(GREEN)Documentation built successfully!$(RESET)"; \
-		echo "$(YELLOW)Open docs/_build/html/index.html to view$(RESET)"; \
+		echo "$(GREEN)✓ Docs built (docs/_build/html/index.html)$(RESET)"; \
 	else \
-		echo "$(RED)docs/ directory not found$(RESET)"; \
+		echo "$(RED)docs/ not found$(RESET)"; \
 		exit 1; \
 	fi
 
-docs-serve: docs-build ## Build and serve documentation locally
-	@echo "$(BLUE)Serving documentation locally...$(RESET)"
+7-doc-serve: 7-doc-build ## Build + serve docs locally
+	@echo "$(BLUE)Serving docs at http://localhost:8000$(RESET)"
 	@cd docs/_build/html && python -m http.server 8000
-	@echo "$(GREEN)Documentation available at http://localhost:8000$(RESET)"
-
-docs-clean: ## Clean documentation build files
-	@echo "$(BLUE)Cleaning documentation build files...$(RESET)"
-	@if [ -d docs/_build ]; then \
-		rm -rf docs/_build; \
-		echo "$(GREEN)Documentation build files cleaned!$(RESET)"; \
-	else \
-		echo "$(YELLOW)No documentation build files to clean$(RESET)"; \
-	fi
-
-task12: docs-build ## Complete Task 12: Create documentation and examples
-	@echo "$(GREEN)🎉 Task 12 completed successfully!$(RESET)"
-	@echo "$(YELLOW)Documentation and examples created:$(RESET)"
-	@echo "  ✓ Comprehensive Sphinx documentation"
-	@echo "  ✓ Read the Docs configuration"
-	@echo "  ✓ API reference documentation"
-	@echo "  ✓ User guide with examples"
-	@echo "  ✓ Migration guide from requests"
-	@echo "  ✓ Async/await usage guide"
-
-	@echo "  ✓ Contributing guidelines"
 
 # =============================================================================
-# Documentation
+# 8. Release
 # =============================================================================
 
-docs: ## Generate documentation (CI stage 8)
-	@echo "$(BLUE)Generating documentation...$(RESET)"
-	@if [ -d docs ]; then \
-		if command -v sphinx-build >/dev/null 2>&1; then \
-			uv run sphinx-build docs/ docs/_build/; \
-		else \
-			echo "$(YELLOW)Sphinx not available, skipping documentation generation$(RESET)"; \
-		fi; \
-	else \
-		echo "$(YELLOW)docs/ directory not found, skipping documentation generation$(RESET)"; \
-	fi
-	@if [ -f scripts/update_readme_examples.py ]; then \
-		uv run python scripts/update_readme_examples.py; \
-	else \
-		echo "$(YELLOW)README update script not found$(RESET)"; \
-	fi
-	@echo "$(GREEN)Documentation generation complete!$(RESET)"
-
-# =============================================================================
-# Release Pipeline
-# =============================================================================
-
-ci-pipeline: quality-check verify-import test-rust test-python test-integration test-performance docs ## Run full CI pipeline
-	@echo "$(GREEN)Full CI pipeline completed successfully!$(RESET)"
-
-pre-release: ci-pipeline build-wheels build-sdist ## Prepare for release (run full pipeline + build artifacts)
-	@echo "$(GREEN)Pre-release preparation complete!$(RESET)"
-	@echo "$(YELLOW)Artifacts ready for release:$(RESET)"
-	@ls -la target/wheels/ 2>/dev/null || echo "  No wheels found"
-	@ls -la dist/ 2>/dev/null || echo "  No source distribution found"
-
-release-tag: ## Create and push release tag
-	@echo "$(BLUE)Creating release tag v$(VERSION)...$(RESET)"
-	@if git diff --quiet && git diff --cached --quiet; then \
-		git tag v$(VERSION); \
-		git push origin v$(VERSION); \
-		echo "$(GREEN)Release tag v$(VERSION) created and pushed!$(RESET)"; \
-	else \
-		echo "$(RED)Error: Working directory not clean. Commit changes first.$(RESET)"; \
+8-release-github: ## Create GitHub release (requires GIT_TOKEN)
+	@echo "$(BLUE)Creating GitHub release v$(VERSION)...$(RESET)"
+	@if [ -z "$$GIT_TOKEN" ]; then \
+		echo "$(RED)Error: GIT_TOKEN not set$(RESET)"; \
 		exit 1; \
 	fi
+	@gh auth login --with-token $$GIT_TOKEN 2>/dev/null || true
+	gh release create v$(VERSION) --generate-notes
+	@echo "$(GREEN)✓ GitHub release created$(RESET)"
 
-publish-pypi: ## Publish to PyPI (requires PYPI_TOKEN)
+8-release-docs: 7-doc-build ## Deploy docs
+	@echo "$(BLUE)Deploying docs...$(RESET)"
+	@echo "$(YELLOW)TODO: Add deploy logic (mike, gh-pages, etc.)$(RESET)"
+
+8-release-pypi: ## Publish to PyPI (requires PYPI_TOKEN)
 	@echo "$(BLUE)Publishing to PyPI...$(RESET)"
 	@if [ -z "$$PYPI_TOKEN" ]; then \
-		echo "$(RED)Error: PYPI_TOKEN environment variable not set$(RESET)"; \
+		echo "$(RED)Error: PYPI_TOKEN not set$(RESET)"; \
 		exit 1; \
 	fi
-	PYPI_TOKEN=$$PYPI_TOKEN uv run maturin publish --username __token__ --password $$PYPI_TOKEN
-	@echo "$(GREEN)Published to PyPI successfully!$(RESET)"
-
-github-release: ## Create GitHub release (requires gh CLI and GITHUB_TOKEN)
-	@echo "$(BLUE)Creating GitHub release...$(RESET)"
-	@if command -v gh >/dev/null 2>&1; then \
-		gh release create v$(VERSION) --generate-notes; \
-		echo "$(GREEN)GitHub release created successfully!$(RESET)"; \
-	else \
-		echo "$(RED)Error: gh CLI not found. Install GitHub CLI first.$(RESET)"; \
-		exit 1; \
-	fi
-
-release: pre-release release-tag publish-pypi github-release ## Full release process
-	@echo "$(GREEN)🎉 Release v$(VERSION) completed successfully!$(RESET)"
-
-release-pipeline: ## GitHub Actions release pipeline entry point
-	@echo "$(BLUE)Starting release pipeline...$(RESET)"
-	@echo "$(YELLOW)Platform: $(shell uname -s) $(shell uname -m)$(RESET)"
-	@echo "$(YELLOW)Version: $(VERSION)$(RESET)"
-	@echo "$(GREEN)Release pipeline ready!$(RESET)"
+	uv run maturin publish --username __token__ --password $$PYPI_TOKEN
+	@echo "$(GREEN)✓ Published to PyPI$(RESET)"
 
 # =============================================================================
-# Benchmarking
+# Version Bumping (use uv)
 # =============================================================================
 
-benchmark: ## Run custom benchmarks (use BENCHMARK_ARGS for custom arguments)
-	@echo "$(BLUE)Running custom RequestX benchmarks...$(RESET)"
-	uv run python scripts/requestx-benchmark.py $(BENCHMARK_ARGS)
-	@echo "$(GREEN)Custom benchmark complete!$(RESET)"
+version-patch: ## Bump patch version (0.0.x)
+	@echo "$(BLUE)Bumping patch version...$(RESET)"
+	uv version --bump patch
+	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+
+version-minor: ## Bump minor version (0.x.0)
+	@echo "$(BLUE)Bumping minor version...$(RESET)"
+	uv version --bump minor
+	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+
+version-major: ## Bump major version (x.0.0)
+	@echo "$(BLUE)Bumping major version...$(RESET)"
+	uv version --bump major
+	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
 
 # =============================================================================
-# Utility Commands
+# 9. Cleanup
 # =============================================================================
 
-clean: ## Clean build artifacts
-	@echo "$(BLUE)Cleaning build artifacts...$(RESET)"
+9-clean: ## Clean all build artifacts + docs
+	@echo "$(BLUE)Cleaning...$(RESET)"
 	cargo clean
-	rm -rf target/wheels/
-	rm -rf dist/
-	rm -rf build/
-	rm -rf htmlcov/
-	rm -rf *.egg-info/
+	rm -rf dist/ target/wheels/ build/ *.egg-info/
+	rm -rf docs/_build/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-	@echo "$(GREEN)Clean complete!$(RESET)"
-
-status: ## Show project status
-	@echo "$(BLUE)RequestX Project Status$(RESET)"
-	@echo "Version: $(GREEN)$(VERSION)$(RESET)"
-	@echo "Git branch: $(GREEN)$$(git branch --show-current 2>/dev/null || echo 'unknown')$(RESET)"
-	@echo "Git status:"
-	@git status --porcelain 2>/dev/null || echo "  Not a git repository"
-	@echo ""
-	@echo "$(YELLOW)Dependencies:$(RESET)"
-	@command -v uv >/dev/null 2>&1 && echo "  ✓ uv installed" || echo "  ✗ uv not found"
-	@command -v cargo >/dev/null 2>&1 && echo "  ✓ cargo installed" || echo "  ✗ cargo not found"
-	@command -v python >/dev/null 2>&1 && echo "  ✓ python installed" || echo "  ✗ python not found"
-	@command -v gh >/dev/null 2>&1 && echo "  ✓ gh CLI installed" || echo "  ✗ gh CLI not found"
-
-dev: setup build-dev ## Quick development setup (setup + build)
-	@echo "$(GREEN)Development environment ready!$(RESET)"
-
-# =============================================================================
-# Aliases for common workflows
-# =============================================================================
-
-check: quality-check ## Alias for quality-check
-fix: format ## Alias for format (fix formatting issues)
-install: setup ## Alias for setup
-all: ci-pipeline ## Run everything (full CI pipeline)
-
-# =============================================================================
-# Environment Info
-# =============================================================================
-
-env-info: ## Show environment information
-	@echo "$(BLUE)Environment Information$(RESET)"
-	@echo "Make version: $$(make --version | head -1)"
-	@echo "Shell: $$SHELL"
-	@echo "OS: $$(uname -s)"
-	@echo "Architecture: $$(uname -m)"
-	@echo ""
-	@echo "$(YELLOW)Tool Versions:$(RESET)"
-	@command -v uv >/dev/null 2>&1 && echo "uv: $$(uv --version)" || echo "uv: not installed"
-	@command -v cargo >/dev/null 2>&1 && echo "cargo: $$(cargo --version)" || echo "cargo: not installed"
-	@command -v python >/dev/null 2>&1 && echo "python: $$(python --version)" || echo "python: not installed"
-	@command -v rustc >/dev/null 2>&1 && echo "rustc: $$(rustc --version)" || echo "rustc: not installed"
+	@echo "$(GREEN)✓ Clean complete$(RESET)"
