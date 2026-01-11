@@ -20,18 +20,15 @@ Test categories:
 All tests use a local httpbin container via testcontainers.
 """
 
-import sys
 import os
+import sys
+import unittest
 
 # Add the python directory to the path for importing requestx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-import unittest
-import json
-import time
 import requestx
 from testcontainers.generic import ServerContainer
-
 
 # Will be set dynamically by the container
 HTTPBIN_HOST = "http://localhost"
@@ -56,7 +53,7 @@ class HttpbinTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         """Stop httpbin container after all tests in this class."""
-        if hasattr(cls, 'container'):
+        if hasattr(cls, "container"):
             cls.container.stop()
 
 
@@ -160,13 +157,13 @@ class TestResponseStatusCodes(HttpbinTestCase):
     def test_raise_for_status_4xx(self):
         """Test raise_for_status raises for 4xx status codes."""
         r = requestx.get(HTTPBIN_HOST + "/status/404")
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             r.raise_for_status()
 
     def test_raise_for_status_5xx(self):
         """Test raise_for_status raises for 5xx status codes."""
         r = requestx.get(HTTPBIN_HOST + "/status/500")
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             r.raise_for_status()
 
     def test_response_reason(self):
@@ -244,7 +241,7 @@ class TestRedirection(HttpbinTestCase):
     def test_default_allow_redirects(self):
         """Test that redirects are followed by default."""
         # httpbin.org redirects to https
-        r = requestx.get(HTTPBIN_HOST +"/relative-redirect/1")
+        r = requestx.get(HTTPBIN_HOST + "/relative-redirect/1")
         # Should follow redirect and end up at a different URL
         self.assertNotEqual(r.status_code, 302)
 
@@ -270,7 +267,7 @@ class TestTimeouts(HttpbinTestCase):
         """Test short timeout raises exception."""
         # httpbin.org/delay/3 delays response by 3 seconds
         # Using a very short timeout should raise an error
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get(HTTPBIN_HOST + "/delay/3", timeout=0.001)
 
     def test_timeout_none(self):
@@ -307,7 +304,7 @@ class TestSessionManagement(HttpbinTestCase):
         session.update_header("X-Session-Header", "session-value")
         r = session.get(HTTPBIN_HOST + "/headers")
         self.assertEqual(r.status_code, 200)
-        data = r.json()
+        data = r.json()  # noqa: F841
         # Session headers may or may not be included depending on implementation
 
     def test_session_context_manager(self):
@@ -339,18 +336,18 @@ class TestErrorHandling(HttpbinTestCase):
 
     def test_invalid_url(self):
         """Test handling of invalid URLs."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get("not-a-valid-url")
 
     def test_missing_schema(self):
         """Test handling of URLs without scheme."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get("example.com")
 
     def test_connection_error(self):
         """Test handling of connection errors."""
         # Using a non-existent domain should raise connection error
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             requestx.get("http://this-domain-does-not-exist-12345.com", timeout=2)
 
     def test_http_error_4xx(self):
@@ -358,7 +355,7 @@ class TestErrorHandling(HttpbinTestCase):
         r = requestx.get(HTTPBIN_HOST + "/status/404")
         self.assertEqual(r.status_code, 404)
         # Using raise_for_status should raise
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             r.raise_for_status()
 
     def test_json_decode_error(self):
@@ -366,7 +363,7 @@ class TestErrorHandling(HttpbinTestCase):
         r = requestx.get(HTTPBIN_HOST + "/bytes/10")
         self.assertEqual(r.status_code, 200)
         # Attempting to parse non-JSON as JSON should raise
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception):  # noqa: B017
             r.json()
 
 

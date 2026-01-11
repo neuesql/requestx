@@ -63,19 +63,10 @@ impl Default for RuntimeConfig {
 }
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RequestxConfig {
     pub client: HttpClientConfig,
     pub runtime: RuntimeConfig,
-}
-
-impl Default for RequestxConfig {
-    fn default() -> Self {
-        Self {
-            client: HttpClientConfig::default(),
-            runtime: RuntimeConfig::default(),
-        }
-    }
 }
 
 impl RequestxConfig {

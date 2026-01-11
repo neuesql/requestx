@@ -326,8 +326,7 @@ def _iter_content_generator(self, chunk_size=512):
     This provides true streaming behavior when iterating over large responses.
     Each chunk is decoded bytes of the specified size.
     """
-    for chunk in _original_iter_content_rust(self, chunk_size):
-        yield chunk
+    yield from _original_iter_content_rust(self, chunk_size)
 
 
 def _iter_lines_generator(self):
@@ -336,8 +335,7 @@ def _iter_lines_generator(self):
     This provides line-by-line iteration over the response body,
     useful for processing large text streams or SSE responses.
     """
-    for line in _original_iter_lines_rust(self):
-        yield line
+    yield from _original_iter_lines_rust(self)
 
 
 _Response.raise_for_status = _wrapped_raise_for_status

@@ -39,7 +39,7 @@ static NOVERIFY_CLIENT: OnceLock<Option<Client<HttpsConnector<hyper::client::Htt
 
 #[inline]
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
-    GLOBAL_CLIENT.get_or_init(|| create_client())
+    GLOBAL_CLIENT.get_or_init(create_client)
 }
 
 /// Get cached no-verify client (avoids creating new TLS connector per request)
