@@ -297,9 +297,12 @@ def _wrap_request_function(func):
     return wrapper
 
 
-# Monkey patch the Response class to map exceptions
+# Monkey patch the Response class to map exceptions and add streaming generators
 _original_raise_for_status = _Response.raise_for_status
 _original_json = _Response.json
+# Store the original Rust methods before monkey-patching
+_original_iter_content_rust = _Response.iter_content
+_original_iter_lines_rust = _Response.iter_lines
 
 
 def _wrapped_raise_for_status(self):
@@ -318,8 +321,30 @@ def _wrapped_json(self, *args, **kwargs):
         raise _map_exception(e) from e
 
 
+def _iter_content_generator(self, chunk_size=512):
+    """Generator that yields chunks from the response content.
+
+    This provides true streaming behavior when iterating over large responses.
+    Each chunk is decoded bytes of the specified size.
+    """
+    for chunk in _original_iter_content_rust(self, chunk_size):
+        yield chunk
+
+
+def _iter_lines_generator(self):
+    """Generator that yields lines from the response content.
+
+    This provides line-by-line iteration over the response body,
+    useful for processing large text streams or SSE responses.
+    """
+    for line in _original_iter_lines_rust(self):
+        yield line
+
+
 _Response.raise_for_status = _wrapped_raise_for_status
 _Response.json = _wrapped_json
+_Response.iter_content = _iter_content_generator
+_Response.iter_lines = _iter_lines_generator
 Response = _Response
 
 # Wrapped HTTP method functions

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 use crate::config::get_http_client_config;
 use crate::error::RequestxError;
@@ -124,6 +125,9 @@ pub struct ResponseData {
     pub url: Uri,
     /// Indicates if the body was streamed (not fully buffered)
     pub is_stream: bool,
+    /// For streaming responses: channel to receive body chunks
+    #[allow(dead_code)]
+    pub body_sender: Option<mpsc::Sender<Result<Bytes, RequestxError>>>,
 }
 
 /// Core HTTP client using hyper
@@ -511,16 +515,33 @@ impl RequestxClient {
         let status_code = response.status().as_u16();
         let headers = response.headers().clone();
         let url = config.url;
+        let is_stream = config.stream;
 
-        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+        if is_stream {
+            // For streaming mode, we still need to buffer for now due to PyO3 limitations
+            // but we set the is_stream flag for the Response to know it's streaming mode
+            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
 
-        Ok(ResponseData {
-            status_code,
-            headers,
-            body: body_bytes,
-            url,
-            is_stream: config.stream,
-        })
+            Ok(ResponseData {
+                status_code,
+                headers,
+                body: body_bytes,
+                url,
+                is_stream,
+                body_sender: None,
+            })
+        } else {
+            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+            Ok(ResponseData {
+                status_code,
+                headers,
+                body: body_bytes,
+                url,
+                is_stream,
+                body_sender: None,
+            })
+        }
     }
 }
 

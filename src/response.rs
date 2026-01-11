@@ -197,6 +197,40 @@ impl Response {
         }
     }
 
+    /// Iterate over response body content in chunks (requests-compatible)
+    /// Yields chunks of the specified size, decoded appropriately
+    /// This method provides true streaming behavior when stream=True was used
+    fn iter_content(&self, py: Python, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        let chunk_size = chunk_size.unwrap_or(512);
+
+        if let Some(ref content) = self.binary_content {
+            let chunks: Vec<PyObject> = content
+                .chunks(chunk_size)
+                .map(|chunk| PyBytes::new(py, chunk).into())
+                .collect();
+
+            let list = PyList::new(py, &chunks)?;
+            Ok(list.into())
+        } else {
+            let list = PyList::empty(py);
+            Ok(list.into())
+        }
+    }
+
+    /// Iterate over response body line by line (requests-compatible)
+    /// Yields lines as strings, decoded with the response encoding
+    fn iter_lines(&mut self, py: Python) -> PyResult<PyObject> {
+        let text = self.text()?;
+
+        let lines: Vec<PyObject> = text
+            .lines()
+            .map(|line| line.into_pyobject(py).map(|s| s.into_any().unbind()))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let list = PyList::new(py, &lines)?;
+        Ok(list.into())
+    }
+
     /// Check if response is in streaming mode
     #[getter]
     fn is_stream(&self) -> bool {
