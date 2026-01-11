@@ -114,7 +114,7 @@ impl Response {
         // Bytes Deref to [u8], so this works without copying
         if let Some(ref content) = self.binary_content {
             let value: Value =
-                sonic_rs::from_slice(content).map_err(|e| RequestxError::JsonDecodeError(e))?;
+                sonic_rs::from_slice(content).map_err(RequestxError::JsonDecodeError)?;
 
             pythonize::pythonize(py, &value)
                 .map_err(|e| RequestxError::PythonError(e.to_string()).into())
