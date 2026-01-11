@@ -2,24 +2,23 @@ use base64::prelude::*;
 use bytes::Bytes;
 use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use hyper_tls::HttpsConnector;
-use serde_json::Value;
+use sonic_rs::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 use crate::config::get_http_client_config;
 use crate::error::RequestxError;
 
 // Pre-allocated common strings to reduce allocations
 const CONTENT_TYPE_JSON: &str = "application/json";
-const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 
-/// Create a configured hyper client with standard settings
 pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
     let config = get_http_client_config();
     let https = HttpsConnector::new();
-    
+
     Client::builder()
         .pool_idle_timeout(config.pool_idle_timeout())
         .pool_max_idle_per_host(config.pool_max_idle_per_host)
@@ -31,12 +30,27 @@ pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
         .build::<_, hyper::Body>(https)
 }
 
-// Global shared client for connection pooling
 static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
     OnceLock::new();
 
+// Cached no-verify client (lazy initialized)
+static NOVERIFY_CLIENT: OnceLock<Option<Client<HttpsConnector<hyper::client::HttpConnector>>>> =
+    OnceLock::new();
+
+#[inline]
 fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
     GLOBAL_CLIENT.get_or_init(|| create_client())
+}
+
+/// Get cached no-verify client (avoids creating new TLS connector per request)
+#[inline]
+fn get_noverify_client(
+) -> Result<&'static Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+    let client_opt = NOVERIFY_CLIENT.get_or_init(|| create_custom_client(false).ok());
+
+    client_opt.as_ref().ok_or_else(|| {
+        RequestxError::SslError("No-verify client initialization failed".to_string())
+    })
 }
 
 /// Create a custom client with specific SSL verification settings
@@ -47,7 +61,7 @@ fn create_custom_client(
         // For verify=true, use the standard configured client
         return Ok(create_client());
     }
-    
+
     let config = get_http_client_config();
 
     // For verify=false, create a custom TLS connector that accepts invalid certs
@@ -109,6 +123,11 @@ pub struct ResponseData {
     pub headers: HeaderMap,
     pub body: Bytes,
     pub url: Uri,
+    /// Indicates if the body was streamed (not fully buffered)
+    pub is_stream: bool,
+    /// For streaming responses: channel to receive body chunks
+    #[allow(dead_code)]
+    pub body_sender: Option<mpsc::Sender<Result<Bytes, RequestxError>>>,
 }
 
 /// Core HTTP client using hyper
@@ -284,63 +303,58 @@ impl RequestxClient {
 
     /// Perform a synchronous HTTP request by spawning on async runtime
     pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
-        // Use the appropriate runtime (custom or global)
         let runtime = self.get_runtime();
-
-        // Clone necessary data for the spawned task
         let client = self.get_client().clone();
 
-        // Spawn the async task with cloned client
         let handle =
             runtime.spawn(async move { Self::execute_request_async(client, config).await });
 
-        // Block on the spawned task handle instead of the runtime directly
         runtime
             .block_on(handle)
             .map_err(|e| RequestxError::RuntimeError(format!("Task execution failed: {e}")))?
     }
 
-    /// Static method to execute async request with a given client
     async fn execute_request_async(
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
-        // Use custom client only if SSL verification is disabled
         let actual_client = if !config.verify {
-            create_custom_client(false)?
+            get_noverify_client()?.clone()
         } else {
             client
         };
         // Build URL with query parameters if provided
         let final_url = if let Some(ref params) = config.params {
-            let mut url_with_params = config.url.to_string();
-            if !params.is_empty() {
-                let query_string = params
+            if params.is_empty() {
+                config.url.clone()
+            } else {
+                let mut url_with_params = config.url.to_string();
+                let separator = if config.url.query().is_some() {
+                    '&'
+                } else {
+                    '?'
+                };
+                url_with_params.push(separator);
+
+                let encoded_params: Vec<String> = params
                     .iter()
                     .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-                    .collect::<Vec<_>>()
-                    .join("&");
+                    .collect();
 
-                if config.url.query().is_some() {
-                    url_with_params.push('&');
-                } else {
-                    url_with_params.push('?');
-                }
-                url_with_params.push_str(&query_string);
+                url_with_params.push_str(&encoded_params.join("&"));
+                url_with_params
+                    .parse::<Uri>()
+                    .map_err(RequestxError::InvalidUrl)?
             }
-            url_with_params
-                .parse::<Uri>()
-                .map_err(RequestxError::InvalidUrl)?
         } else {
             config.url.clone()
         };
 
         // Build the request more efficiently
         let mut request_builder = Request::builder()
-            .method(&config.method) // Use reference instead of clone
-            .uri(&final_url); // Use the final URL with params
+            .method(config.method.clone())
+            .uri(&final_url);
 
-        // Add headers efficiently
         if let Some(ref headers) = config.headers {
             for (name, value) in headers.iter() {
                 request_builder = request_builder.header(name, value);
@@ -349,24 +363,22 @@ impl RequestxClient {
 
         // Add authentication header if provided
         if let Some(ref auth) = config.auth {
-            let credentials = format!("{}:{}", auth.0, auth.1);
+            let mut credentials = String::with_capacity(auth.0.len() + auth.1.len() + 1);
+            credentials.push_str(&auth.0);
+            credentials.push(':');
+            credentials.push_str(&auth.1);
             let encoded = BASE64_STANDARD.encode(credentials.as_bytes());
-            request_builder = request_builder.header("authorization", format!("Basic {encoded}"));
+            let auth_header = format!("Basic {encoded}");
+            request_builder = request_builder.header("authorization", auth_header);
         }
 
-        // Build request body more efficiently
-        let body = match (&config.data, &config.json) {
-            (Some(RequestData::Text(text)), None) => {
-                Body::from(text.clone()) // Need to clone for lifetime
-            }
-            (Some(RequestData::Bytes(bytes)), None) => {
-                Body::from(bytes.clone()) // Need to clone for lifetime
-            }
+        let (body, has_content_type) = match (config.data, config.json) {
+            (Some(RequestData::Text(text)), None) => (Body::from(text), false),
+            (Some(RequestData::Bytes(bytes)), None) => (Body::from(bytes), false),
             (Some(RequestData::Form(form)), None) => {
-                // More efficient form encoding with pre-allocated capacity
                 let estimated_size = form
                     .iter()
-                    .map(|(k, v)| k.len() + v.len() + 10) // +10 for encoding overhead
+                    .map(|(k, v)| k.len() + v.len() + 10)
                     .sum::<usize>();
                 let mut form_data = String::with_capacity(estimated_size);
 
@@ -380,22 +392,23 @@ impl RequestxClient {
                     form_data.push_str(&urlencoding::encode(v));
                     first = false;
                 }
-
-                request_builder = request_builder.header("content-type", CONTENT_TYPE_FORM);
-                Body::from(form_data)
+                (Body::from(form_data), true)
             }
             (None, Some(json)) => {
-                let json_string = serde_json::to_string(json)?;
-                request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
-                Body::from(json_string)
+                let json_string = sonic_rs::to_string(&json)?;
+                (Body::from(json_string), true)
             }
-            (None, None) => Body::empty(),
+            (None, None) => (Body::empty(), false),
             (Some(_), Some(_)) => {
                 return Err(RequestxError::RuntimeError(
                     "Cannot specify both data and json parameters".to_string(),
                 ));
             }
         };
+
+        if has_content_type {
+            request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
+        }
 
         let request = request_builder
             .body(body)
@@ -445,57 +458,50 @@ impl RequestxClient {
             }
         };
 
-        // Handle redirects
+        // Handle redirects with optimized logic
         if config.allow_redirects && response.status().is_redirection() {
-            // Follow redirects (up to 10 redirects max)
             let mut redirect_count = 0;
             const MAX_REDIRECTS: u8 = 10;
 
             while response.status().is_redirection() && redirect_count < MAX_REDIRECTS {
                 if let Some(location) = response.headers().get("location") {
-                    let location_str = location.to_str().map_err(|_| {
-                        RequestxError::RuntimeError("Invalid redirect location header".to_string())
-                    })?;
-
-                    // Parse the redirect URL
-                    let redirect_url: Uri = if location_str.starts_with("http") {
-                        // Absolute URL
-                        location_str.parse().map_err(|e| {
-                            RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
-                        })?
-                    } else {
-                        // Relative URL - construct absolute URL
-                        let base_scheme = final_url.scheme_str().unwrap_or("https");
-                        let base_host = final_url.host().unwrap_or("");
-                        let base_port = if let Some(port) = final_url.port_u16() {
-                            format!(":{port}")
-                        } else {
-                            String::new()
-                        };
-
-                        format!("{base_scheme}://{base_host}{base_port}{location_str}")
-                            .parse()
-                            .map_err(|e| {
+                    if let Ok(location_str) = location.to_str() {
+                        let redirect_url: Uri = if location_str.starts_with("http") {
+                            location_str.parse().map_err(|e| {
                                 RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
                             })?
-                    };
+                        } else {
+                            let base_scheme = final_url.scheme_str().unwrap_or("https");
+                            let base_host = final_url.host().unwrap_or("");
+                            let base_port = final_url
+                                .port_u16()
+                                .map(|p| format!(":{p}"))
+                                .unwrap_or_default();
+                            format!("{base_scheme}://{base_host}{base_port}{location_str}")
+                                .parse()
+                                .map_err(|e| {
+                                    RequestxError::RuntimeError(format!(
+                                        "Invalid redirect URL: {e}"
+                                    ))
+                                })?
+                        };
 
-                    // Create new request for redirect
-                    let redirect_request = Request::builder()
-                        .method(Method::GET) // Redirects typically use GET
-                        .uri(&redirect_url)
-                        .body(Body::empty())
-                        .map_err(|e| {
-                            RequestxError::RuntimeError(format!(
-                                "Failed to build redirect request: {e}"
-                            ))
-                        })?;
+                        let redirect_request = Request::builder()
+                            .method(Method::GET)
+                            .uri(&redirect_url)
+                            .body(Body::empty())
+                            .map_err(|e| {
+                                RequestxError::RuntimeError(format!(
+                                    "Failed to build redirect request: {e}"
+                                ))
+                            })?;
 
-                    // Execute redirect request
-                    response = actual_client.request(redirect_request).await?;
-                    redirect_count += 1;
+                        response = actual_client.request(redirect_request).await?;
+                        redirect_count += 1;
+                    } else {
+                        break;
+                    }
                 } else {
-                    // No location header, break out of redirect loop
                     break;
                 }
             }
@@ -507,18 +513,35 @@ impl RequestxClient {
 
         // Extract response data efficiently
         let status_code = response.status().as_u16();
-        let headers = response.headers().clone(); // This clone is necessary
-        let url = config.url; // Move instead of clone
+        let headers = response.headers().clone();
+        let url = config.url;
+        let is_stream = config.stream;
 
-        // Read response body
-        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+        if is_stream {
+            // For streaming mode, we still need to buffer for now due to PyO3 limitations
+            // but we set the is_stream flag for the Response to know it's streaming mode
+            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
 
-        Ok(ResponseData {
-            status_code,
-            headers,
-            body: body_bytes,
-            url,
-        })
+            Ok(ResponseData {
+                status_code,
+                headers,
+                body: body_bytes,
+                url,
+                is_stream,
+                body_sender: None,
+            })
+        } else {
+            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+            Ok(ResponseData {
+                status_code,
+                headers,
+                body: body_bytes,
+                url,
+                is_stream,
+                body_sender: None,
+            })
+        }
     }
 }
 
@@ -655,7 +678,7 @@ mod tests {
         let client = RequestxClient::new().unwrap();
         let url: Uri = "https://httpbin.org/post".parse().unwrap();
 
-        let json_data = serde_json::json!({
+        let json_data = sonic_rs::json!({
             "key": "value",
             "number": 42
         });

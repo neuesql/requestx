@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use std::path::Path;
+use std::time::Duration;
 
 /// Configuration for HTTP client settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,8 +62,6 @@ impl Default for RuntimeConfig {
     }
 }
 
-
-
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestxConfig {
@@ -89,10 +87,13 @@ impl RequestxConfig {
     /// Load configuration from a specific path
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Self {
         let path = path.as_ref();
-        
+
         // Check if config file exists
         if !path.exists() {
-            eprintln!("Info: Config file '{}' not found. Using default configuration.", path.display());
+            eprintln!(
+                "Info: Config file '{}' not found. Using default configuration.",
+                path.display()
+            );
             return Self::default();
         }
 
@@ -100,7 +101,11 @@ impl RequestxConfig {
         let content = match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(e) => {
-                eprintln!("Warning: Failed to read config file '{}': {}. Using defaults.", path.display(), e);
+                eprintln!(
+                    "Warning: Failed to read config file '{}': {}. Using defaults.",
+                    path.display(),
+                    e
+                );
                 return Self::default();
             }
         };
@@ -108,29 +113,34 @@ impl RequestxConfig {
         match toml::from_str::<RequestxConfig>(&content) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("Warning: Failed to parse config file '{}': {}. Using defaults.", path.display(), e);
+                eprintln!(
+                    "Warning: Failed to parse config file '{}': {}. Using defaults.",
+                    path.display(),
+                    e
+                );
                 Self::default()
             }
         }
     }
 }
 
-
-
 /// Global configuration instance
 static CONFIG: std::sync::OnceLock<RequestxConfig> = std::sync::OnceLock::new();
 
 /// Get the global configuration instance
+#[inline]
 pub fn get_config() -> &'static RequestxConfig {
     CONFIG.get_or_init(RequestxConfig::load)
 }
 
 /// Get HTTP client configuration
+#[inline]
 pub fn get_http_client_config() -> &'static HttpClientConfig {
     &get_config().client
 }
 
 /// Get runtime configuration
+#[inline]
 pub fn get_runtime_config() -> &'static RuntimeConfig {
     &get_config().runtime
 }
@@ -151,6 +161,9 @@ mod tests {
     fn test_duration_conversions() {
         let http_config = HttpClientConfig::default();
         assert_eq!(http_config.pool_idle_timeout(), Duration::from_secs(90));
-        assert_eq!(http_config.http2_keep_alive_interval(), Duration::from_secs(30));
+        assert_eq!(
+            http_config.http2_keep_alive_interval(),
+            Duration::from_secs(30)
+        );
     }
 }

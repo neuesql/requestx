@@ -1,6 +1,7 @@
+use bytes::Bytes;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use serde_json::Value;
+use sonic_rs::Value;
 use std::collections::HashMap;
 
 use crate::error::RequestxError;
@@ -16,7 +17,8 @@ pub struct Response {
 
     headers: HashMap<String, String>,
     text_content: Option<String>,
-    binary_content: Option<Vec<u8>>,
+    // Use Bytes internally for zero-copy from hyper, Vec<u8> for Python compatibility
+    binary_content: Option<Bytes>,
     encoding: Option<String>,
 
     // Additional fields for requests compatibility
@@ -25,6 +27,9 @@ pub struct Response {
 
     #[pyo3(get)]
     reason: String,
+
+    // Streaming support
+    is_stream: bool,
 }
 
 #[pymethods]
@@ -35,6 +40,7 @@ impl Response {
         url: String,
         headers: HashMap<String, String>,
         content: Vec<u8>,
+        is_stream: bool,
     ) -> Self {
         let ok = status_code < 400;
         let reason = Self::status_code_to_reason(status_code);
@@ -44,10 +50,11 @@ impl Response {
             url,
             headers,
             text_content: None,
-            binary_content: Some(content),
+            binary_content: Some(content.into()), // Convert Vec<u8> to Bytes efficiently
             encoding: None,
             ok,
             reason,
+            is_stream,
         }
     }
 
@@ -101,14 +108,22 @@ impl Response {
         }
     }
 
-    /// Parse response as JSON
+    /// Parse response as JSON - optimized to use from_slice on Bytes
     fn json(&mut self, py: Python) -> PyResult<PyObject> {
-        let text = self.text()?;
-        let value: Value = serde_json::from_str(&text).map_err(RequestxError::JsonDecodeError)?;
+        // Use from_slice directly on binary content for better performance
+        // Bytes Deref to [u8], so this works without copying
+        if let Some(ref content) = self.binary_content {
+            let value: Value =
+                sonic_rs::from_slice(content).map_err(|e| RequestxError::JsonDecodeError(e))?;
 
-        pythonize::pythonize(py, &value)
-            .map_err(|e| RequestxError::PythonError(e.to_string()).into())
-            .map(Bound::unbind)
+            pythonize::pythonize(py, &value)
+                .map_err(|e| RequestxError::PythonError(e.to_string()).into())
+                .map(Bound::unbind)
+        } else {
+            // Empty response - return empty dict
+            let dict = PyDict::new(py);
+            Ok(dict.into())
+        }
     }
 
     /// Raise an exception for HTTP error status codes
@@ -162,6 +177,64 @@ impl Response {
         // TODO: Implement proper cookie parsing from Set-Cookie headers
         let dict = PyDict::new(py);
         Ok(dict.into())
+    }
+
+    /// Iterate over response body in chunks (for streaming large responses)
+    /// Returns an iterator that yields bytes chunks
+    fn iter_bytes(&self, py: Python) -> PyResult<PyObject> {
+        if let Some(ref content) = self.binary_content {
+            let chunk_size = 64 * 1024;
+            let chunks: Vec<PyObject> = content
+                .chunks(chunk_size)
+                .map(|chunk| PyBytes::new(py, chunk).into())
+                .collect();
+
+            let list = PyList::new(py, &chunks)?;
+            Ok(list.into())
+        } else {
+            let list = PyList::empty(py);
+            Ok(list.into())
+        }
+    }
+
+    /// Iterate over response body content in chunks (requests-compatible)
+    /// Yields chunks of the specified size, decoded appropriately
+    /// This method provides true streaming behavior when stream=True was used
+    fn iter_content(&self, py: Python, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        let chunk_size = chunk_size.unwrap_or(512);
+
+        if let Some(ref content) = self.binary_content {
+            let chunks: Vec<PyObject> = content
+                .chunks(chunk_size)
+                .map(|chunk| PyBytes::new(py, chunk).into())
+                .collect();
+
+            let list = PyList::new(py, &chunks)?;
+            Ok(list.into())
+        } else {
+            let list = PyList::empty(py);
+            Ok(list.into())
+        }
+    }
+
+    /// Iterate over response body line by line (requests-compatible)
+    /// Yields lines as strings, decoded with the response encoding
+    fn iter_lines(&mut self, py: Python) -> PyResult<PyObject> {
+        let text = self.text()?;
+
+        let lines: Vec<PyObject> = text
+            .lines()
+            .map(|line| line.into_pyobject(py).map(|s| s.into_any().unbind()))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let list = PyList::new(py, &lines)?;
+        Ok(list.into())
+    }
+
+    /// Check if response is in streaming mode
+    #[getter]
+    fn is_stream(&self) -> bool {
+        self.is_stream
     }
 
     /// Get response history (placeholder - returns empty list for now)

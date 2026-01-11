@@ -124,6 +124,7 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+.opencode
 # IDEs
 .vscode/
 .idea/
@@ -143,6 +144,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+docs/_build/*
 
 # Temporary files
 *.tmp

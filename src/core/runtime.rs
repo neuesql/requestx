@@ -11,6 +11,7 @@ use crate::config::get_runtime_config;
 static GLOBAL_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 /// Get the global tokio runtime instance
+#[inline]
 fn get_global_runtime() -> &'static Arc<Runtime> {
     GLOBAL_RUNTIME.get_or_init(|| {
         let config = get_runtime_config();
@@ -88,15 +89,15 @@ impl RuntimeManager {
     pub fn execute_future<F, T>(&self, py: Python, future: F) -> PyResult<PyObject>
     where
         F: Future<Output = PyResult<T>> + Send + 'static,
-        T: for<'py> IntoPyObject<'py>,
+        T: for<'py> IntoPyObject<'py> + Send + 'static,
     {
         if Self::is_async_context(py)? {
             // We're in an async context - return a coroutine
             Ok(future_into_py(py, future)?.into())
         } else {
-            // We're in a sync context - block on the future
+            // We're in a sync context - release GIL during network I/O
             let runtime = self.get_runtime();
-            let result = runtime.block_on(future)?;
+            let result = py.allow_threads(|| runtime.block_on(future))?;
             Ok(result
                 .into_pyobject(py)
                 .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Conversion error"))?

@@ -91,29 +91,21 @@ RequestX works exactly like requests - just change the import:
    quickstart
    installation
    user-guide/index
-   migration
-   async-guide
-   performance
+    migration
+    async-guide
+    performance
 
 .. toctree::
    :maxdepth: 2
    :caption: API Reference
 
    api/index
-   api/functions
-   api/response
-   api/session
-   api/exceptions
 
 .. toctree::
    :maxdepth: 2
    :caption: Examples
 
    examples/index
-   examples/basic-usage
-   examples/async-usage
-   examples/sessions
-   examples/advanced
 
 .. toctree::
    :maxdepth: 2
@@ -122,6 +114,7 @@ RequestX works exactly like requests - just change the import:
    contributing
    changelog
    benchmarks
+
 
 🤝 **Community & Support**
 --------------------------
