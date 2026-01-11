@@ -222,16 +222,12 @@ class TestAuthentication(HttpbinTestCase):
     def test_basic_auth(self):
         """Test basic HTTP authentication."""
         # httpbin.org/basic-auth/user/passwd expects username:user, password:passwd
-        r = requestx.get(
-            HTTPBIN_HOST + "/basic-auth/user/passwd", auth=("user", "passwd")
-        )
+        r = requestx.get(HTTPBIN_HOST + "/basic-auth/user/passwd", auth=("user", "passwd"))
         self.assertEqual(r.status_code, 200)
 
     def test_basic_auth_failure(self):
         """Test basic HTTP authentication failure."""
-        r = requestx.get(
-            HTTPBIN_HOST + "/basic-auth/user/passwd", auth=("user", "wrong_password")
-        )
+        r = requestx.get(HTTPBIN_HOST + "/basic-auth/user/passwd", auth=("user", "wrong_password"))
         self.assertEqual(r.status_code, 401)
 
 
