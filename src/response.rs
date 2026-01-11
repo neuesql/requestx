@@ -6,30 +6,172 @@ use std::collections::HashMap;
 
 use crate::error::RequestxError;
 
+/// Case-insensitive headers wrapper (internal use only)
+#[pyclass]
+#[derive(Clone)]
+pub struct CaseInsensitiveHeaders {
+    inner: HashMap<String, String>,
+    lowercase_map: HashMap<String, String>,
+}
+
+impl CaseInsensitiveHeaders {
+    pub fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+            lowercase_map: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, key: String, value: String) {
+        let lowercase_key = key.to_lowercase();
+        self.lowercase_map
+            .insert(lowercase_key.clone(), value.clone());
+        self.inner.insert(key, value);
+    }
+
+    pub fn from_hashmap(headers: HashMap<String, String>) -> Self {
+        let mut ci_headers = Self {
+            inner: HashMap::new(),
+            lowercase_map: HashMap::new(),
+        };
+        for (key, value) in headers {
+            ci_headers.insert(key, value);
+        }
+        ci_headers
+    }
+
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.lowercase_map.get(&key.to_lowercase())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.inner.iter()
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.inner.keys()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &String> {
+        self.inner.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+/// Python dict-like wrapper with case-insensitive header access
+#[pyclass]
+#[derive(Clone)]
+pub struct CaseInsensitivePyDict {
+    headers: CaseInsensitiveHeaders,
+}
+
+#[pymethods]
+impl CaseInsensitivePyDict {
+    #[new]
+    fn new() -> Self {
+        Self {
+            headers: CaseInsensitiveHeaders::new(),
+        }
+    }
+
+    /// Case-insensitive get
+    fn get(&self, key: &str) -> Option<String> {
+        self.headers.get(key).cloned()
+    }
+
+    /// Case-insensitive __getitem__
+    fn __getitem__(&self, key: &str) -> Option<String> {
+        self.get(key)
+    }
+
+    /// Case-insensitive __contains__
+    fn __contains__(&self, key: &str) -> bool {
+        self.headers.get(key).is_some()
+    }
+
+    /// Get length
+    fn __len__(&self) -> usize {
+        self.headers.len()
+    }
+
+    /// String representation
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.headers.inner)
+    }
+
+    /// Get all keys
+    fn keys(&self, py: Python) -> PyResult<PyObject> {
+        let list = PyList::new(py, self.headers.keys().cloned().collect::<Vec<_>>())?;
+        Ok(list.into())
+    }
+
+    /// Get all values
+    fn values(&self, py: Python) -> PyResult<PyObject> {
+        let list = PyList::new(py, self.headers.values().cloned().collect::<Vec<_>>())?;
+        Ok(list.into())
+    }
+
+    /// Get all items
+    fn items(&self, py: Python) -> PyResult<PyObject> {
+        let items: Vec<(String, String)> = self
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let list = PyList::new(
+            py,
+            items
+                .iter()
+                .map(|(k, v)| (k as &str, v as &str))
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(list.into())
+    }
+
+    /// Convert to regular dict
+    fn to_dict(&self, py: Python) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        for (key, value) in self.headers.iter() {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict.into())
+    }
+}
+
 /// Response object compatible with requests.Response
 #[pyclass]
+#[derive(Clone)]
 pub struct Response {
     #[pyo3(get)]
-    status_code: u16,
+    pub status_code: u16,
 
     #[pyo3(get)]
-    url: String,
+    pub url: String,
 
-    headers: HashMap<String, String>,
+    pub headers: CaseInsensitiveHeaders,
     text_content: Option<String>,
-    // Use Bytes internally for zero-copy from hyper, Vec<u8> for Python compatibility
-    binary_content: Option<Bytes>,
+    pub binary_content: Option<Bytes>,
     encoding: Option<String>,
 
-    // Additional fields for requests compatibility
     #[pyo3(get)]
-    ok: bool,
+    pub ok: bool,
 
     #[pyo3(get)]
-    reason: String,
+    pub reason: String,
 
-    // Streaming support
-    is_stream: bool,
+    pub is_stream: bool,
+
+    pub elapsed_us: u64,
+
+    // History of redirect responses
+    pub history: Vec<Response>,
 }
 
 #[pymethods]
@@ -41,31 +183,37 @@ impl Response {
         headers: HashMap<String, String>,
         content: Vec<u8>,
         is_stream: bool,
+        elapsed_us: u64,
     ) -> Self {
         let ok = status_code < 400;
         let reason = Self::status_code_to_reason(status_code);
 
+        // Convert HashMap to CaseInsensitiveHeaders
+        let ci_headers = CaseInsensitiveHeaders::from_hashmap(headers);
+
         Response {
             status_code,
             url,
-            headers,
+            headers: ci_headers,
             text_content: None,
-            binary_content: Some(content.into()), // Convert Vec<u8> to Bytes efficiently
+            binary_content: Some(content.into()),
             encoding: None,
             ok,
             reason,
             is_stream,
+            elapsed_us,
+            history: Vec::new(),
         }
     }
 
-    /// Get response headers as a dictionary
+    /// Get response headers as a case-insensitive dictionary
     #[getter]
     fn headers(&self, py: Python) -> PyResult<PyObject> {
-        let dict = PyDict::new(py);
-        for (key, value) in &self.headers {
-            dict.set_item(key, value)?;
+        let mut dict = CaseInsensitivePyDict::new();
+        for (key, value) in self.headers.iter() {
+            dict.headers.insert(key.clone(), value.clone());
         }
-        Ok(dict.into())
+        Ok(dict.into_pyobject(py)?.unbind().into())
     }
 
     /// Get response text content
@@ -142,6 +290,23 @@ impl Response {
     #[getter]
     fn encoding(&self) -> Option<String> {
         self.encoding.clone()
+    }
+
+    /// Get elapsed time as timedelta
+    #[getter]
+    fn elapsed(&self, py: Python) -> PyResult<PyObject> {
+        // Create a timedelta from microseconds using datetime.timedelta
+        let datetime = py.import("datetime")?;
+        let timedelta_class = datetime.getattr("timedelta")?;
+
+        // Calculate days, seconds, and microseconds
+        let total_seconds = self.elapsed_us / 1_000_000;
+        let days = total_seconds / (24 * 60 * 60);
+        let seconds = total_seconds % (24 * 60 * 60);
+        let microseconds = self.elapsed_us % 1_000_000;
+
+        let timedelta = timedelta_class.call1((days, seconds, microseconds))?;
+        Ok(timedelta.into())
     }
 
     /// Set response encoding
@@ -237,20 +402,67 @@ impl Response {
         self.is_stream
     }
 
-    /// Get response history (placeholder - returns empty list for now)
+    /// Get response history (list of redirect responses)
     #[getter]
     fn history(&self, py: Python) -> PyResult<PyObject> {
-        // For now, return an empty list
-        // TODO: Implement redirect history tracking
-        Ok(PyList::empty(py).into())
+        let mut items: Vec<Py<PyAny>> = Vec::with_capacity(self.history.len());
+        for r in self.history.clone() {
+            items.push(r.into_pyobject(py)?.unbind().into());
+        }
+        let list = PyList::new(py, &items)?;
+        Ok(list.into())
     }
 
-    /// Get response links (placeholder - returns empty dict for now)
+    /// Get response links (parsed from Link header)
     #[getter]
     fn links(&self, py: Python) -> PyResult<PyObject> {
-        // For now, return an empty dict
-        // TODO: Parse Link headers
         let dict = PyDict::new(py);
+
+        // Get Link header
+        if let Some(link_header) = self.headers.get("link") {
+            // Parse Link header format: <url>; rel="rel", <url2>; rel="rel2"
+            let link_header = link_header.trim();
+
+            // Split by comma to get individual links
+            for part in link_header.split(',') {
+                let part = part.trim();
+
+                // Extract URL between < and >
+                let url_start = part.find('<');
+                let url_end = part.find('>');
+
+                if url_start.is_none() || url_end.is_none() {
+                    continue;
+                }
+
+                let url = &part[(url_start.unwrap() + 1)..url_end.unwrap()];
+                let after_url = &part[(url_end.unwrap() + 1)..];
+
+                // Extract rel value (rel="..." or rel='...')
+                let rel_start = after_url.find("rel=\"");
+                let rel_single_start = after_url.find("rel='");
+
+                let rel_value = if let Some(idx) = rel_start {
+                    let after_rel = &after_url[(idx + 5)..];
+                    let end_idx = after_rel.find('"').unwrap_or(after_rel.len());
+                    Some(&after_rel[..end_idx])
+                } else if let Some(idx) = rel_single_start {
+                    let after_rel = &after_url[(idx + 5)..];
+                    let end_idx = after_rel.find('\'').unwrap_or(after_rel.len());
+                    Some(&after_rel[..end_idx])
+                } else {
+                    None
+                };
+
+                if let Some(rel) = rel_value {
+                    // Create inner dict with url key
+                    let inner = PyDict::new(py);
+                    inner.set_item("url", url)?;
+                    dict.set_item(rel, inner)?;
+                }
+            }
+        }
+
         Ok(dict.into())
     }
 
@@ -368,11 +580,7 @@ impl Response {
 
     /// Detect encoding from Content-Type header
     fn detect_encoding(&self) -> Option<String> {
-        if let Some(content_type) = self
-            .headers
-            .get("content-type")
-            .or_else(|| self.headers.get("Content-Type"))
-        {
+        if let Some(content_type) = self.headers.get("content-type") {
             // Look for charset parameter in Content-Type header
             if let Some(charset_start) = content_type.find("charset=") {
                 let charset_value = &content_type[charset_start + 8..];

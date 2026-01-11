@@ -5,7 +5,7 @@ use hyper_tls::HttpsConnector;
 use sonic_rs::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
@@ -125,6 +125,10 @@ pub struct ResponseData {
     pub url: Uri,
     /// Indicates if the body was streamed (not fully buffered)
     pub is_stream: bool,
+    /// Elapsed time from request start to response headers received (in microseconds)
+    pub elapsed_us: u64,
+    /// History of redirect responses (empty for non-redirect responses)
+    pub history: Vec<ResponseData>,
     /// For streaming responses: channel to receive body chunks
     #[allow(dead_code)]
     pub body_sender: Option<mpsc::Sender<Result<Bytes, RequestxError>>>,
@@ -318,6 +322,7 @@ impl RequestxClient {
         client: Client<HttpsConnector<hyper::client::HttpConnector>>,
         config: RequestConfig,
     ) -> Result<ResponseData, RequestxError> {
+        let start_time = Instant::now();
         let actual_client = if !config.verify {
             get_noverify_client()?.clone()
         } else {
@@ -462,8 +467,51 @@ impl RequestxClient {
         if config.allow_redirects && response.status().is_redirection() {
             let mut redirect_count = 0;
             const MAX_REDIRECTS: u8 = 10;
+            let mut history: Vec<ResponseData> = Vec::new();
 
             while response.status().is_redirection() && redirect_count < MAX_REDIRECTS {
+                // Capture redirect response in history (before following redirect)
+                let redirect_status = response.status().as_u16();
+                let redirect_headers = response.headers().clone();
+
+                // Get the redirect URL from the Location header
+                let redirect_url_str = if let Some(location) = response.headers().get("location") {
+                    if let Ok(s) = location.to_str() {
+                        if s.starts_with("http") {
+                            s.to_string()
+                        } else {
+                            // Relative URL - resolve against the current URL
+                            let base_scheme = final_url.scheme_str().unwrap_or("https");
+                            let base_host = final_url.host().unwrap_or("");
+                            let base_port = final_url
+                                .port_u16()
+                                .map(|p| format!(":{p}"))
+                                .unwrap_or_default();
+                            format!("{base_scheme}://{base_host}{base_port}{s}")
+                        }
+                    } else {
+                        final_url.to_string()
+                    }
+                } else {
+                    final_url.to_string()
+                };
+
+                let redirect_url: Uri = redirect_url_str.parse().map_err(|e| {
+                    RequestxError::RuntimeError(format!("Invalid redirect URL: {e}"))
+                })?;
+
+                let history_item = ResponseData {
+                    status_code: redirect_status,
+                    headers: redirect_headers,
+                    body: Bytes::new(), // 3xx redirects typically have empty bodies
+                    url: redirect_url.clone(),
+                    is_stream: false,
+                    elapsed_us: 0, // Not tracked for history items
+                    history: Vec::new(),
+                    body_sender: None,
+                };
+                history.push(history_item);
+
                 if let Some(location) = response.headers().get("location") {
                     if let Ok(location_str) = location.to_str() {
                         let redirect_url: Uri = if location_str.starts_with("http") {
@@ -509,38 +557,80 @@ impl RequestxClient {
             if redirect_count >= MAX_REDIRECTS {
                 return Err(RequestxError::TooManyRedirects);
             }
-        }
 
-        // Extract response data efficiently
-        let status_code = response.status().as_u16();
-        let headers = response.headers().clone();
-        let url = config.url;
-        let is_stream = config.stream;
+            // Include history in the final response
+            // Recalculate elapsed time including all redirects
+            let elapsed_us = start_time.elapsed().as_micros() as u64;
 
-        if is_stream {
-            // For streaming mode, we still need to buffer for now due to PyO3 limitations
-            // but we set the is_stream flag for the Response to know it's streaming mode
-            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+            // Extract response data efficiently
+            let status_code = response.status().as_u16();
+            let headers = response.headers().clone();
+            let url = config.url;
+            let is_stream = config.stream;
 
-            Ok(ResponseData {
-                status_code,
-                headers,
-                body: body_bytes,
-                url,
-                is_stream,
-                body_sender: None,
-            })
+            if is_stream {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url,
+                    is_stream,
+                    elapsed_us,
+                    history,
+                    body_sender: None,
+                })
+            } else {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url,
+                    is_stream,
+                    elapsed_us,
+                    history,
+                    body_sender: None,
+                })
+            }
         } else {
-            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+            // No redirect - calculate elapsed and return response without history
+            let elapsed_us = start_time.elapsed().as_micros() as u64;
 
-            Ok(ResponseData {
-                status_code,
-                headers,
-                body: body_bytes,
-                url,
-                is_stream,
-                body_sender: None,
-            })
+            let status_code = response.status().as_u16();
+            let headers = response.headers().clone();
+            let url = config.url;
+            let is_stream = config.stream;
+
+            if is_stream {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url,
+                    is_stream,
+                    elapsed_us,
+                    history: Vec::new(),
+                    body_sender: None,
+                })
+            } else {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url,
+                    is_stream,
+                    elapsed_us,
+                    history: Vec::new(),
+                    body_sender: None,
+                })
+            }
         }
     }
 }

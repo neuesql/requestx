@@ -15,7 +15,7 @@ mod session;
 
 use core::client::{RequestConfig, RequestData, RequestxClient, ResponseData};
 use error::RequestxError;
-use response::Response;
+use response::{CaseInsensitivePyDict, Response};
 use session::Session;
 
 /// Parse and validate URL with comprehensive error handling
@@ -360,13 +360,40 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
         .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
         .collect();
 
-    Ok(Response::new(
+    let mut response = Response::new(
         response_data.status_code,
         response_data.url.to_string(),
         headers,
         response_data.body.to_vec(),
         response_data.is_stream,
-    ))
+        response_data.elapsed_us,
+    );
+
+    // Convert history ResponseData items to Response objects
+    let history: Vec<Response> = response_data
+        .history
+        .into_iter()
+        .map(|history_data| {
+            let history_headers = history_data
+                .headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
+                .collect();
+
+            Response::new(
+                history_data.status_code,
+                history_data.url.to_string(),
+                history_headers,
+                history_data.body.to_vec(),
+                history_data.is_stream,
+                history_data.elapsed_us,
+            )
+        })
+        .collect();
+
+    response.history = history;
+
+    Ok(response)
 }
 
 /// HTTP GET request with enhanced async/sync context detection
@@ -560,6 +587,7 @@ fn _requestx(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register classes
     m.add_class::<Response>()?;
+    m.add_class::<CaseInsensitivePyDict>()?;
     m.add_class::<Session>()?;
 
     // Register custom exceptions

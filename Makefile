@@ -198,7 +198,7 @@ version-major: ## Bump major version (x.0.0)
 
 benchmark-get-sync-test: ## Run GET benchmark (localhost, concurrency=1, duration=3s)
 	@echo "$(BLUE)Running GET Sync benchmark...$(RESET)"
-	.venv/bin/http-benchmark --url http://localhost/get --compare requestx requests httpx urllib3 pycurl --concurrency 1 --duration 3
+	.venv/bin/http-benchmark --url http://localhost/get --compare requestx requests httpx --concurrency 1 --duration 3
 	@echo "$(GREEN)✓ Benchmark complete$(RESET)"
 
 
