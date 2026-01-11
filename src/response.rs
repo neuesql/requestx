@@ -75,10 +75,19 @@ pub struct CaseInsensitivePyDict {
 #[pymethods]
 impl CaseInsensitivePyDict {
     #[new]
-    fn new() -> Self {
-        Self {
-            headers: CaseInsensitiveHeaders::new(),
+    #[pyo3(signature = (initial_dict = None))]
+    fn new(initial_dict: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let mut headers = CaseInsensitiveHeaders::new();
+
+        if let Some(dict) = initial_dict {
+            for (key, value) in dict.iter() {
+                let key_str = key.extract::<String>()?;
+                let value_str = value.extract::<String>()?;
+                headers.insert(key_str, value_str);
+            }
         }
+
+        Ok(Self { headers })
     }
 
     /// Case-insensitive get
@@ -94,6 +103,39 @@ impl CaseInsensitivePyDict {
     /// Case-insensitive __contains__
     fn __contains__(&self, key: &str) -> bool {
         self.headers.get(key).is_some()
+    }
+
+    /// Case-insensitive __setitem__
+    fn __setitem__(&mut self, key: &str, value: &str) {
+        self.headers.insert(key.to_string(), value.to_string());
+    }
+
+    /// Insert a key-value pair
+    fn insert(&mut self, key: &str, value: &str) {
+        self.headers.insert(key.to_string(), value.to_string());
+    }
+
+    /// Case-insensitive __delitem__
+    fn __delitem__(&mut self, key: &str) -> PyResult<()> {
+        let lowercase = key.to_lowercase();
+        let removed = self.headers.lowercase_map.remove(&lowercase);
+        if removed.is_some() {
+            // Also remove from inner (we need to find the original case key)
+            let key_to_remove = self
+                .headers
+                .inner
+                .keys()
+                .find(|k| k.to_lowercase() == lowercase)
+                .cloned();
+            if let Some(k) = key_to_remove {
+                self.headers.inner.remove(&k);
+            }
+            Ok(())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
+                "Key not found: {key}"
+            )))
+        }
     }
 
     /// Get length
@@ -209,11 +251,11 @@ impl Response {
     /// Get response headers as a case-insensitive dictionary
     #[getter]
     fn headers(&self, py: Python) -> PyResult<PyObject> {
-        let mut dict = CaseInsensitivePyDict::new();
+        let mut dict = CaseInsensitivePyDict::new(None)?;
         for (key, value) in self.headers.iter() {
-            dict.headers.insert(key.clone(), value.clone());
+            dict.insert(key, value);
         }
-        Ok(dict.into_pyobject(py)?.unbind().into())
+        Ok(dict.to_dict(py)?)
     }
 
     /// Get response text content

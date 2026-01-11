@@ -29,16 +29,22 @@ impl CaseInsensitiveHeaders {
     pub fn insert(&mut self, key: String, value: String) {
         let lowercase_key = key.to_lowercase();
         self.lowercase_map
-            .insert(lowercase_key.clone(), value.clone());
+            .insert(lowercase_key.clone(), key.clone());
         self.inner.insert(key, value);
     }
 
     pub fn get(&self, key: &str) -> Option<&String> {
-        self.lowercase_map.get(&key.to_lowercase())
+        let lowercase_key = key.to_lowercase();
+        self.lowercase_map
+            .get(&lowercase_key)
+            .and_then(|original_key| self.inner.get(original_key))
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut String> {
-        self.lowercase_map.get_mut(&key.to_lowercase())
+        let lowercase_key = key.to_lowercase();
+        self.lowercase_map
+            .get(&lowercase_key)
+            .and_then(|original_key| self.inner.get_mut(original_key))
     }
 
     pub fn remove(&mut self, key: &str) {
@@ -89,6 +95,14 @@ pub struct Session {
     headers: Arc<Mutex<CaseInsensitiveHeaders>>,
     trust_env: bool,
     max_redirects: u32,
+    /// Maximum number of retries for failed requests (default: 0)
+    max_retries: u32,
+    /// Retry backoff factor in seconds (default: 0.1)
+    backoff_factor: f64,
+    /// Event hooks dictionary - each key is a hook name, value is a list of callable hooks
+    hooks: Arc<Mutex<HashMap<String, Vec<PyObject>>>>,
+    /// Mounted adapters for URL prefixes (adapter class name -> (prefix, adapter config))
+    adapters: Arc<Mutex<HashMap<String, (String, PyObject)>>>,
 }
 
 #[pymethods]
@@ -112,7 +126,137 @@ impl Session {
             headers,
             trust_env: true,
             max_redirects: 30,
+            max_retries: 0,
+            backoff_factor: 0.1,
+            hooks: Arc::new(Mutex::new(HashMap::new())),
+            adapters: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Get hooks dictionary
+    #[getter]
+    fn get_hooks(&self, py: Python) -> PyResult<PyObject> {
+        let hooks_dict = PyDict::new(py);
+        let hooks = self.hooks.lock().unwrap();
+        for (name, hook_list) in hooks.iter() {
+            let py_list: PyObject = hook_list
+                .iter()
+                .map(|obj| obj.clone_ref(py))
+                .collect::<Vec<_>>()
+                .into_pyobject(py)?
+                .into();
+            hooks_dict.set_item(name, py_list)?;
+        }
+        Ok(hooks_dict.into())
+    }
+
+    /// Set hooks dictionary
+    #[setter]
+    fn set_hooks(&mut self, hooks_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut hooks = self.hooks.lock().unwrap();
+        hooks.clear();
+
+        for (key, value) in hooks_dict.iter() {
+            let key_str = key.extract::<String>()?;
+            // Value should be a list of callables
+            let py_list = value.downcast::<pyo3::types::PyList>()?;
+            let hook_list: Vec<PyObject> = py_list.iter().map(|obj| obj.unbind().into()).collect();
+            hooks.insert(key_str, hook_list);
+        }
+        Ok(())
+    }
+
+    /// Register a hook callback for a specific event
+    #[pyo3(signature = (event, callback))]
+    fn register_hook(&mut self, event: String, callback: PyObject) -> PyResult<()> {
+        let mut hooks = self.hooks.lock().unwrap();
+        let hook_list = hooks.entry(event).or_insert_with(Vec::new);
+        hook_list.push(callback);
+        Ok(())
+    }
+
+    /// Get max_retries
+    #[getter]
+    fn get_max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
+    /// Set max_retries
+    #[setter]
+    fn set_max_retries(&mut self, value: u32) {
+        self.max_retries = value;
+    }
+
+    /// Get backoff_factor
+    #[getter]
+    fn get_backoff_factor(&self) -> f64 {
+        self.backoff_factor
+    }
+
+    /// Set backoff_factor
+    #[setter]
+    fn set_backoff_factor(&mut self, value: f64) {
+        self.backoff_factor = value;
+    }
+
+    /// Mount an adapter with retry configuration for a URL prefix.
+    ///
+    /// This allows different retry configurations for different URL prefixes.
+    ///
+    /// Examples:
+    ///     >>> import requestx
+    ///     >>> from requestx import Retry, HTTPAdapter
+    ///     >>> s = requestx.Session()
+    ///     >>> retry = Retry(total=3, status_forcelist=[502, 503, 504])
+    ///     >>> adapter = HTTPAdapter(max_retries=retry)
+    ///     >>> s.mount('https://', adapter)
+    #[pyo3(signature = (prefix, adapter))]
+    fn mount(&mut self, _py: Python, prefix: String, adapter: PyObject) -> PyResult<()> {
+        let mut adapters = self.adapters.lock().unwrap();
+        // Use a fixed key for now - all adapters go under "HTTPAdapter"
+        adapters.insert("HTTPAdapter".to_string(), (prefix, adapter));
+        Ok(())
+    }
+
+    /// Get adapter configuration for a given URL.
+    fn get_adapter(&self, py: Python, url: &str) -> PyResult<PyObject> {
+        let adapters = self.adapters.lock().unwrap();
+
+        // Check each mounted adapter to see if it matches the URL
+        for (prefix, adapter) in adapters.values() {
+            if url.starts_with(prefix) {
+                return Ok(adapter.clone_ref(py));
+            }
+        }
+
+        // Return None if no adapter matches
+        Ok(py.None().into())
+    }
+
+    /// Clone the session (copy headers and cookies)
+    fn clone(&self) -> Self {
+        // Create a new session with the same configuration
+        let mut session = Session::new().expect("Failed to create cloned session");
+
+        // Copy retry configuration
+        session.max_retries = self.max_retries;
+        session.backoff_factor = self.backoff_factor;
+
+        // Copy headers
+        {
+            let source_headers = self.headers.lock().unwrap();
+            let mut dest_headers = session.headers.lock().unwrap();
+            *dest_headers = source_headers.clone();
+        }
+
+        // Copy cookies
+        {
+            let source_cookies = self.cookies.lock().unwrap();
+            let mut dest_cookies = session.cookies.lock().unwrap();
+            *dest_cookies = source_cookies.clone();
+        }
+
+        session
     }
 
     /// HTTP GET request using session
@@ -227,18 +371,28 @@ impl Session {
         // Parse kwargs and merge with session headers
         let mut config_builder = parse_kwargs(py, kwargs)?;
 
-        // Merge session headers with request headers (only if session has headers)
+        // Merge session headers with request headers (request headers take precedence)
         let session_headers = self.headers.lock().unwrap();
         if !session_headers.is_empty() {
-            let mut merged_headers = config_builder.headers.take().unwrap_or_default();
+            // Start with session headers
+            let mut merged_headers = hyper::HeaderMap::new();
 
-            // Add session headers (request headers take precedence)
+            // First, add session headers
             for (name, value) in session_headers.iter() {
                 if let (Ok(header_name), Ok(header_value)) = (
                     name.parse::<hyper::header::HeaderName>(),
                     value.parse::<hyper::header::HeaderValue>(),
                 ) {
                     merged_headers.insert(header_name, header_value);
+                }
+            }
+
+            // Then overlay with request headers (these take precedence)
+            if let Some(request_headers) = config_builder.headers.take() {
+                for (header_name, header_value) in request_headers {
+                    if let Some(name) = header_name {
+                        merged_headers.insert(name, header_value);
+                    }
                 }
             }
 
@@ -275,6 +429,7 @@ impl Session {
         let client = self.client.clone();
         let cookies = Arc::clone(&self.cookies);
         let session_headers = Arc::clone(&self.headers);
+        let hooks = Arc::clone(&self.hooks);
 
         // Use enhanced runtime management for context detection and execution
         let runtime_manager = get_global_runtime_manager();
@@ -286,13 +441,29 @@ impl Session {
             // Process cookies from response
             Self::process_response_cookies(&cookies, &response_data).await;
 
-            // Update session headers if needed (e.g., from authentication responses)
+            // Update session headers if needed
             Self::update_session_headers(&session_headers, &response_data).await;
 
+            // Convert to PyObject
             response_data_to_py_response(response_data)
         };
 
-        runtime_manager.execute_future(py, future)
+        let py_response = runtime_manager.execute_future(py, future)?;
+
+        // Execute response hooks (outside of async to avoid thread issues)
+        {
+            let hooks_lock = hooks.lock().unwrap();
+            if let Some(response_hooks) = hooks_lock.get("response") {
+                for hook in response_hooks {
+                    // Call the hook with the response
+                    // Clone the PyObject using clone_ref which is the correct method
+                    let py_response_clone = py_response.clone_ref(py);
+                    let _ = hook.call1(py, (py_response_clone,));
+                }
+            }
+        }
+
+        Ok(py_response)
     }
 
     /// Get session headers as a dictionary
@@ -463,13 +634,12 @@ impl Session {
         let mut cookie_store = cookies.lock().unwrap();
 
         // Create request URL for cookie domain validation
-        let request_url = url::Url::parse(response_data.url.to_string().as_str()).ok();
+        let request_url = url::Url::parse(response_data.url.to_string().as_str());
 
         for header_value in set_cookie_headers {
             if let Ok(header_str) = header_value.to_str() {
                 // Parse the cookie from the Set-Cookie header
-                if let Some(url) = &request_url {
-                    // The parse method returns a StoreAction, not a Cookie
+                if let Ok(ref url) = request_url {
                     let _ = cookie_store.parse(header_str, url);
                 }
             }

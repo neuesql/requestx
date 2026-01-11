@@ -9,6 +9,7 @@ the familiar requests interface.
 from ._requestx import (
     # Classes
     Response as _Response,
+    CaseInsensitivePyDict,
 )
 from ._requestx import (
     Session,
@@ -52,6 +53,248 @@ from ._requestx import (
 from ._requestx import (
     urldefragauth,
 )
+
+# Status codes module (matches requests.codes)
+class _Codes:
+    """HTTP status codes with human-readable names.
+    
+    Examples:
+        >>> requestx.codes.ok
+        200
+        >>> requestx.codes.not_found
+        404
+        >>> requestx.codes['temporary_redirect']
+        307
+    """
+    
+    # Informational
+    continue_100 = 100
+    switching_protocols = 101
+    processing = 102
+    
+    # Success
+    ok = 200
+    created = 201
+    accepted = 202
+    non_authoritative_information = 203
+    no_content = 204
+    reset_content = 205
+    partial_content = 206
+    multi_status = 207
+    already_reported = 208
+    im_used = 226
+    
+    # Redirection
+    multiple_choices = 300
+    moved_permanently = 301
+    found = 302
+    see_other = 303
+    not_modified = 304
+    use_proxy = 305
+    temporary_redirect = 307
+    permanent_redirect = 308
+    
+    # Client Error
+    bad_request = 400
+    unauthorized = 401
+    payment_required = 402
+    forbidden = 403
+    not_found = 404
+    method_not_allowed = 405
+    not_acceptable = 406
+    proxy_authentication_required = 407
+    request_timeout = 408
+    conflict = 409
+    gone = 410
+    length_required = 411
+    precondition_failed = 412
+    payload_too_large = 413
+    uri_too_long = 414
+    unsupported_media_type = 415
+    range_not_satisfiable = 416
+    expectation_failed = 417
+    misdirected_request = 421
+    unprocessable_entity = 422
+    locked = 423
+    failed_dependency = 424
+    upgrade_required = 426
+    precondition_required = 428
+    too_many_requests = 429
+    request_header_fields_too_large = 431
+    unavailable_for_legal_reasons = 451
+    
+    # Server Error
+    internal_server_error = 500
+    not_implemented = 501
+    bad_gateway = 502
+    service_unavailable = 503
+    gateway_timeout = 504
+    http_version_not_supported = 505
+    variant_also_negotiates = 506
+    insufficient_storage = 507
+    loop_detected = 508
+    not_extended = 510
+    network_authentication_required = 511
+    
+    # Common aliases
+    # 1xx
+    informational = continue_100
+    # 2xx
+    success = ok
+    # 3xx
+    redirection = multiple_choices
+    redirect = multiple_choices
+    moved = moved_permanently
+    found_redirect = found
+    # 4xx
+    client_error = bad_request
+    unauthorized_401 = unauthorized
+    forbidden_403 = forbidden
+    not_found_404 = not_found
+    # 5xx
+    server_error = internal_server_error
+    bad_gateway_502 = bad_gateway
+    service_unavailable_503 = service_unavailable
+    
+    def __getitem__(self, key):
+        """Allow dict-like access: codes['not_found']"""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+    
+    def __contains__(self, key):
+        """Allow 'in' operator"""
+        return hasattr(self, key)
+    
+    def get(self, key, default=None):
+        """Allow .get() method"""
+        return getattr(self, key, default)
+
+
+# Create a single instance
+codes = _Codes()
+
+# CaseInsensitiveDict - exported as CaseInsensitiveDict
+CaseInsensitiveDict = CaseInsensitivePyDict
+
+
+class Retry:
+    """Retry configuration for HTTP requests.
+    
+    This class matches the requests Retry interface and controls how many times
+    a request should be retried when certain errors occur.
+    
+    Examples:
+        >>> import requestx
+        >>> from requestx import Retry
+        >>> retry = Retry(total=3, backoff_factor=0.1, status_forcelist=[502, 503, 504])
+        >>> adapter = HTTPAdapter(max_retries=retry)
+        >>> s = requestx.Session()
+        >>> s.mount('https://', adapter)
+    
+    Attributes:
+        total: Total number of retries allowed.
+        connect: Number of retries for connection errors.
+        read: Number of retries for read errors.
+        status_forcelist: A set of HTTP status codes to retry on.
+        allowed_methods: A set of HTTP methods to retry on.
+        backoff_factor: Factor to apply between retry attempts.
+        raise_on_redirect: Whether to raise on redirect (not implemented).
+        raise_on_status: Whether to raise on status errors (not implemented).
+    """
+    
+    DEFAULT_METHODS = frozenset(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'TRACE'])
+    RETRY_AFTER_STATUS_CODES = frozenset([413, 429, 503])
+    
+    def __init__(
+        self,
+        total=0,
+        connect=0,
+        read=0,
+        status_forcelist=None,
+        allowed_methods=None,
+        backoff_factor=0.1,
+        raise_on_redirect=False,
+        raise_on_status=False,
+        history=None,
+        respect_retry_after_header=True,
+    ):
+        """Initialize a Retry configuration.
+        
+        Args:
+            total: Total number of retries allowed.
+            connect: Number of retries for connection errors.
+            read: Number of retries for read errors.
+            status_forcelist: A set of HTTP status codes to retry on.
+            allowed_methods: A set of HTTP methods to retry on.
+            backoff_factor: Factor to apply between retry attempts.
+            raise_on_redirect: Whether to raise on redirect.
+            raise_on_status: Whether to raise on status errors.
+            history: Tuple of historical retries (not used internally).
+            respect_retry_after_header: Whether to respect Retry-After header.
+        """
+        self.total = total
+        self.connect = connect
+        self.read = read
+        self.status_forcelist = status_forcelist or frozenset()
+        self.allowed_methods = allowed_methods or self.DEFAULT_METHODS
+        self.backoff_factor = backoff_factor
+        self.raise_on_redirect = raise_on_redirect
+        self.raise_on_status = raise_on_status
+        self.history = history or ()
+        self.respect_retry_after_header = respect_retry_after_header
+    
+    def new(self, **kwargs):
+        """Create a new Retry instance with updated parameters."""
+        return Retry(
+            total=kwargs.get('total', self.total),
+            connect=kwargs.get('connect', self.connect),
+            read=kwargs.get('read', self.read),
+            status_forcelist=kwargs.get('status_forcelist', self.status_forcelist),
+            allowed_methods=kwargs.get('allowed_methods', self.allowed_methods),
+            backoff_factor=kwargs.get('backoff_factor', self.backoff_factor),
+            raise_on_redirect=kwargs.get('raise_on_redirect', self.raise_on_redirect),
+            raise_on_status=kwargs.get('raise_on_status', self.raise_on_status),
+            history=kwargs.get('history', self.history),
+            respect_retry_after_header=kwargs.get('respect_retry_after_header', self.respect_retry_after_header),
+        )
+    
+    def __repr__(self):
+        return f'Retry(total={self.total}, connect={self.connect}, read={self.read}, backoff_factor={self.backoff_factor})'
+
+
+class HTTPAdapter:
+    """HTTP adapter with retry configuration.
+    
+    This class provides request retry functionality similar to requests.HTTPAdapter.
+    It can be mounted on a Session to apply retry logic to specific URL prefixes.
+    
+    Examples:
+        >>> import requestx
+        >>> from requestx import Retry, HTTPAdapter
+        >>> retry = Retry(total=3, status_forcelist=[502, 503, 504])
+        >>> adapter = HTTPAdapter(max_retries=retry)
+        >>> s = requestx.Session()
+        >>> s.mount('http://', adapter)
+        >>> s.mount('https://', adapter)
+    
+    Attributes:
+        max_retries: Retry configuration (Retry instance or int).
+    """
+    
+    def __init__(self, max_retries=0):
+        """Initialize the HTTP adapter.
+        
+        Args:
+            max_retries: Either an integer (simple retry count) or a Retry instance.
+        """
+        if isinstance(max_retries, int):
+            self.max_retries = Retry(total=max_retries)
+        else:
+            self.max_retries = max_retries
+    
+    def __repr__(self):
+        return f'HTTPAdapter(max_retries={self.max_retries})'
 
 
 # Exception hierarchy matching requests library
@@ -229,12 +472,17 @@ __all__ = [
     # Classes
     "Response",
     "Session",
+    "Retry",
+    "HTTPAdapter",
     # Auth classes
     "HTTPDigestAuth",
     "HTTPProxyAuth",
     # Auth utilities
     "get_auth_from_url",
     "urldefragauth",
+    # Advanced features
+    "codes",
+    "CaseInsensitiveDict",
     # Exceptions
     "RequestException",
     "ConnectionError",

@@ -119,3 +119,9 @@ warn_unused_ignores = true
 warn_unreachable = true
     strict_equality = true
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # Suppress deprecation warnings from testcontainers library
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers",
+]
+
