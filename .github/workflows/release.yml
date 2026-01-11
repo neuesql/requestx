@@ -1,8 +1,6 @@
-name: Release
+name: Release Pipeline
 
 on:
-  release:
-    types: [published]
   push:
     tags:
       - 'v*'
@@ -12,8 +10,8 @@ on:
         description: 'Version to release (e.g., 1.0.0)'
         required: true
         type: string
-      prerelease:
-        description: 'Mark as pre-release'
+      skip_tests:
+        description: 'Skip tests before release'
         required: false
         type: boolean
         default: false
@@ -22,327 +20,249 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
 jobs:
-  validate-release:
-    name: Validate Release
+  setup:
+    name: Setup
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Extract version information
-      id: version
-      shell: bash
-      run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          VERSION="${{ github.event.inputs.version }}"
-          TAG="v${VERSION}"
-        elif [ "${{ github.event_name }}" = "release" ]; then
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-        else
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"
-        fi
-        
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "tag=${TAG}" >> $GITHUB_OUTPUT
-        echo "Release version: ${VERSION}"
-        echo "Release tag: ${TAG}"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Validate version format
-      shell: bash
-      run: |
-        VERSION="${{ steps.version.outputs.version }}"
-        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-          echo "Invalid version format: $VERSION"
-          echo "Expected format: X.Y.Z or X.Y.Z-suffix"
-          exit 1
-        fi
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
 
-    - name: Check if tag exists
-      shell: bash
-      run: |
-        TAG="${{ steps.version.outputs.tag }}"
-        if git rev-parse "$TAG" >/dev/null 2>&1; then
-          echo "Tag $TAG already exists"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Cannot create release for existing tag via manual dispatch"
-            exit 1
-          fi
-        else
-          echo "Tag $TAG does not exist yet"
-        fi
+      - name: Install dependencies
+        run: uv sync --dev
 
-  build-wheels:
-    name: Build wheels on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    needs: validate-release
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+  format_check:
+    name: Format Check
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Check Python formatting
+        run: uv run black --check .
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run Rust clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run Python ruff
+        run: uv run ruff check .
+
+  build:
+    name: Build Wheels
+    runs-on: ubuntu-latest
+    needs: [format_check, lint]
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
+        platform:
           - os: ubuntu-latest
-            platform: linux
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
           - os: windows-latest
-            platform: windows
+            target: x64
           - os: macos-latest
-            platform: macos
+            target: universal2
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --find-interpreter
+          manylinux: ${{ matrix.platform.manylinux }}
+          strip: true
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.target }}
+          path: dist
 
-    - name: Install maturin
-      shell: bash
-      run: |
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          uv tool install maturin[patchelf]
-        else
-          uv tool install maturin
-        fi
-
-    - name: Build wheels (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        uv run maturin build --release --strip --out dist --find-interpreter
-
-    - name: Build wheels (Linux aarch64)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        uv run maturin build --release --strip --out dist --find-interpreter
-
-    - name: Build wheels (Windows)
-      if: matrix.os == 'windows-latest'
-      uses: PyO3/maturin-action@v1
-      with:
-        target: x64
-        args: --release --out dist --find-interpreter
-        sccache: 'true'
-
-    - name: Build wheels (macOS)
-      if: matrix.os == 'macos-latest'
-      uses: PyO3/maturin-action@v1
-      with:
-        target: universal2-apple-darwin
-        args: --release --out dist --find-interpreter
-        sccache: 'true'
-
-    - name: Upload wheels
-      uses: actions/upload-artifact@v4
-      with:
-        name: wheels-${{ matrix.platform }}
-        path: dist
-
-  build-sdist:
-    name: Build source distribution
+  test_rust:
+    name: Test Rust
     runs-on: ubuntu-latest
-    needs: validate-release
+    needs: setup
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
 
-    - name: Install maturin
-      shell: bash
-      run: |
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          uv tool install maturin[patchelf]
-        else
-          uv tool install maturin
-        fi
+      - name: Sync dependencies
+        run: uv sync --dev
 
-    - name: Build source distribution
-      run: uv run maturin sdist --out dist
+      - name: Run Rust tests
+        run: cargo test --verbose
 
-    - name: Upload sdist
-      uses: actions/upload-artifact@v4
-      with:
-        name: sdist
-        path: dist
+      - name: Run Rust doc tests
+        run: cargo test --doc
 
-  test-wheels:
-    name: Test wheels on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    needs: [build-wheels, build-sdist]
+  test_python:
+    name: Test Python
+    runs-on: ubuntu-latest
+    needs: setup
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Download wheels
-      uses: actions/download-artifact@v4
-      with:
-        pattern: wheels-*
-        path: dist
-        merge-multiple: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
 
-    - name: Install wheel
-      shell: bash
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install --find-links dist requestx --force-reinstall --no-deps
+      - name: Sync dependencies
+        run: uv sync --dev
 
-    - name: Test installation
-      shell: bash
-      run: |
-        python -c "import requestx; print(f'RequestX {requestx.__version__} installed successfully')"
-        python -c "import requestx; response = requestx.get('https://httpbin.org/get'); assert response.status_code == 200; print('Basic functionality test passed')"
+      - name: Build package
+        run: uv run maturin develop
 
-  create-release:
-    name: Create GitHub Release
+      - name: Run Python tests
+        run: uv run python -m unittest discover tests/ -v
+
+  release_github:
+    name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate-release, test-wheels]
-    if: github.event_name == 'workflow_dispatch'
+    needs: [build, test_rust, test_python]
+    permissions:
+      contents: write
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: dist
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-    - name: Flatten artifacts
-      shell: bash
-      run: |
-        mkdir -p release-assets
-        find dist -name '*.whl' -exec cp {} release-assets/ \;
-        find dist -name '*.tar.gz' -exec cp {} release-assets/ \;
-        ls -la release-assets/
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find dist -name '*.whl' -exec cp {} release-assets/ \;
 
-    - name: Generate release notes
-      id: release-notes
-      shell: bash
-      run: |
-        VERSION="${{ needs.validate-release.outputs.version }}"
-        TAG="${{ needs.validate-release.outputs.tag }}"
-        
-        # Generate basic release notes
-        cat > release-notes.md << EOF
-        # RequestX ${VERSION}
-        
-        ## What's New
-        
-        This release includes performance improvements and bug fixes.
-        
-        ## Installation
-        
-        \`\`\`bash
-        pip install requestx==${VERSION}
-        \`\`\`
-        
-        ## Assets
-        
-        - **Wheels**: Pre-built wheels for Linux (x86_64, aarch64), Windows (x64), and macOS (universal2)
-        - **Source**: Source distribution for custom builds
-        
-        ## Compatibility
-        
-        - Python 3.8+
-        - Linux, Windows, macOS
-        
-        For detailed changes, see the commit history.
-        EOF
-        
-        echo "release-notes<<EOF" >> $GITHUB_OUTPUT
-        cat release-notes.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ needs.validate-release.outputs.tag }}
-        name: RequestX ${{ needs.validate-release.outputs.version }}
-        body: ${{ steps.release-notes.outputs.release-notes }}
-        files: release-assets/*
-        prerelease: ${{ github.event.inputs.prerelease == 'true' }}
-        draft: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref }}
+          name: Release ${{ github.ref }}
+          files: release-assets/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  upload-to-pypi:
-    name: Upload to PyPI
+  release_pypi:
+    name: PyPI Release
     runs-on: ubuntu-latest
-    needs: [validate-release, test-wheels]
-    if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    needs: [build, release_github]
     environment:
       name: PROD
       url: https://pypi.org/p/requestx
-    permissions:
-      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: dist
+      - uses: actions/checkout@v4
 
-    - name: Flatten artifacts
-      shell: bash
-      run: |
-        mkdir -p upload
-        find dist -name '*.whl' -exec cp {} upload/ \;
-        find dist -name '*.tar.gz' -exec cp {} upload/ \;
-        ls -la upload/
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-    - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
-        packages-dir: upload/
-        verbose: true
-        print-hash: true
-        repository-url: https://pypi.org/p/requestx
+      - name: Flatten artifacts
+        run: |
+          mkdir -p upload
+          find dist -name '*.whl' -exec cp {} upload/ \;
 
-  cleanup:
-    name: Cleanup
-    runs-on: ubuntu-latest
-    needs: [upload-to-pypi, create-release]
-    if: always()
-    steps:
-    - name: Delete artifacts
-      uses: geekyeggo/delete-artifact@v2
-      with:
-        name: |
-          wheels-*
-          sdist
-        failOnError: false
-
-    - name: Release Summary
-      shell: bash
-      run: |
-        echo "## Release Summary"
-        echo "- Version: ${{ needs.validate-release.outputs.version }}"
-        echo "- Tag: ${{ needs.validate-release.outputs.tag }}"
-        echo "- Wheels built: ${{ needs.build-wheels.result }}"
-        echo "- Source dist built: ${{ needs.build-sdist.result }}"
-        echo "- Wheels tested: ${{ needs.test-wheels.result }}"
-        echo "- PyPI upload: ${{ needs.upload-to-pypi.result }}"
-        echo "- GitHub release: ${{ needs.create-release.result }}"
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: upload/
+          print-hash: true

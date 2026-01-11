@@ -4,7 +4,7 @@
 .PHONY: help \
         1-setup 2-format 2-format-check \
         3-lint 4-quality-check \
-        5-build 6-test-rust 6-test-python 6-test-all \
+        5-build 6-test-rust 6-test-python 6-test-all 6-test-coverage \
         7-doc-build 7-doc-serve \
         8-release-github 8-release-docs 8-release-pypi \
         9-clean version-patch version-minor version-major
@@ -102,6 +102,13 @@ help: ## Show available commands
 
 6-test-all: 6-test-rust 6-test-python ## Run all tests
 	@echo "$(GREEN)✓ All tests passed$(RESET)"
+
+6-test-coverage: 5-build ## Run tests with coverage
+	@echo "$(BLUE)Running tests with coverage...$(RESET)"
+	uv run python -m coverage run -m unittest discover tests/ -v
+	uv run python -m coverage report
+	uv run python -m coverage xml
+	@echo "$(GREEN)✓ Coverage report generated$(RESET)"
 
 # =============================================================================
 # 7. Documentation
