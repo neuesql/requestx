@@ -1,5 +1,6 @@
 use base64::prelude::*;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use hyper_tls::HttpsConnector;
 use sonic_rs::Value;
@@ -7,7 +8,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+
+/// Default chunk size for streaming responses (64KB)
+const DEFAULT_STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
 use crate::config::get_http_client_config;
 use crate::error::RequestxError;
@@ -150,9 +153,39 @@ pub struct ResponseData {
     pub elapsed_us: u64,
     /// History of redirect responses (empty for non-redirect responses)
     pub history: Vec<ResponseData>,
-    /// For streaming responses: channel to receive body chunks
+    /// For streaming responses: pre-chunked body parts for efficient iteration
     #[allow(dead_code)]
-    pub body_sender: Option<mpsc::Sender<Result<Bytes, RequestxError>>>,
+    pub body_chunks: Option<Vec<Bytes>>,
+}
+
+/// Read body into chunks for streaming responses
+async fn read_body_chunks(mut body: Body) -> Result<(Bytes, Vec<Bytes>), RequestxError> {
+    let mut chunks = Vec::new();
+    let mut total_size = 0;
+
+    // Read body in chunks
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk
+            .map_err(|e| RequestxError::RuntimeError(format!("Failed to read body chunk: {e}")))?;
+        total_size += chunk.len();
+        chunks.push(chunk);
+
+        // Optional: Add a size limit to prevent memory exhaustion
+        // For now, we allow up to 1GB in streaming mode
+        if total_size > 1024 * 1024 * 1024 {
+            return Err(RequestxError::RuntimeError(
+                "Response body exceeds 1GB limit for streaming".to_string(),
+            ));
+        }
+    }
+
+    // Combine all chunks into a single Bytes for backward compatibility
+    let mut combined = Vec::with_capacity(total_size);
+    for chunk in chunks.iter() {
+        combined.extend_from_slice(chunk);
+    }
+
+    Ok((combined.into(), chunks))
 }
 
 /// Generate a random boundary string for multipart form data
@@ -654,7 +687,7 @@ impl RequestxClient {
                     is_stream: false,
                     elapsed_us: 0, // Not tracked for history items
                     history: Vec::new(),
-                    body_sender: None,
+                    body_chunks: None,
                 };
                 history.push(history_item);
 
@@ -717,7 +750,8 @@ impl RequestxClient {
             let is_stream = config.stream;
 
             if is_stream {
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                // Read body in chunks for streaming
+                let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
 
                 Ok(ResponseData {
                     status_code,
@@ -727,7 +761,7 @@ impl RequestxClient {
                     is_stream,
                     elapsed_us,
                     history,
-                    body_sender: None,
+                    body_chunks: Some(body_chunks),
                 })
             } else {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -740,7 +774,7 @@ impl RequestxClient {
                     is_stream,
                     elapsed_us,
                     history,
-                    body_sender: None,
+                    body_chunks: None,
                 })
             }
         } else {
@@ -753,7 +787,8 @@ impl RequestxClient {
             let is_stream = config.stream;
 
             if is_stream {
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                // Read body in chunks for streaming
+                let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
 
                 Ok(ResponseData {
                     status_code,
@@ -763,7 +798,7 @@ impl RequestxClient {
                     is_stream,
                     elapsed_us,
                     history: Vec::new(),
-                    body_sender: None,
+                    body_chunks: Some(body_chunks),
                 })
             } else {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -776,7 +811,7 @@ impl RequestxClient {
                     is_stream,
                     elapsed_us,
                     history: Vec::new(),
-                    body_sender: None,
+                    body_chunks: None,
                 })
             }
         }

@@ -2,7 +2,7 @@ use cookie_store::CookieStore;
 use hyper::header::{HeaderValue, SET_COOKIE};
 use hyper::{Method, Uri};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyString};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -121,6 +121,18 @@ pub struct Session {
     hooks: Arc<Mutex<HashMap<String, Vec<PyObject>>>>,
     /// Mounted adapters for URL prefixes (adapter class name -> (prefix, adapter config))
     adapters: Arc<Mutex<HashMap<String, (String, PyObject)>>>,
+    /// SSL client certificate (String path or Tuple (cert, key))
+    cert: Option<PyObject>,
+    /// Default URL query parameters to append to each request
+    params: Arc<Mutex<HashMap<String, String>>>,
+    /// Proxy configuration (protocol -> proxy URL)
+    proxies: Arc<Mutex<HashMap<String, String>>>,
+    /// Stream response by default
+    stream: bool,
+    /// Verify SSL certificates by default
+    verify: bool,
+    /// Default authentication (username, password) tuple
+    auth: Option<PyObject>,
 }
 
 #[pymethods]
@@ -148,6 +160,12 @@ impl Session {
             backoff_factor: 0.1,
             hooks: Arc::new(Mutex::new(HashMap::new())),
             adapters: Arc::new(Mutex::new(HashMap::new())),
+            cert: None,
+            params: Arc::new(Mutex::new(HashMap::new())),
+            proxies: Arc::new(Mutex::new(HashMap::new())),
+            stream: false,
+            verify: true,
+            auth: None,
         })
     }
 
@@ -215,6 +233,108 @@ impl Session {
     #[setter]
     fn set_backoff_factor(&mut self, value: f64) {
         self.backoff_factor = value;
+    }
+
+    /// Get SSL client certificate
+    #[getter]
+    fn get_cert(&self, py: Python) -> PyResult<PyObject> {
+        match &self.cert {
+            Some(cert) => Ok(cert.clone_ref(py)),
+            None => Ok(py.None().into()),
+        }
+    }
+
+    /// Set SSL client certificate
+    #[setter]
+    fn set_cert(&mut self, cert: PyObject) {
+        self.cert = Some(cert);
+    }
+
+    /// Get default params
+    #[getter]
+    fn get_params(&self, py: Python) -> PyResult<PyObject> {
+        let params = self.params.lock().unwrap();
+        let dict = PyDict::new(py);
+        for (key, value) in params.iter() {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Set default params
+    #[setter]
+    fn set_params(&mut self, params_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut params = self.params.lock().unwrap();
+        params.clear();
+        for (key, value) in params_dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let value_str = value.extract::<String>()?;
+            params.insert(key_str, value_str);
+        }
+        Ok(())
+    }
+
+    /// Get proxies
+    #[getter]
+    fn get_proxies(&self, py: Python) -> PyResult<PyObject> {
+        let proxies = self.proxies.lock().unwrap();
+        let dict = PyDict::new(py);
+        for (key, value) in proxies.iter() {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Set proxies
+    #[setter]
+    fn set_proxies(&mut self, proxies_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut proxies = self.proxies.lock().unwrap();
+        proxies.clear();
+        for (key, value) in proxies_dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let value_str = value.extract::<String>()?;
+            proxies.insert(key_str, value_str);
+        }
+        Ok(())
+    }
+
+    /// Get stream default
+    #[getter]
+    fn get_stream(&self) -> bool {
+        self.stream
+    }
+
+    /// Set stream default
+    #[setter]
+    fn set_stream(&mut self, value: bool) {
+        self.stream = value;
+    }
+
+    /// Get verify default
+    #[getter]
+    fn get_verify(&self) -> bool {
+        self.verify
+    }
+
+    /// Set verify default
+    #[setter]
+    fn set_verify(&mut self, value: bool) {
+        self.verify = value;
+    }
+
+    /// Get default auth
+    #[getter]
+    fn get_auth(&self, py: Python) -> PyResult<PyObject> {
+        match &self.auth {
+            Some(auth) => Ok(auth.clone_ref(py)),
+            None => Ok(py.None().into()),
+        }
+    }
+
+    /// Set default auth (username, password tuple)
+    #[setter]
+    fn set_auth(&mut self, auth: PyObject) {
+        self.auth = Some(auth);
     }
 
     /// Mount an adapter with retry configuration for a URL prefix.
@@ -706,6 +826,116 @@ impl Session {
             "<Session headers={} cookies={} trust_env={} max_redirects={}>",
             headers_count, cookies_count, self.trust_env, self.max_redirects
         )
+    }
+
+    /// Get the redirect target URL from a response
+    ///
+    /// Returns the Location header value if the response is a redirect,
+    /// otherwise returns None.
+    ///
+    /// Args:
+    ///     resp: The Response object to check for redirect
+    ///
+    /// Returns:
+    ///     The redirect URL string, or None if not a redirect
+    #[pyo3(signature = (resp))]
+    fn get_redirect_target(&self, py: Python, resp: PyObject) -> PyResult<PyObject> {
+        let status_code: u16 = resp.getattr(py, "status_code")?.extract(py)?;
+        if !matches!(status_code, 301 | 302 | 303 | 307 | 308) {
+            return Ok(py.None().into());
+        }
+
+        let headers_any = resp.getattr(py, "headers")?;
+        if let Ok(headers) = headers_any.downcast_bound::<PyDict>(py) {
+            if let Ok(Some(loc)) = headers.get_item("Location") {
+                let loc_str: String = loc.extract()?;
+                return Ok(PyString::new(py, &loc_str).into());
+            }
+            if let Ok(Some(loc)) = headers.get_item("location") {
+                let loc_str: String = loc.extract()?;
+                return Ok(PyString::new(py, &loc_str).into());
+            }
+        }
+
+        Ok(py.None().into())
+    }
+
+    /// Check if Authorization header should be stripped when redirecting
+    ///
+    /// According to RFC 7231, Authorization header should be stripped
+    /// when redirecting to a different origin (different host/port).
+    ///
+    /// Args:
+    ///     old_url: The original URL
+    ///     new_url: The redirect target URL
+    ///
+    /// Returns:
+    ///     True if auth should be stripped
+    fn should_strip_auth(&self, old_url: &str, new_url: &str) -> bool {
+        use std::str::FromStr;
+
+        let old_parsed = url::Url::from_str(old_url);
+        let new_parsed = url::Url::from_str(new_url);
+
+        match (old_parsed, new_parsed) {
+            (Ok(old), Ok(new)) => old.host() != new.host() || old.port() != new.port(),
+            _ => true,
+        }
+    }
+
+    /// Merge environment settings with session settings
+    ///
+    /// Checks environment variables for proxy configuration and other settings.
+    /// This respects the trust_env setting.
+    ///
+    /// Args:
+    ///     url: The URL being requested
+    ///     proxies: Optional proxies dict to merge with env
+    ///     stream: Stream setting
+    ///     verify: Verify setting
+    ///     cert: Certificate setting
+    ///
+    /// Returns:
+    ///     Dictionary of merged settings
+    #[pyo3(signature = (url, proxies=None, stream=None, verify=None, cert=None))]
+    fn merge_environment_settings(
+        &self,
+        py: Python,
+        url: String,
+        proxies: Option<PyObject>,
+        stream: Option<bool>,
+        verify: Option<bool>,
+        cert: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        let result = PyDict::new(py);
+
+        result.set_item("stream", stream.unwrap_or(self.stream))?;
+        result.set_item("verify", verify.unwrap_or(self.verify))?;
+
+        let mut merged_proxies = self.proxies.lock().unwrap().clone();
+        if let Some(proxies_obj) = proxies {
+            if let Ok(proxies_dict) = proxies_obj.as_ref().downcast_bound::<PyDict>(py) {
+                for (key, value) in proxies_dict.iter() {
+                    let key_str: String = key.extract()?;
+                    let value_str: String = value.extract()?;
+                    merged_proxies.insert(key_str, value_str);
+                }
+            }
+        }
+
+        let proxies_dict = PyDict::new(py);
+        for (key, value) in merged_proxies.iter() {
+            proxies_dict.set_item(key, value)?;
+        }
+        result.set_item("proxies", proxies_dict)?;
+
+        if let Some(cert_obj) = cert {
+            result.set_item("cert", cert_obj)?;
+        } else if let Some(ref session_cert) = self.cert {
+            result.set_item("cert", session_cert.clone_ref(py))?;
+        }
+
+        Ok(result.into())
     }
 }
 

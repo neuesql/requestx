@@ -214,6 +214,9 @@ pub struct Response {
 
     // History of redirect responses
     pub history: Vec<Response>,
+
+    // Pre-chunked body parts for efficient streaming iteration
+    pub body_chunks: Option<Vec<Bytes>>,
 }
 
 #[pymethods]
@@ -245,6 +248,7 @@ impl Response {
             is_stream,
             elapsed_us,
             history: Vec::new(),
+            body_chunks: None,
         }
     }
 
@@ -410,6 +414,17 @@ impl Response {
     fn iter_content(&self, py: Python, chunk_size: Option<usize>) -> PyResult<PyObject> {
         let chunk_size = chunk_size.unwrap_or(512);
 
+        // Use pre-chunked body if available (from streaming response)
+        if let Some(ref chunks) = self.body_chunks {
+            let py_chunks: Vec<PyObject> = chunks
+                .iter()
+                .map(|chunk| PyBytes::new(py, chunk).into())
+                .collect();
+            let list = PyList::new(py, &py_chunks)?;
+            return Ok(list.into());
+        }
+
+        // Fall back to chunking the buffered content
         if let Some(ref content) = self.binary_content {
             let chunks: Vec<PyObject> = content
                 .chunks(chunk_size)
@@ -548,6 +563,25 @@ impl Response {
     fn __bool__(&self) -> bool {
         self.ok
     }
+
+    /// Close the response and release the connection back to the pool
+    fn close(&mut self) -> PyResult<()> {
+        // Clear binary content to release memory and signal connection is released
+        self.binary_content = None;
+        self.text_content = None;
+        Ok(())
+    }
+
+    /// Get raw response as a file-like object (for advanced usage)
+    /// Returns the binary content as bytes for raw access
+    #[getter]
+    fn raw(&self, py: Python) -> PyResult<PyObject> {
+        if let Some(ref content) = self.binary_content {
+            Ok(PyBytes::new(py, content).into())
+        } else {
+            Ok(PyBytes::new(py, &[]).into())
+        }
+    }
 }
 
 impl Response {
@@ -642,5 +676,37 @@ impl Response {
 
         // Return the explicitly set encoding or None
         self.encoding.clone()
+    }
+
+    /// Create a Response with pre-chunked body for streaming
+    pub fn new_with_chunks(
+        status_code: u16,
+        url: String,
+        headers: HashMap<String, String>,
+        content: Vec<u8>,
+        body_chunks: Vec<Bytes>,
+        is_stream: bool,
+        elapsed_us: u64,
+    ) -> Self {
+        let ok = status_code < 400;
+        let reason = Self::status_code_to_reason(status_code);
+
+        // Convert HashMap to CaseInsensitiveHeaders
+        let ci_headers = CaseInsensitiveHeaders::from_hashmap(headers);
+
+        Response {
+            status_code,
+            url,
+            headers: ci_headers,
+            text_content: None,
+            binary_content: Some(content.into()),
+            encoding: None,
+            ok,
+            reason,
+            is_stream,
+            elapsed_us,
+            history: Vec::new(),
+            body_chunks: Some(body_chunks),
+        }
     }
 }
