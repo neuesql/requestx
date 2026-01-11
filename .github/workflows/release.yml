@@ -212,6 +212,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
+
+      - name: Get version from uv
+        id: version
+        run: |
+          VERSION=$(uv version --short)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
       - name: Download all wheels
         uses: actions/download-artifact@v4
         with:
@@ -223,17 +240,11 @@ jobs:
           mkdir -p release-assets
           find dist -name '*.whl' -exec cp {} release-assets/ \;
 
-      - name: Extract version
-        id: version
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          name: Release ${{ github.ref }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
           files: release-assets/*
           generate_release_notes: true
         env:
