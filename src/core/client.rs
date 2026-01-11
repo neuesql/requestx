@@ -14,6 +14,8 @@ use crate::error::RequestxError;
 
 // Pre-allocated common strings to reduce allocations
 const CONTENT_TYPE_JSON: &str = "application/json";
+const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
+const CONTENT_TYPE_MULTIPART: &str = "multipart/form-data";
 
 pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
     let config = get_http_client_config();
@@ -96,6 +98,7 @@ pub struct RequestConfig {
     pub params: Option<HashMap<String, String>>,
     pub data: Option<RequestData>,
     pub json: Option<Value>,
+    pub files: Option<Vec<FilePart>>,
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
     pub max_redirects: Option<u32>,
@@ -109,12 +112,29 @@ pub struct RequestConfig {
     pub stream: bool,
 }
 
+/// Represents a file to be uploaded
+#[derive(Debug, Clone)]
+pub struct FilePart {
+    pub field_name: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+    pub data: Vec<u8>,
+}
+
 /// Request data types
 #[derive(Debug, Clone)]
 pub enum RequestData {
     Text(String),
     Bytes(Vec<u8>),
     Form(HashMap<String, String>),
+    Multipart {
+        /// Form fields (text key-value pairs)
+        fields: HashMap<String, String>,
+        /// Files to include in the multipart body
+        files: Vec<FilePart>,
+        /// Generated boundary string
+        boundary: String,
+    },
 }
 
 /// Response data from HTTP requests
@@ -133,6 +153,87 @@ pub struct ResponseData {
     /// For streaming responses: channel to receive body chunks
     #[allow(dead_code)]
     pub body_sender: Option<mpsc::Sender<Result<Bytes, RequestxError>>>,
+}
+
+/// Generate a random boundary string for multipart form data
+fn generate_boundary() -> String {
+    let mut rng = fastrand::Rng::new();
+    format!(
+        "----FormBoundary{}{:08x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u32,
+        rng.u32(..u32::MAX)
+    )
+}
+
+/// Build multipart form data body
+fn build_multipart_body(
+    boundary: &str,
+    fields: &HashMap<String, String>,
+    files: &[FilePart],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+
+    // Add text fields first
+    for (name, value) in fields.iter() {
+        write_part(&mut body, boundary, name, None, value.as_bytes());
+    }
+
+    // Add file fields
+    for file in files.iter() {
+        let content_type = file
+            .content_type
+            .as_deref()
+            .unwrap_or("application/octet-stream");
+        write_part(
+            &mut body,
+            boundary,
+            &file.field_name,
+            Some((&file.filename, content_type)),
+            &file.data,
+        );
+    }
+
+    // Write closing boundary
+    let closing = format!("--{}--\r\n", boundary);
+    body.extend_from_slice(closing.as_bytes());
+
+    body
+}
+
+/// Write a single part of multipart form data
+fn write_part(
+    body: &mut Vec<u8>,
+    boundary: &str,
+    name: &str,
+    filename_content_type: Option<(&str, &str)>,
+    data: &[u8],
+) {
+    // Write boundary
+    let boundary_line = format!("--{}\r\n", boundary);
+    body.extend_from_slice(boundary_line.as_bytes());
+
+    // Write Content-Disposition header
+    if let Some((filename, content_type)) = filename_content_type {
+        let disp = format!(
+            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+            name, filename
+        );
+        body.extend_from_slice(disp.as_bytes());
+
+        let ct = format!("Content-Type: {}\r\n", content_type);
+        body.extend_from_slice(ct.as_bytes());
+    } else {
+        let disp = format!("Content-Disposition: form-data; name=\"{}\"\r\n", name);
+        body.extend_from_slice(disp.as_bytes());
+    }
+
+    // Write blank line and data
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(data);
+    body.extend_from_slice(b"\r\n");
 }
 
 /// Core HTTP client using hyper
@@ -212,6 +313,7 @@ impl RequestxClient {
             params: None,
             data: None,
             json: None,
+            files: None,
             timeout: None,
             allow_redirects: Self::DEFAULT_ALLOW_REDIRECTS,
             max_redirects: None,
@@ -379,10 +481,21 @@ impl RequestxClient {
             request_builder = request_builder.header("authorization", auth_header);
         }
 
-        let (body, has_content_type) = match (config.data, config.json) {
-            (Some(RequestData::Text(text)), None) => (Body::from(text), false),
-            (Some(RequestData::Bytes(bytes)), None) => (Body::from(bytes), false),
-            (Some(RequestData::Form(form)), None) => {
+        let (body, has_content_type, multipart_ct) = match (config.data, config.json, config.files)
+        {
+            // Handle multipart form data with files
+            (data, None, Some(files)) if !files.is_empty() => {
+                let boundary = generate_boundary();
+                let fields = match data {
+                    Some(RequestData::Form(form)) => form.clone(),
+                    _ => HashMap::new(),
+                };
+                let multipart_body = build_multipart_body(&boundary, &fields, &files);
+                let ct = format!("{}; boundary={}", CONTENT_TYPE_MULTIPART, boundary);
+                (Body::from(multipart_body), true, Some(ct))
+            }
+            // Handle multipart with data but no files
+            (Some(RequestData::Form(form)), None, Some(_)) => {
                 let estimated_size = form
                     .iter()
                     .map(|(k, v)| k.len() + v.len() + 10)
@@ -399,22 +512,52 @@ impl RequestxClient {
                     form_data.push_str(&urlencoding::encode(v));
                     first = false;
                 }
-                (Body::from(form_data), true)
+                (Body::from(form_data), true, None)
             }
-            (None, Some(json)) => {
+            (Some(RequestData::Text(text)), None, None) => (Body::from(text), false, None),
+            (Some(RequestData::Bytes(bytes)), None, None) => (Body::from(bytes), false, None),
+            (Some(RequestData::Form(form)), None, None) => {
+                let estimated_size = form
+                    .iter()
+                    .map(|(k, v)| k.len() + v.len() + 10)
+                    .sum::<usize>();
+                let mut form_data = String::with_capacity(estimated_size);
+
+                let mut first = true;
+                for (k, v) in form.iter() {
+                    if !first {
+                        form_data.push('&');
+                    }
+                    form_data.push_str(&urlencoding::encode(k));
+                    form_data.push('=');
+                    form_data.push_str(&urlencoding::encode(v));
+                    first = false;
+                }
+                (Body::from(form_data), true, None)
+            }
+            (None, Some(json), None) => {
                 let json_string = sonic_rs::to_string(&json)?;
-                (Body::from(json_string), true)
+                (Body::from(json_string), true, None)
             }
-            (None, None) => (Body::empty(), false),
-            (Some(_), Some(_)) => {
+            (None, None, None) => (Body::empty(), false, None),
+            (Some(_), Some(_), _) => {
                 return Err(RequestxError::RuntimeError(
                     "Cannot specify both data and json parameters".to_string(),
+                ));
+            }
+            _ => {
+                return Err(RequestxError::RuntimeError(
+                    "Invalid request data combination".to_string(),
                 ));
             }
         };
 
         if has_content_type {
-            request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
+            if let Some(ct) = multipart_ct {
+                request_builder = request_builder.header("content-type", ct);
+            } else {
+                request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
+            }
         }
 
         let request = request_builder
@@ -785,6 +928,7 @@ mod tests {
             params: None,
             data: None,
             json: Some(json_data),
+            files: None,
             timeout: None,
             allow_redirects: true,
             max_redirects: None,
@@ -818,6 +962,7 @@ mod tests {
             params: None,
             data: Some(RequestData::Form(form_data)),
             json: None,
+            files: None,
             timeout: None,
             allow_redirects: true,
             max_redirects: None,
@@ -847,6 +992,7 @@ mod tests {
             params: None,
             data: Some(RequestData::Text("Hello, World!".to_string())),
             json: None,
+            files: None,
             timeout: None,
             allow_redirects: true,
             max_redirects: None,
@@ -876,6 +1022,7 @@ mod tests {
             params: None,
             data: None,
             json: None,
+            files: None,
             timeout: Some(Duration::from_secs(1)), // 1 second timeout for 5 second delay
             allow_redirects: true,
             max_redirects: None,
@@ -917,6 +1064,7 @@ mod tests {
             params: None,
             data: None,
             json: None,
+            files: None,
             timeout: None,
             allow_redirects: true,
             max_redirects: None,

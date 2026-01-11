@@ -136,6 +136,14 @@ fn parse_kwargs(py: Python, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Requ
             }
         }
 
+        // Parse files for multipart upload
+        if let Some(files_obj) = kwargs.get_item("files")? {
+            if !files_obj.is_none() {
+                let files = parse_files(&files_obj)?;
+                builder.files = Some(files);
+            }
+        }
+
         // Parse stream
         if let Some(stream_obj) = kwargs.get_item("stream")? {
             builder.stream = stream_obj.is_truthy()?;
@@ -152,6 +160,7 @@ struct RequestConfigBuilder {
     pub params: Option<HashMap<String, String>>,
     pub data: Option<RequestData>,
     pub json: Option<Value>,
+    pub files: Option<Vec<core::client::FilePart>>,
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
     pub max_redirects: Option<u32>,
@@ -169,6 +178,7 @@ impl RequestConfigBuilder {
             params: None,
             data: None,
             json: None,
+            files: None,
             timeout: None,
             allow_redirects: true,
             max_redirects: None,
@@ -188,6 +198,7 @@ impl RequestConfigBuilder {
             params: self.params,
             data: self.data,
             json: self.json,
+            files: self.files,
             timeout: self.timeout,
             allow_redirects: self.allow_redirects,
             max_redirects: self.max_redirects,
@@ -349,6 +360,167 @@ fn parse_proxies(proxies_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, Str
     }
 
     Ok(proxies)
+}
+
+/// Parse files from Python object for multipart upload
+///
+/// Supports formats:
+/// - `{'fieldname': file_object}` - file object with fieldname as key
+/// - `{'fieldname': ('filename', file_object)}` - with custom filename
+/// - `{'fieldname': ('filename', file_object, 'content_type')}` - with content type
+/// - List format for multiple files with same fieldname
+fn parse_files(files_obj: &Bound<'_, PyAny>) -> PyResult<Vec<core::client::FilePart>> {
+    let mut file_parts = Vec::new();
+
+    // Handle list format: [('fieldname', ('filename', data)), ...]
+    if let Ok(list) = files_obj.downcast::<pyo3::types::PyList>() {
+        for i in 0..list.len() {
+            let item = list.get_item(i)?;
+            // Try to extract as tuple: (field_name, file_info)
+            let tuple = item.downcast::<pyo3::types::PyTuple>()?;
+            if tuple.len() == 2 {
+                let field_name = tuple.get_item(0).unwrap().extract::<String>()?;
+                let file_info = tuple.get_item(1).unwrap();
+
+                let parts = parse_single_file(&field_name, file_info)?;
+                file_parts.extend(parts);
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "File tuple must have 2 elements: (fieldname, file_data)",
+                ));
+            }
+        }
+    }
+    // Handle dict format: {'fieldname': file_or_tuple}
+    else if let Ok(dict) = files_obj.downcast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            let field_name = key.extract::<String>()?;
+            let parts = parse_single_file(&field_name, value)?;
+            file_parts.extend(parts);
+        }
+    }
+    // Handle single file passed directly (not in dict)
+    else {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Files must be a dictionary or list of tuples",
+        ));
+    }
+
+    Ok(file_parts)
+}
+
+/// Parse a single file entry into FilePart(s)
+fn parse_single_file(
+    field_name: &str,
+    file_info: Bound<'_, PyAny>,
+) -> PyResult<Vec<core::client::FilePart>> {
+    let mut parts = Vec::new();
+
+    // Try: ('filename', file_object_or_data)
+    if let Ok(tuple) = file_info.downcast::<pyo3::types::PyTuple>() {
+        if tuple.len() == 2 || tuple.len() == 3 {
+            let filename = tuple.get_item(0).unwrap().extract::<String>()?;
+            let file_data = tuple.get_item(1).unwrap();
+
+            let content_type = if tuple.len() == 3 {
+                Some(tuple.get_item(2).unwrap().extract::<String>()?)
+            } else {
+                detect_content_type(&filename)
+            };
+
+            // Extract file data - can be file object, bytes, or string
+            let data = extract_file_data(file_data)?;
+
+            parts.push(core::client::FilePart {
+                field_name: field_name.to_string(),
+                filename,
+                content_type,
+                data,
+            });
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "File tuple must have 2 or 3 elements: ('filename', data) or ('filename', data, 'content_type')",
+            ));
+        }
+    }
+    // Try: file object directly
+    else {
+        // For file objects, try to get name for filename
+        let filename = if let Ok(name_attr) = file_info.getattr("name") {
+            if let Ok(name) = name_attr.extract::<String>() {
+                name
+            } else {
+                "file".to_string()
+            }
+        } else {
+            "file".to_string()
+        };
+
+        let content_type = detect_content_type(&filename);
+        let data = extract_file_data(file_info)?;
+
+        parts.push(core::client::FilePart {
+            field_name: field_name.to_string(),
+            filename,
+            content_type,
+            data,
+        });
+    }
+
+    Ok(parts)
+}
+
+/// Extract file data from various Python objects
+fn extract_file_data(obj: Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    // Try: file object with read() method
+    if let Ok(read_method) = obj.getattr("read") {
+        let content = read_method.call0()?.extract::<Vec<u8>>()?;
+        // Reset file position if possible
+        let _ = obj.call_method1("seek", (0,));
+        return Ok(content);
+    }
+
+    // Try: bytes
+    if let Ok(bytes) = obj.extract::<Vec<u8>>() {
+        return Ok(bytes);
+    }
+
+    // Try: string
+    if let Ok(string) = obj.extract::<String>() {
+        return Ok(string.into_bytes());
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "File data must be a file object, bytes, or string",
+    ))
+}
+
+/// Detect content type from filename
+fn detect_content_type(filename: &str) -> Option<String> {
+    let ext = filename.rsplit('.').next()?.to_lowercase();
+
+    match ext.as_str() {
+        "txt" => Some("text/plain".to_string()),
+        "html" | "htm" => Some("text/html".to_string()),
+        "css" => Some("text/css".to_string()),
+        "js" | "mjs" => Some("application/javascript".to_string()),
+        "json" => Some("application/json".to_string()),
+        "xml" => Some("application/xml".to_string()),
+        "pdf" => Some("application/pdf".to_string()),
+        "zip" => Some("application/zip".to_string()),
+        "tar" => Some("application/x-tar".to_string()),
+        "gz" => Some("application/gzip".to_string()),
+        "png" => Some("image/png".to_string()),
+        "jpg" | "jpeg" => Some("image/jpeg".to_string()),
+        "gif" => Some("image/gif".to_string()),
+        "svg" => Some("image/svg+xml".to_string()),
+        "ico" => Some("image/x-icon".to_string()),
+        "mp3" => Some("audio/mpeg".to_string()),
+        "mp4" => Some("video/mp4".to_string()),
+        "wav" => Some("audio/wav".to_string()),
+        "csv" => Some("text/csv".to_string()),
+        _ => Some("application/octet-stream".to_string()),
+    }
 }
 
 /// Parse authentication from Python object - supports tuple, list, and auth objects

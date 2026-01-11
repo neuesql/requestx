@@ -27,9 +27,18 @@
 - ✅ Auth from URL - Parse credentials from `https://user:pass@host/path`
 - ✅ Phase 3 Tests: `tests/test_authentication.py` (27 tests)
 
-**Current Phase:** Phase 4 - File Uploads & Multipart (pending)
-- File upload support
-- Multipart form data
+**Phase 4 Status:** ✅ COMPLETED
+- ✅ File upload support - `files` parameter for multipart uploads
+- ✅ Multipart form data - `Content-Type: multipart/form-data` with boundary
+- ✅ Multiple file uploads - Support for list format with same fieldname
+- ✅ Content-type detection - Automatic MIME type detection from file extension
+- ✅ Phase 4 Tests: `tests/test_file_uploads.py` (13 tests)
+
+**Current Phase:** Phase 5 - Advanced Features (pending)
+- Status codes module
+- Retry logic
+- Event hooks
+- CaseInsensitiveDict
 
 ---
 
@@ -715,12 +724,12 @@ Create `tests/test_prepared_requests.py` with comprehensive tests for all Phase 
 - [x] Update todos in task.md
 
 ### Phase 4 Checklist
-- [ ] Implement file upload support
-- [ ] Support multipart form data
-- [ ] Handle multiple file uploads
-- [ ] Write Phase 4 tests
-- [ ] Run Phase 4 test suite
-- [ ] Update todos in task.md
+- [x] Implement file upload support (`files` parameter with multipart encoding)
+- [x] Support multipart form data with files and fields
+- [x] Handle content-type detection from file extensions
+- [x] Write Phase 4 tests (`tests/test_file_uploads.py` - 13 tests)
+- [x] Run Phase 4 test suite
+- [x] Update todos in task.md
 
 ### Phase 5 Checklist
 - [ ] Implement status codes module
@@ -793,7 +802,7 @@ if __name__ == "__main__":
 - [x] `tests/test_response_enhanced.py` (Phase 1) - 66 tests ✅ DONE
 - [x] `tests/test_session_enhanced.py` (Phase 2) - 43 tests ✅ DONE
 - [x] `tests/test_authentication.py` (Phase 3) - 27 tests ✅ DONE
-- [ ] `tests/test_file_uploads.py` (Phase 4)
+- [x] `tests/test_file_uploads.py` (Phase 4) - 13 tests ✅ DONE
 - [ ] `tests/test_advanced_features.py` (Phase 5)
 - [ ] `tests/test_exceptions_utilities.py` (Phase 6)
 - [ ] `tests/test_prepared_requests.py` (Phase 7)
