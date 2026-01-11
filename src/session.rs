@@ -11,6 +11,24 @@ use crate::core::runtime::get_global_runtime_manager;
 use crate::error::RequestxError;
 use crate::{parse_kwargs, response_data_to_py_response};
 
+/// Simple retry configuration extracted from Python Retry object
+#[derive(Clone, Debug)]
+struct RetryConfig {
+    total: u32,
+    backoff_factor: f64,
+    status_forcelist: Vec<u16>,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            total: 0,
+            backoff_factor: 0.1,
+            status_forcelist: Vec::new(),
+        }
+    }
+}
+
 /// Case-insensitive header wrapper for session headers
 #[derive(Clone, Debug)]
 pub struct CaseInsensitiveHeaders {
@@ -430,22 +448,108 @@ impl Session {
         let cookies = Arc::clone(&self.cookies);
         let session_headers = Arc::clone(&self.headers);
         let hooks = Arc::clone(&self.hooks);
+        let adapters = Arc::clone(&self.adapters);
+
+        // Extract retry configuration from mounted adapter BEFORE the async block
+        let retry_config: RetryConfig = {
+            let adapters_lock = adapters.lock().unwrap();
+            if let Some((prefix, adapter)) = adapters_lock.get("HTTPAdapter") {
+                if url.starts_with(prefix) {
+                    // Extract retry config from Python Retry object
+                    let max_retries_obj = adapter.getattr(py, "max_retries")?;
+
+                    // Get total retries
+                    let total: u32 = if let Ok(total_attr) = max_retries_obj.getattr(py, "total") {
+                        total_attr.extract::<u32>(py).unwrap_or(0)
+                    } else {
+                        max_retries_obj.extract::<u32>(py).unwrap_or(0)
+                    };
+
+                    // Get backoff_factor
+                    let backoff_factor: f64 = max_retries_obj
+                        .getattr(py, "backoff_factor")
+                        .ok()
+                        .and_then(|bf| bf.extract::<f64>(py).ok())
+                        .unwrap_or(0.1);
+
+                    // Get status_forcelist
+                    let status_forcelist: Vec<u16> = max_retries_obj
+                        .getattr(py, "status_forcelist")
+                        .ok()
+                        .and_then(|sf| sf.extract::<Vec<u16>>(py).ok())
+                        .unwrap_or_default();
+
+                    RetryConfig {
+                        total,
+                        backoff_factor,
+                        status_forcelist,
+                    }
+                } else {
+                    RetryConfig::default()
+                }
+            } else {
+                RetryConfig::default()
+            }
+        };
 
         // Use enhanced runtime management for context detection and execution
         let runtime_manager = get_global_runtime_manager();
 
         let future = async move {
-            // Execute the request
-            let response_data = client.request_async(config).await?;
+            let mut attempt = 0;
 
-            // Process cookies from response
-            Self::process_response_cookies(&cookies, &response_data).await;
+            loop {
+                attempt += 1;
 
-            // Update session headers if needed
-            Self::update_session_headers(&session_headers, &response_data).await;
+                match client.request_async(config.clone()).await {
+                    Ok(response_data) => {
+                        let status_code = response_data.status_code;
 
-            // Convert to PyObject
-            response_data_to_py_response(response_data)
+                        // Check if we should retry based on status code
+                        let should_retry = retry_config.total > 0
+                            && retry_config.status_forcelist.contains(&status_code)
+                            && attempt <= retry_config.total as usize;
+
+                        if should_retry {
+                            // Exponential backoff
+                            let delay_ms = (retry_config.backoff_factor
+                                * 1000.0
+                                * (2.0_f64.powi(attempt as i32 - 1)))
+                                as u64;
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            continue;
+                        }
+
+                        // Process cookies from response
+                        Self::process_response_cookies(&cookies, &response_data).await;
+
+                        // Update session headers if needed
+                        Self::update_session_headers(&session_headers, &response_data).await;
+
+                        // Convert to PyObject
+                        break response_data_to_py_response(response_data);
+                    }
+                    Err(_) => {
+                        // Connection error - check if we should retry
+                        if retry_config.total > 0 && attempt <= retry_config.total as usize {
+                            // Exponential backoff for connection errors
+                            let delay_ms = (retry_config.backoff_factor
+                                * 1000.0
+                                * (2.0_f64.powi(attempt as i32 - 1)))
+                                as u64;
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            continue;
+                        }
+
+                        // No more retries or retry disabled - return error
+                        break Err(RequestxError::RuntimeError(format!(
+                            "Connection failed after {} attempts",
+                            attempt
+                        ))
+                        .into());
+                    }
+                }
+            }
         };
 
         let py_response = runtime_manager.execute_future(py, future)?;
