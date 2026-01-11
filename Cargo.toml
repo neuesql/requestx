@@ -1,6 +1,6 @@
 [package]
 name = "requestx"
-version = "0.2.12"
+version = "0.3.0"
 edition = "2021"
 description = "High-performance HTTP client for Python with requests-compatible API"
 authors = ["RequestX Team"]
@@ -21,7 +21,7 @@ hyper-tls = "0.5"
 tokio = { version = "1.47.1", features = ["full"] }
 cookie_store = "0.21"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+sonic-rs = "0.5"
 bytes = "1.0"
 url = "2.0"
 urlencoding = "2.1"
@@ -32,3 +32,8 @@ toml = "0.8"
 
 [build-dependencies]
 pyo3-build-config = "0.25.0"
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

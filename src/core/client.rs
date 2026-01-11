@@ -2,7 +2,7 @@ use base64::prelude::*;
 use bytes::Bytes;
 use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use hyper_tls::HttpsConnector;
-use serde_json::Value;
+use sonic_rs::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -13,7 +13,6 @@ use crate::error::RequestxError;
 
 // Pre-allocated common strings to reduce allocations
 const CONTENT_TYPE_JSON: &str = "application/json";
-const CONTENT_TYPE_FORM: &str = "application/x-www-form-urlencoded";
 
 pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
     let config = get_http_client_config();
@@ -390,7 +389,7 @@ impl RequestxClient {
                 (Body::from(form_data), true)
             }
             (None, Some(json)) => {
-                let json_string = serde_json::to_string(&json)?;
+                let json_string = sonic_rs::to_string(&json)?;
                 (Body::from(json_string), true)
             }
             (None, None) => (Body::empty(), false),
@@ -655,7 +654,7 @@ mod tests {
         let client = RequestxClient::new().unwrap();
         let url: Uri = "https://httpbin.org/post".parse().unwrap();
 
-        let json_data = serde_json::json!({
+        let json_data = sonic_rs::json!({
             "key": "value",
             "number": 42
         });

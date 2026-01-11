@@ -21,7 +21,7 @@ pub enum RequestxError {
     HttpError { status: u16, message: String },
 
     #[error("JSON decode error: {0}")]
-    JsonDecodeError(#[from] serde_json::Error),
+    JsonDecodeError(#[from] sonic_rs::Error),
 
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] hyper::http::uri::InvalidUri),

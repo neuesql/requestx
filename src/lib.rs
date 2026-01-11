@@ -2,7 +2,7 @@ use hyper::{HeaderMap, Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use serde_json::Value;
+use sonic_rs::Value;
 use std::collections::HashMap;
 
 use std::time::Duration;
@@ -257,8 +257,8 @@ fn parse_json(py: Python, json_obj: &Bound<'_, PyAny>) -> PyResult<Value> {
         .call_method1("dumps", (json_obj,))?
         .extract::<String>()?;
 
-    // Parse the JSON string into serde_json::Value
-    serde_json::from_str(&json_str).map_err(|e| {
+    // Parse the JSON string into sonic_rs::Value
+    sonic_rs::from_str(&json_str).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse JSON: {e}"))
     })
 }

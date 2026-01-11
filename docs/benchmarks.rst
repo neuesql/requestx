@@ -2,6 +2,10 @@
 
 This directory contains a comprehensive performance benchmarking system for RequestX, designed to measure and compare HTTP client performance across multiple libraries and scenarios.
 
+## Latest Benchmark Reports
+
+- [JSON Performance Report (RequestX vs Requests)](benchmarks/json_performance_report.md)
+
 ## Overview
 
 The benchmarking suite provides:
