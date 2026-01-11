@@ -430,8 +430,9 @@ class TestResponseCombinations(HttpbinTestCase):
     def test_headers_with_history(self):
         """Test headers and history work together."""
         r = requestx.get(HTTPBIN_HOST + "/redirect/1", timeout=30)
-        # Main response has headers
-        self.assertIsInstance(r.headers, dict)
+        # Main response has headers (CaseInsensitivePyDict)
+        self.assertTrue(hasattr(r.headers, 'get'))
+        self.assertTrue(hasattr(r.headers, '__getitem__'))
         # History responses have headers
         for resp in r.history:
             self.assertTrue(hasattr(resp, "headers"))

@@ -182,7 +182,9 @@ class TestResponseHeaders(HttpbinTestCase):
     def test_headers_dict(self):
         """Test headers are accessible as dictionary."""
         r = requestx.get(HTTPBIN_HOST + "/get")
-        self.assertIsInstance(r.headers, dict)
+        # Headers is a dict-like object (CaseInsensitivePyDict)
+        self.assertTrue(hasattr(r.headers, 'get'))
+        self.assertTrue(hasattr(r.headers, '__getitem__'))
         # Header keys are lowercase in response
         self.assertIn("content-type", r.headers)
 

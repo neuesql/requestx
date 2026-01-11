@@ -96,8 +96,13 @@ impl CaseInsensitivePyDict {
     }
 
     /// Case-insensitive __getitem__
-    fn __getitem__(&self, key: &str) -> Option<String> {
-        self.get(key)
+    fn __getitem__(&self, key: &str) -> PyResult<String> {
+        match self.get(key) {
+            Some(value) => Ok(value),
+            None => Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                key.to_string(),
+            )),
+        }
     }
 
     /// Case-insensitive __contains__
@@ -259,7 +264,7 @@ impl Response {
         for (key, value) in self.headers.iter() {
             dict.insert(key, value);
         }
-        Ok(dict.to_dict(py)?)
+        Ok(dict.into_pyobject(py)?.into_any().unbind())
     }
 
     /// Get response text content
