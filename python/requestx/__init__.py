@@ -421,8 +421,6 @@ class MissingSchema(RequestException):
 class ChunkedEncodingError(ConnectionError):
     """The server declared chunked encoding but sent an invalid chunk."""
 
-    pass
-
 
 class ContentDecodingError(RequestException):
     """Failed to decode response content."""
@@ -433,7 +431,13 @@ class ContentDecodingError(RequestException):
 class StreamConsumedError(RequestException):
     """The content for this response was already consumed."""
 
-    pass
+
+class UnrewindableBodyError(RequestException):
+    """The request body could not be rewinded to a position it was at."""
+
+
+# InvalidJSONError is an alias for JSONDecodeError for compatibility
+InvalidJSONError = JSONDecodeError
 
 
 class FileModeWarning(RequestException):
@@ -452,6 +456,197 @@ class DependencyWarning(RequestsWarning):
     """Warning about a dependency issue."""
 
     pass
+
+
+# =============================================================================
+# Cookie Utilities Module
+# =============================================================================
+
+class _CookieJarWrapper:
+    """Internal wrapper for cookie jar functionality."""
+    
+    def __init__(self):
+        self._cookies = {}
+    
+    def get(self, key, default=None):
+        """Get a cookie value."""
+        return self._cookies.get(key, default)
+    
+    def set(self, key, value, **kwargs):
+        """Set a cookie value."""
+        self._cookies[key] = value
+    
+    def __contains__(self, key):
+        """Check if a cookie exists."""
+        return key in self._cookies
+    
+    def __getitem__(self, key):
+        """Get a cookie value by key."""
+        return self._cookies[key]
+    
+    def __setitem__(self, key, value):
+        """Set a cookie value."""
+        self._cookies[key] = value
+    
+    def __delitem__(self, key):
+        """Delete a cookie."""
+        del self._cookies[key]
+    
+    def __iter__(self):
+        """Iterate over cookie keys."""
+        return iter(self._cookies)
+    
+    def __len__(self):
+        """Return the number of cookies."""
+        return len(self._cookies)
+    
+    def keys(self):
+        """Return cookie keys."""
+        return self._cookies.keys()
+    
+    def values(self):
+        """Return cookie values."""
+        return self._cookies.values()
+    
+    def items(self):
+        """Return cookie items."""
+        return self._cookies.items()
+
+
+class _CookiesModule:
+    """Cookie utilities module."""
+    
+    @staticmethod
+    def cookiejar_from_dict(cookie_dict=None, cookiejar=None):
+        """Create a CookieJar from a dictionary.
+        
+        Args:
+            cookie_dict: Dictionary of cookies to add.
+            cookiejar: Optional existing cookiejar to add to.
+        
+        Returns:
+            A cookie jar-like object with the cookies from cookie_dict.
+        
+        Examples:
+            >>> jar = cookies.cookiejar_from_dict({"key": "value"})
+            >>> jar["key"]
+            'value'
+        """
+        jar = cookiejar or _CookieJarWrapper()
+        if cookie_dict:
+            for key, value in cookie_dict.items():
+                jar.set(key, value)
+        return jar
+    
+    @staticmethod
+    def dict_from_cookiejar(cookiejar):
+        """Convert a CookieJar to a dictionary.
+        
+        Args:
+            cookiejar: A cookie jar-like object.
+        
+        Returns:
+            A dictionary containing the cookies.
+        
+        Examples:
+            >>> jar = _CookieJarWrapper()
+            >>> jar.set("key", "value")
+            >>> cookies.dict_from_cookiejar(jar)
+            {'key': 'value'}
+        """
+        if hasattr(cookiejar, '_cookies'):
+            return dict(cookiejar._cookies)
+        elif hasattr(cookiejar, 'items'):
+            return dict(cookiejar.items())
+        elif hasattr(cookiejar, '__iter__'):
+            result = {}
+            for key in cookiejar:
+                val = cookiejar.get(key) if hasattr(cookiejar, 'get') else None
+                if val is not None:
+                    result[key] = val
+            return result
+        return {}
+    
+    @staticmethod
+    def merge_cookies(cookiejar, cookies):
+        """Merge cookies into a CookieJar.
+        
+        Args:
+            cookiejar: The target cookie jar (dict or cookiejar-like object).
+            cookies: Cookies to add (dict or cookiejar-like).
+        
+        Returns:
+            The merged cookie jar.
+        
+        Examples:
+            >>> jar = cookies.cookiejar_from_dict({"existing": "value"})
+            >>> jar = cookies.merge_cookies(jar, {"new": "value2"})
+            >>> jar["existing"]
+            'value'
+            >>> jar["new"]
+            'value2'
+        """
+        if hasattr(cookies, 'items'):
+            for key, value in cookies.items():
+                # Handle dict objects
+                if isinstance(cookiejar, dict):
+                    cookiejar[key] = value
+                # Handle cookiejar-like objects with set() method
+                elif hasattr(cookiejar, 'set'):
+                    cookiejar.set(key, value)
+        return cookiejar
+    
+    @staticmethod
+    def add_dict_to_cookiejar(cookiejar, cookie_dict):
+        """Add a dictionary of cookies to a CookieJar.
+        
+        Args:
+            cookiejar: The target cookie jar.
+            cookie_dict: Dictionary of cookies to add.
+        
+        Returns:
+            The modified cookie jar.
+        
+        Examples:
+            >>> jar = _CookieJarWrapper()
+            >>> cookies.add_dict_to_cookiejar(jar, {"key": "value"})
+        """
+        return _CookiesModule.merge_cookies(cookiejar, cookie_dict)
+
+
+# Create the cookies module instance
+cookies = _CookiesModule()
+
+
+# =============================================================================
+# URL Utilities
+# =============================================================================
+
+def requote_uri(uri):
+    """Requote a URI.
+    
+    This function quotes URL path components and unicode characters
+    using the quoting rules from requests library.
+    
+    Args:
+        uri: The URI to requote.
+    
+    Returns:
+        The requoted URI.
+    
+    Examples:
+        >>> requote_uri("http://example.com/path with spaces")
+        'http://example.com/path%20with%20spaces'
+    """
+    import re
+    from urllib.parse import quote, unquote
+    
+    # Unquote first to avoid double-quoting
+    uri = unquote(uri)
+    
+    # Re-quote using safe characters for URI
+    # This is a simplified version that handles the common cases
+    return quote(uri, safe='/:@!$&\'()*+,;=-_.~')
 
 
 # Version information
@@ -505,9 +700,15 @@ __all__ = [
     "ChunkedEncodingError",
     "ContentDecodingError",
     "StreamConsumedError",
+    "UnrewindableBodyError",
+    "InvalidJSONError",
     "FileModeWarning",
     "RequestsWarning",
     "DependencyWarning",
+    # Cookie utilities
+    "cookies",
+    # URL utilities
+    "requote_uri",
     # Metadata
     "__version__",
 ]
