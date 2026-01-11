@@ -17,8 +17,7 @@ Test categories:
 - Session management
 - Error handling
 
-All tests use httpbin.org for testing HTTP requests as it's a standard
-testing endpoint that echoes back request data.
+All tests use a local httpbin container via testcontainers.
 """
 
 import sys
@@ -31,12 +30,37 @@ import unittest
 import json
 import time
 import requestx
+from testcontainers.generic import ServerContainer
 
-# Base URL for httpbin.org test endpoints
+
+# Will be set dynamically by the container
 HTTPBIN_HOST = "http://localhost"
 
 
-class TestBasicRequests(unittest.TestCase):
+class HttpbinTestCase(unittest.TestCase):
+    """Base test case that provides an httpbin container for all tests."""
+
+    httpbin_port = 80
+
+    @classmethod
+    def setUpClass(cls):
+        """Start httpbin container before all tests in this class."""
+        cls.container = ServerContainer(port=80, image="kennethreitz/httpbin")
+        cls.container.start()
+        # Get the exposed port (handles port mapping)
+        cls.httpbin_port = cls.container.get_exposed_port(80)
+        # Update the global HTTPBIN_HOST
+        global HTTPBIN_HOST
+        HTTPBIN_HOST = f"http://localhost:{cls.httpbin_port}"
+
+    @classmethod
+    def tearDownClass(cls):
+        """Stop httpbin container after all tests in this class."""
+        if hasattr(cls, 'container'):
+            cls.container.stop()
+
+
+class TestBasicRequests(HttpbinTestCase):
     """Test basic HTTP requests following requests library quickstart examples."""
 
     def test_get_request(self):
@@ -101,7 +125,7 @@ class TestBasicRequests(unittest.TestCase):
         self.assertIn("headers", data)
 
 
-class TestResponseStatusCodes(unittest.TestCase):
+class TestResponseStatusCodes(HttpbinTestCase):
     """Test response status code handling."""
 
     def test_status_code_200(self):
@@ -155,7 +179,7 @@ class TestResponseStatusCodes(unittest.TestCase):
         self.assertTrue("not found" in r.reason.lower())
 
 
-class TestResponseHeaders(unittest.TestCase):
+class TestResponseHeaders(HttpbinTestCase):
     """Test response header access."""
 
     def test_headers_dict(self):
@@ -183,7 +207,7 @@ class TestResponseHeaders(unittest.TestCase):
         self.assertIn("application/json", content_type)
 
 
-class TestCookies(unittest.TestCase):
+class TestCookies(HttpbinTestCase):
     """Test cookie handling."""
 
     def test_send_cookies(self):
@@ -195,7 +219,7 @@ class TestCookies(unittest.TestCase):
         self.assertIn("cookies", data)
 
 
-class TestAuthentication(unittest.TestCase):
+class TestAuthentication(HttpbinTestCase):
     """Test HTTP authentication."""
 
     def test_basic_auth(self):
@@ -214,13 +238,13 @@ class TestAuthentication(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
 
-class TestRedirection(unittest.TestCase):
+class TestRedirection(HttpbinTestCase):
     """Test redirection handling."""
 
     def test_default_allow_redirects(self):
         """Test that redirects are followed by default."""
         # httpbin.org redirects to https
-        r = requestx.get("http://httpbin.org/relative-redirect/1")
+        r = requestx.get(HTTPBIN_HOST +"/relative-redirect/1")
         # Should follow redirect and end up at a different URL
         self.assertNotEqual(r.status_code, 302)
 
@@ -234,7 +258,7 @@ class TestRedirection(unittest.TestCase):
         self.assertEqual(r.status_code, 302)
 
 
-class TestTimeouts(unittest.TestCase):
+class TestTimeouts(HttpbinTestCase):
     """Test timeout handling."""
 
     def test_timeout_success(self):
@@ -256,7 +280,7 @@ class TestTimeouts(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
 
 
-class TestSessionManagement(unittest.TestCase):
+class TestSessionManagement(HttpbinTestCase):
     """Test Session class for persistent connections."""
 
     def test_session_creation(self):
@@ -310,7 +334,7 @@ class TestSessionManagement(unittest.TestCase):
         self.assertNotIn("X-To-Remove", data.get("headers", {}))
 
 
-class TestErrorHandling(unittest.TestCase):
+class TestErrorHandling(HttpbinTestCase):
     """Test error and exception handling."""
 
     def test_invalid_url(self):
@@ -346,7 +370,7 @@ class TestErrorHandling(unittest.TestCase):
             r.json()
 
 
-class TestResponseIterators(unittest.TestCase):
+class TestResponseIterators(HttpbinTestCase):
     """Test response content iteration methods."""
 
     def test_iter_content(self):
@@ -368,7 +392,7 @@ class TestResponseIterators(unittest.TestCase):
         self.assertTrue(len(lines) >= 0)
 
 
-class TestResponseMetadata(unittest.TestCase):
+class TestResponseMetadata(HttpbinTestCase):
     """Test response metadata properties."""
 
     def test_response_url(self):
@@ -405,7 +429,7 @@ class TestResponseMetadata(unittest.TestCase):
         self.assertFalse(r_error)
 
 
-class TestVerifySSL(unittest.TestCase):
+class TestVerifySSL(HttpbinTestCase):
     """Test SSL verification options."""
 
     def test_verify_default(self):
@@ -420,7 +444,7 @@ class TestVerifySSL(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
 
 
-class TestGenericRequest(unittest.TestCase):
+class TestGenericRequest(HttpbinTestCase):
     """Test the generic request() function with various methods."""
 
     def test_request_all_methods(self):

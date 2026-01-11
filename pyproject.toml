@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "requestx"
-version = "0.4.1"
+version = "0.4.2"
 description = "High-performance HTTP client for Python with requests-compatible API"
 authors = [
-{name = "RequestX Team", email = "wu.qunfei@gmail.com"},
+    {name = "RequestX Team", email = "wu.qunfei@gmail.com"},
 ]
 license = {text = "MIT"}
 readme = "README.md"
@@ -23,28 +23,44 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = ["http", "requests", "client", "async", "performance"]
-dependencies = [
-    "coverage>=7.6.1",
-    "locust>=2.34.0",
-    "maturin>=1.9.3",
-    "psutil>=7.0.0",
-    "tabulate>=0.9.0",
-    "python-logging-loki-v2>=0.4.4",
-    "certifi>=2023.7.22",
-    "python-dotenv>=1.1.1",
-    "http-client-benchmarker==5.0.3",
-]
+# No runtime Python dependencies - all logic is in Rust
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.24",
-    "aiohttp>=3.8",
-    "requests>=2.28",
-    "psutil>=7.0.0",
+    # Testing
+    "pytest>=7.0",
+    "testcontainers>=4.14.0",
+    # Code quality
     "black>=23.0",
     "ruff>=0.1",
     "mypy>=1.0",
-    "maturin>=1.9.1",
+    # Documentation
+    "furo>=2024.8.6",
+    "myst-parser>=3.0.1",
+    "sphinx>=7.1.2",
+    "sphinx-autodoc-typehints>=2.0.1",
+    "sphinx-copybutton>=0.5.2",
+    # Optional tools
+    "httpx>=0.24",
+    "aiohttp>=3.8",
+    "requests>=2.28",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "testcontainers>=4.14.0",
+    "black>=24.8.0",
+    "ruff>=0.12.5",
+    "mypy>=1.14.1",
+    "furo>=2024.8.6",
+    "myst-parser>=3.0.1",
+    "sphinx>=7.1.2",
+    "sphinx-autodoc-typehints>=2.0.1",
+    "sphinx-copybutton>=0.5.2",
+    "httpx>=0.28.1",
+    "aiohttp>=3.10.11",
+    "requests>=2.32.4",
 ]
 
 [project.urls]
@@ -105,33 +121,14 @@ ignore = [
 "__init__.py" = ["F401"]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
-disallow_untyped_decorators = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
-warn_no_return = true
 warn_unreachable = true
 strict_equality = true
-
-[dependency-groups]
-dev = [
-    "aiohttp>=3.10.11",
-    "black>=24.8.0",
-    "furo>=2024.8.6",
-    "httpx>=0.28.1",
-    "linkify-it-py>=2.0.3",
-    "locust>=2.31.8",
-    "mypy>=1.14.1",
-    "myst-parser>=3.0.1",
-    "requests>=2.32.4",
-    "ruff>=0.12.5",
-    "sphinx>=7.1.2",
-    "sphinx-autodoc-typehints>=2.0.1",
-    "sphinx-copybutton>=0.5.2",
-]
