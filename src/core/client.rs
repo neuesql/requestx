@@ -98,6 +98,7 @@ pub struct RequestConfig {
     pub json: Option<Value>,
     pub timeout: Option<Duration>,
     pub allow_redirects: bool,
+    pub max_redirects: Option<u32>,
     pub verify: bool,
     #[allow(dead_code)]
     pub cert: Option<String>,
@@ -213,6 +214,7 @@ impl RequestxClient {
             json: None,
             timeout: None,
             allow_redirects: Self::DEFAULT_ALLOW_REDIRECTS,
+            max_redirects: None,
             verify: Self::DEFAULT_VERIFY,
             cert: None,
             proxies: None,
@@ -466,10 +468,11 @@ impl RequestxClient {
         // Handle redirects with optimized logic
         if config.allow_redirects && response.status().is_redirection() {
             let mut redirect_count = 0;
-            const MAX_REDIRECTS: u8 = 10;
+            // Use config max_redirects if set, otherwise default to 30
+            let max_redirects = config.max_redirects.unwrap_or(30) as u8;
             let mut history: Vec<ResponseData> = Vec::new();
 
-            while response.status().is_redirection() && redirect_count < MAX_REDIRECTS {
+            while response.status().is_redirection() && redirect_count < max_redirects {
                 // Capture redirect response in history (before following redirect)
                 let redirect_status = response.status().as_u16();
                 let redirect_headers = response.headers().clone();
@@ -554,7 +557,9 @@ impl RequestxClient {
                 }
             }
 
-            if redirect_count >= MAX_REDIRECTS {
+            // Check if we exceeded max redirects
+            let max_redirects = config.max_redirects.unwrap_or(30) as u8;
+            if redirect_count >= max_redirects {
                 return Err(RequestxError::TooManyRedirects);
             }
 
@@ -782,6 +787,7 @@ mod tests {
             json: Some(json_data),
             timeout: None,
             allow_redirects: true,
+            max_redirects: None,
             verify: true,
             cert: None,
             proxies: None,
@@ -814,6 +820,7 @@ mod tests {
             json: None,
             timeout: None,
             allow_redirects: true,
+            max_redirects: None,
             verify: true,
             cert: None,
             proxies: None,
@@ -842,6 +849,7 @@ mod tests {
             json: None,
             timeout: None,
             allow_redirects: true,
+            max_redirects: None,
             verify: true,
             cert: None,
             proxies: None,
@@ -870,6 +878,7 @@ mod tests {
             json: None,
             timeout: Some(Duration::from_secs(1)), // 1 second timeout for 5 second delay
             allow_redirects: true,
+            max_redirects: None,
             verify: true,
             cert: None,
             proxies: None,
@@ -910,6 +919,7 @@ mod tests {
             json: None,
             timeout: None,
             allow_redirects: true,
+            max_redirects: None,
             verify: true,
             cert: None,
             proxies: None,

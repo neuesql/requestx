@@ -1,7 +1,9 @@
 use cookie_store::CookieStore;
-use hyper::{HeaderMap, Method, Uri};
+use hyper::header::{HeaderValue, SET_COOKIE};
+use hyper::{Method, Uri};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::core::client::{create_client, RequestxClient, ResponseData};
@@ -9,12 +11,84 @@ use crate::core::runtime::get_global_runtime_manager;
 use crate::error::RequestxError;
 use crate::{parse_kwargs, response_data_to_py_response};
 
+/// Case-insensitive header wrapper for session headers
+#[derive(Clone, Debug)]
+pub struct CaseInsensitiveHeaders {
+    inner: HashMap<String, String>,
+    lowercase_map: HashMap<String, String>,
+}
+
+impl CaseInsensitiveHeaders {
+    pub fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+            lowercase_map: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, key: String, value: String) {
+        let lowercase_key = key.to_lowercase();
+        self.lowercase_map
+            .insert(lowercase_key.clone(), value.clone());
+        self.inner.insert(key, value);
+    }
+
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.lowercase_map.get(&key.to_lowercase())
+    }
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut String> {
+        self.lowercase_map.get_mut(&key.to_lowercase())
+    }
+
+    pub fn remove(&mut self, key: &str) {
+        let lowercase_key = key.to_lowercase();
+        if let Some(original_key) = self.lowercase_map.get(&lowercase_key) {
+            self.inner.remove(original_key);
+        }
+        self.lowercase_map.remove(&lowercase_key);
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+        self.lowercase_map.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.inner.iter()
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.inner.keys()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &String> {
+        self.inner.values()
+    }
+}
+
+impl Default for CaseInsensitiveHeaders {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Session object for persistent HTTP connections with cookie and header management
 #[pyclass]
 pub struct Session {
     client: RequestxClient,
     cookies: Arc<Mutex<CookieStore>>,
-    headers: Arc<Mutex<HeaderMap>>,
+    headers: Arc<Mutex<CaseInsensitiveHeaders>>,
+    trust_env: bool,
+    max_redirects: u32,
 }
 
 #[pymethods]
@@ -30,12 +104,14 @@ impl Session {
         })?;
 
         let cookies = Arc::new(Mutex::new(CookieStore::default()));
-        let headers = Arc::new(Mutex::new(HeaderMap::new()));
+        let headers = Arc::new(Mutex::new(CaseInsensitiveHeaders::new()));
 
         Ok(Session {
             client,
             cookies,
             headers,
+            trust_env: true,
+            max_redirects: 30,
         })
     }
 
@@ -154,16 +230,43 @@ impl Session {
         // Merge session headers with request headers (only if session has headers)
         let session_headers = self.headers.lock().unwrap();
         if !session_headers.is_empty() {
-            let mut merged_headers = session_headers.clone();
+            let mut merged_headers = config_builder.headers.take().unwrap_or_default();
 
-            // If request has headers, merge them (request headers take precedence)
-            if let Some(ref request_headers) = config_builder.headers {
-                for (name, value) in request_headers.iter() {
-                    merged_headers.insert(name.clone(), value.clone());
+            // Add session headers (request headers take precedence)
+            for (name, value) in session_headers.iter() {
+                if let (Ok(header_name), Ok(header_value)) = (
+                    name.parse::<hyper::header::HeaderName>(),
+                    value.parse::<hyper::header::HeaderValue>(),
+                ) {
+                    merged_headers.insert(header_name, header_value);
                 }
             }
 
             config_builder.headers = Some(merged_headers);
+        }
+
+        // Get cookies for this URL from the session cookie store
+        let cookies_for_url = {
+            let cookies = self.cookies.lock().unwrap();
+            Self::get_cookies_for_url(&cookies, &uri)
+        };
+
+        // Add cookies to request headers
+        if let Some(cookie_header) = cookies_for_url {
+            if let Ok(cookie_value) = hyper::header::HeaderValue::from_str(&cookie_header) {
+                if let Some(ref mut headers) = config_builder.headers {
+                    headers.insert(hyper::header::COOKIE, cookie_value);
+                } else {
+                    let mut headers = hyper::HeaderMap::new();
+                    headers.insert(hyper::header::COOKIE, cookie_value);
+                    config_builder.headers = Some(headers);
+                }
+            }
+        }
+
+        // Apply max_redirects from session if not explicitly set
+        if config_builder.max_redirects.is_none() {
+            config_builder.max_redirects = Some(self.max_redirects);
         }
 
         let config = config_builder.build(method, uri);
@@ -199,9 +302,7 @@ impl Session {
         let dict = pyo3::types::PyDict::new(py);
 
         for (name, value) in headers.iter() {
-            let name_str = name.to_string();
-            let value_str = value.to_str().unwrap_or("").to_string();
-            dict.set_item(name_str, value_str)?;
+            dict.set_item(name, value)?;
         }
 
         Ok(dict.into())
@@ -216,22 +317,7 @@ impl Session {
         for (key, value) in headers_dict.iter() {
             let key_str = key.extract::<String>()?;
             let value_str = value.extract::<String>()?;
-
-            let header_name = key_str.parse::<hyper::header::HeaderName>().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid header name '{key_str}': {e}"
-                ))
-            })?;
-
-            let header_value = value_str
-                .parse::<hyper::header::HeaderValue>()
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Invalid header value '{value_str}': {e}"
-                    ))
-                })?;
-
-            headers.insert(header_name, header_value);
+            headers.insert(key_str, value_str);
         }
 
         Ok(())
@@ -254,34 +340,14 @@ impl Session {
     /// Update a session header
     fn update_header(&self, name: String, value: String) -> PyResult<()> {
         let mut headers = self.headers.lock().unwrap();
-
-        let header_name = name.parse::<hyper::header::HeaderName>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header name '{name}': {e}"
-            ))
-        })?;
-
-        let header_value = value.parse::<hyper::header::HeaderValue>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header value '{value}': {e}"
-            ))
-        })?;
-
-        headers.insert(header_name, header_value);
+        headers.insert(name, value);
         Ok(())
     }
 
     /// Remove a session header
     fn remove_header(&self, name: String) -> PyResult<()> {
         let mut headers = self.headers.lock().unwrap();
-
-        let header_name = name.parse::<hyper::header::HeaderName>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid header name '{name}': {e}"
-            ))
-        })?;
-
-        headers.remove(&header_name);
+        headers.remove(&name);
         Ok(())
     }
 
@@ -297,6 +363,30 @@ impl Session {
         let mut cookies = self.cookies.lock().unwrap();
         cookies.clear();
         Ok(())
+    }
+
+    /// Get trust_env setting
+    #[getter]
+    fn trust_env(&self) -> bool {
+        self.trust_env
+    }
+
+    /// Set trust_env setting
+    #[setter]
+    fn set_trust_env(&mut self, value: bool) {
+        self.trust_env = value;
+    }
+
+    /// Get max_redirects setting
+    #[getter]
+    fn max_redirects(&self) -> u32 {
+        self.max_redirects
+    }
+
+    /// Set max_redirects setting
+    #[setter]
+    fn set_max_redirects(&mut self, value: u32) {
+        self.max_redirects = value;
     }
 
     /// Close the session (cleanup resources)
@@ -327,25 +417,68 @@ impl Session {
     fn __repr__(&self) -> String {
         let headers_count = self.headers.lock().unwrap().len();
         let cookies_count = self.cookies.lock().unwrap().iter_any().count();
-        format!("<Session headers={headers_count} cookies={cookies_count}>")
+        format!(
+            "<Session headers={} cookies={} trust_env={} max_redirects={}>",
+            headers_count, cookies_count, self.trust_env, self.max_redirects
+        )
     }
 }
 
 impl Session {
+    /// Get cookies for a specific URL from the cookie store
+    fn get_cookies_for_url(cookie_store: &CookieStore, uri: &Uri) -> Option<String> {
+        // Create a url::Url from the URI for cookie matching
+        let request_url = url::Url::parse(uri.to_string().as_str()).ok()?;
+        let cookies: Vec<String> = cookie_store
+            .iter_any()
+            .filter(|cookie| cookie.matches(&request_url))
+            .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+            .collect();
+
+        if cookies.is_empty() {
+            None
+        } else {
+            Some(cookies.join("; "))
+        }
+    }
+
     /// Process cookies from HTTP response and store them in the session
     async fn process_response_cookies(
-        _cookies: &Arc<Mutex<CookieStore>>,
-        _response_data: &ResponseData,
+        cookies: &Arc<Mutex<CookieStore>>,
+        response_data: &ResponseData,
     ) {
-        // TODO: Implement proper cookie parsing and storage
-        // For now, we'll skip cookie processing due to lifetime complexities
-        // This can be enhanced in a future iteration to properly handle cookies
-        // The cookie store is available and ready for implementation
+        // Get all Set-Cookie headers from the response
+        let set_cookie_headers: Vec<HeaderValue> = response_data
+            .headers
+            .get_all(SET_COOKIE)
+            .into_iter()
+            .cloned()
+            .collect();
+
+        if set_cookie_headers.is_empty() {
+            return;
+        }
+
+        // Parse each Set-Cookie header and add to the store
+        let mut cookie_store = cookies.lock().unwrap();
+
+        // Create request URL for cookie domain validation
+        let request_url = url::Url::parse(response_data.url.to_string().as_str()).ok();
+
+        for header_value in set_cookie_headers {
+            if let Ok(header_str) = header_value.to_str() {
+                // Parse the cookie from the Set-Cookie header
+                if let Some(url) = &request_url {
+                    // The parse method returns a StoreAction, not a Cookie
+                    let _ = cookie_store.parse(header_str, url);
+                }
+            }
+        }
     }
 
     /// Update session headers based on response (e.g., authentication tokens)
     async fn update_session_headers(
-        _session_headers: &Arc<Mutex<HeaderMap>>,
+        _session_headers: &Arc<Mutex<CaseInsensitiveHeaders>>,
         _response_data: &ResponseData,
     ) {
         // For now, we don't automatically update session headers from responses

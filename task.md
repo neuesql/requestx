@@ -14,11 +14,17 @@
 - ✅ Case-insensitive headers (`headers["Content-Type"]` == `headers["content-type"]`)
 - ✅ Phase 1 Tests: `tests/test_response_enhanced.py` (66 tests)
 
-**Current Phase:** Phase 2 - Session Enhancements (pending)
-- Cookie management
-- Session headers case-insensitivity
-- Trust environment settings
-- Max redirects control
+**Phase 2 Status:** ✅ COMPLETED
+- ✅ Cookie management (cookie_store integration, cookies persist across requests)
+- ✅ Session headers case-insensitivity (`CaseInsensitiveHeaders` wrapper)
+- ✅ Trust environment settings (`session.trust_env` property)
+- ✅ Max redirects control (`session.max_redirects` property, configurable per session)
+- ✅ Phase 2 Tests: `tests/test_session_enhanced.py` (43 tests)
+
+**Current Phase:** Phase 3 - Authentication System (pending)
+- Digest authentication
+- Proxy authentication
+- Auth from URL
 
 ---
 
@@ -685,13 +691,15 @@ Create `tests/test_prepared_requests.py` with comprehensive tests for all Phase 
 **Phase 1: COMPLETED** ✅
 
 ### Phase 2 Checklist
-- [ ] Implement proper cookie management
-- [ ] Make session headers case-insensitive
-- [ ] Add trust_env configuration
-- [ ] Add max_redirects control
-- [ ] Write Phase 2 tests
-- [ ] Run Phase 2 test suite
-- [ ] Update todos in task.md
+- [x] Implement proper cookie management
+- [x] Make session headers case-insensitive
+- [x] Add trust_env configuration
+- [x] Add max_redirects control
+- [x] Write Phase 2 tests (`tests/test_session_enhanced.py` - 43 tests)
+- [x] Run Phase 2 test suite
+- [x] Update todos in task.md
+
+**Phase 2: COMPLETED** ✅
 
 ### Phase 3 Checklist
 - [ ] Implement Digest authentication
@@ -778,7 +786,7 @@ if __name__ == "__main__":
 
 ### Test Files to Create
 - [x] `tests/test_response_enhanced.py` (Phase 1) - 66 tests ✅ DONE
-- [ ] `tests/test_session_enhanced.py` (Phase 2)
+- [x] `tests/test_session_enhanced.py` (Phase 2) - 43 tests ✅ DONE
 - [ ] `tests/test_authentication.py` (Phase 3)
 - [ ] `tests/test_file_uploads.py` (Phase 4)
 - [ ] `tests/test_advanced_features.py` (Phase 5)
@@ -804,12 +812,12 @@ To achieve 90% compatibility, requestx must support:
 
 ### High Priority Features (90% Required)
 - [ ] File uploads (files parameter) - Phase 4
-- [ ] Cookie management - Phase 2
+- [x] Cookie management ✅ COMPLETED (Phase 2)
 - [x] Response history ✅ COMPLETED (Phase 1)
 - [x] Case-insensitive headers ✅ COMPLETED (Phase 1)
 - [x] iter_content() generator ✅ COMPLETED (Phase 1)
 - [x] iter_lines() generator ✅ COMPLETED (Phase 1)
-- [ ] Session headers/cookies - Phase 2
+- [x] Session headers/cookies ✅ COMPLETED (Phase 2)
 
 ### Medium Priority Features (80% Required)
 - [ ] Proxy support - Phase 3
@@ -824,6 +832,10 @@ To achieve 90% compatibility, requestx must support:
 - [x] iter_content() generator
 - [x] iter_lines() generator
 - [x] Elapsed time tracking
+
+### Phase 2 Progress: 2/2 High Priority ✅ COMPLETED
+- [x] Cookie management
+- [x] Session headers/cookies
 
 ### Overall Target
 - **90% of common use cases** covered by tests
