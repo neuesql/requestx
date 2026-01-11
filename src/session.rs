@@ -472,12 +472,22 @@ impl Session {
                         .and_then(|bf| bf.extract::<f64>(py).ok())
                         .unwrap_or(0.1);
 
-                    // Get status_forcelist
-                    let status_forcelist: Vec<u16> = max_retries_obj
-                        .getattr(py, "status_forcelist")
-                        .ok()
-                        .and_then(|sf| sf.extract::<Vec<u16>>(py).ok())
-                        .unwrap_or_default();
+                    // Get status_forcelist (handle frozenset or other iterables)
+                    let status_forcelist: Vec<u16> = {
+                        // Use Python's built-in list() to convert frozenset to list, then extract
+                        if let Ok(sf) = max_retries_obj.getattr(py, "status_forcelist") {
+                            // Call list() on the frozenset to convert it
+                            let list_obj: Py<PyAny> = py
+                                .import("builtins")?
+                                .getattr("list")?
+                                .call1((sf.clone_ref(py),))?
+                                .into();
+                            // Now extract as Vec<u16>
+                            list_obj.extract(py).unwrap_or_else(|_| vec![])
+                        } else {
+                            vec![502, 503, 504] // Default retry status codes
+                        }
+                    };
 
                     RetryConfig {
                         total,

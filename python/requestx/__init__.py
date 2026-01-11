@@ -236,7 +236,8 @@ class Retry:
         self.total = total
         self.connect = connect
         self.read = read
-        self.status_forcelist = status_forcelist or frozenset()
+        # Default status_forcelist includes 502, 503, 504 (server errors that warrant retry)
+        self.status_forcelist = status_forcelist if status_forcelist is not None else frozenset([502, 503, 504])
         self.allowed_methods = allowed_methods or self.DEFAULT_METHODS
         self.backoff_factor = backoff_factor
         self.raise_on_redirect = raise_on_redirect
