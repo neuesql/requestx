@@ -365,6 +365,7 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
         response_data.url.to_string(),
         headers,
         response_data.body.to_vec(),
+        response_data.is_stream,
     ))
 }
 

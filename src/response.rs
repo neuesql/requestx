@@ -27,6 +27,9 @@ pub struct Response {
 
     #[pyo3(get)]
     reason: String,
+
+    // Streaming support
+    is_stream: bool,
 }
 
 #[pymethods]
@@ -37,6 +40,7 @@ impl Response {
         url: String,
         headers: HashMap<String, String>,
         content: Vec<u8>,
+        is_stream: bool,
     ) -> Self {
         let ok = status_code < 400;
         let reason = Self::status_code_to_reason(status_code);
@@ -50,6 +54,7 @@ impl Response {
             encoding: None,
             ok,
             reason,
+            is_stream,
         }
     }
 
@@ -172,6 +177,30 @@ impl Response {
         // TODO: Implement proper cookie parsing from Set-Cookie headers
         let dict = PyDict::new(py);
         Ok(dict.into())
+    }
+
+    /// Iterate over response body in chunks (for streaming large responses)
+    /// Returns an iterator that yields bytes chunks
+    fn iter_bytes(&self, py: Python) -> PyResult<PyObject> {
+        if let Some(ref content) = self.binary_content {
+            let chunk_size = 64 * 1024;
+            let chunks: Vec<PyObject> = content
+                .chunks(chunk_size)
+                .map(|chunk| PyBytes::new(py, chunk).into())
+                .collect();
+
+            let list = PyList::new(py, &chunks)?;
+            Ok(list.into())
+        } else {
+            let list = PyList::empty(py);
+            Ok(list.into())
+        }
+    }
+
+    /// Check if response is in streaming mode
+    #[getter]
+    fn is_stream(&self) -> bool {
+        self.is_stream
     }
 
     /// Get response history (placeholder - returns empty list for now)

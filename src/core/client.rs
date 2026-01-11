@@ -122,6 +122,8 @@ pub struct ResponseData {
     pub headers: HeaderMap,
     pub body: Bytes,
     pub url: Uri,
+    /// Indicates if the body was streamed (not fully buffered)
+    pub is_stream: bool,
 }
 
 /// Core HTTP client using hyper
@@ -517,6 +519,7 @@ impl RequestxClient {
             headers,
             body: body_bytes,
             url,
+            is_stream: config.stream,
         })
     }
 }
