@@ -39,6 +39,20 @@ from ._requestx import (
     request as _request,
 )
 
+# Auth classes and utilities
+from ._requestx import (
+    HTTPDigestAuth,
+)
+from ._requestx import (
+    HTTPProxyAuth,
+)
+from ._requestx import (
+    get_auth_from_url,
+)
+from ._requestx import (
+    urldefragauth,
+)
+
 
 # Exception hierarchy matching requests library
 class RequestException(Exception):
@@ -215,6 +229,12 @@ __all__ = [
     # Classes
     "Response",
     "Session",
+    # Auth classes
+    "HTTPDigestAuth",
+    "HTTPProxyAuth",
+    # Auth utilities
+    "get_auth_from_url",
+    "urldefragauth",
     # Exceptions
     "RequestException",
     "ConnectionError",

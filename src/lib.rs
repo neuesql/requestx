@@ -7,19 +7,21 @@ use std::collections::HashMap;
 
 use std::time::Duration;
 
+mod auth;
 mod config;
 mod core;
 mod error;
 mod response;
 mod session;
 
+use auth::{get_auth_from_url, urldefragauth};
 use core::client::{RequestConfig, RequestData, RequestxClient, ResponseData};
 use error::RequestxError;
 use response::{CaseInsensitivePyDict, Response};
 use session::Session;
 
 /// Parse and validate URL with comprehensive error handling
-fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
+fn parse_and_validate_url(url: &str) -> PyResult<(Uri, Option<(String, String)>)> {
     // Check for empty URL
     if url.is_empty() {
         return Err(RequestxError::UrlRequired.into());
@@ -42,7 +44,21 @@ fn parse_and_validate_url(url: &str) -> PyResult<Uri> {
 
     // Validate schema
     match uri.scheme_str() {
-        Some("http") | Some("https") => Ok(uri),
+        Some("http") | Some("https") => {
+            // Extract auth from URL if present
+            let auth = uri
+                .authority()
+                .and_then(|a| a.as_str().split('@').next())
+                .and_then(|userinfo| {
+                    let parts: Vec<&str> = userinfo.split(':').collect();
+                    if parts.len() >= 2 {
+                        Some((parts[0].to_string(), parts[1..].join(":")))
+                    } else {
+                        None
+                    }
+                });
+            Ok((uri, auth))
+        }
         Some(scheme) => Err(RequestxError::InvalidSchema(scheme.to_string()).into()),
         None => Err(RequestxError::MissingSchema.into()),
     }
@@ -114,8 +130,9 @@ fn parse_kwargs(py: Python, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Requ
         // Parse auth
         if let Some(auth_obj) = kwargs.get_item("auth")? {
             if !auth_obj.is_none() {
-                let auth = parse_auth(&auth_obj)?;
-                builder.auth = Some(auth);
+                if let Some(auth) = parse_auth(&auth_obj)? {
+                    builder.auth = Some(auth);
+                }
             }
         }
 
@@ -334,11 +351,11 @@ fn parse_proxies(proxies_obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, Str
     Ok(proxies)
 }
 
-/// Parse authentication from Python object
-fn parse_auth(auth_obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+/// Parse authentication from Python object - supports tuple, list, and auth objects
+fn parse_auth(auth_obj: &Bound<'_, PyAny>) -> PyResult<Option<(String, String)>> {
     // Try tuple/list first
     if let Ok(tuple) = auth_obj.extract::<(String, String)>() {
-        return Ok(tuple);
+        return Ok(Some(tuple));
     }
 
     // Try list
@@ -346,7 +363,27 @@ fn parse_auth(auth_obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
         if list.len() == 2 {
             let username = list.get_item(0).unwrap().extract::<String>()?;
             let password = list.get_item(1).unwrap().extract::<String>()?;
-            return Ok((username, password));
+            return Ok(Some((username, password)));
+        }
+    }
+
+    // Try extracting as dict with 'username' and 'password' keys (auth object style)
+    if let Ok(dict) = auth_obj.downcast::<PyDict>() {
+        if let (Some(username_obj), Some(password_obj)) =
+            (dict.get_item("username")?, dict.get_item("password")?)
+        {
+            let username = username_obj.extract::<String>()?;
+            let password = password_obj.extract::<String>()?;
+            return Ok(Some((username, password)));
+        }
+    }
+
+    // Check for auth object with username/password attributes (e.g., HTTPDigestAuth)
+    if let Ok(username_attr) = auth_obj.getattr("username") {
+        if let Ok(password_attr) = auth_obj.getattr("password") {
+            let username = username_attr.extract::<String>()?;
+            let password = password_attr.extract::<String>()?;
+            return Ok(Some((username, password)));
         }
     }
 
@@ -402,8 +439,16 @@ fn response_data_to_py_response(response_data: ResponseData) -> PyResult<Respons
 /// HTTP GET request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn get(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::GET, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -421,8 +466,16 @@ fn get(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<
 /// HTTP POST request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn post(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::POST, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -440,8 +493,16 @@ fn post(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 /// HTTP PUT request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn put(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::PUT, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -459,8 +520,16 @@ fn put(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<
 /// HTTP DELETE request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn delete(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::DELETE, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -478,8 +547,16 @@ fn delete(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResu
 /// HTTP HEAD request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn head(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::HEAD, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -497,8 +574,16 @@ fn head(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult
 /// HTTP OPTIONS request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn options(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::OPTIONS, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -516,8 +601,16 @@ fn options(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyRes
 /// HTTP PATCH request with enhanced async/sync context detection
 #[pyfunction(signature = (url, /, **kwargs))]
 fn patch(py: Python, url: String, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(Method::PATCH, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -559,8 +652,16 @@ fn request(
         }
     };
 
-    let uri: Uri = parse_and_validate_url(&url)?;
-    let config_builder = parse_kwargs(py, kwargs)?;
+    let (uri, url_auth) = parse_and_validate_url(&url)?;
+    let mut config_builder = parse_kwargs(py, kwargs)?;
+
+    // Merge URL auth with kwargs auth (kwargs auth takes precedence)
+    if let Some(url_auth) = url_auth {
+        if config_builder.auth.is_none() {
+            config_builder.auth = Some(url_auth);
+        }
+    }
+
     let config = config_builder.build(method, uri);
 
     // Use enhanced runtime management for context detection and execution
@@ -588,10 +689,18 @@ fn _requestx(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(patch, m)?)?;
     m.add_function(wrap_pyfunction!(request, m)?)?;
 
+    // Register utility functions
+    m.add_function(wrap_pyfunction!(get_auth_from_url, m)?)?;
+    m.add_function(wrap_pyfunction!(urldefragauth, m)?)?;
+
     // Register classes
     m.add_class::<Response>()?;
     m.add_class::<CaseInsensitivePyDict>()?;
     m.add_class::<Session>()?;
+
+    // Register auth classes
+    m.add_class::<auth::PyHTTPDigestAuth>()?;
+    m.add_class::<auth::PyHTTPProxyAuth>()?;
 
     // Register custom exceptions
     error::register_exceptions(py, m)?;
