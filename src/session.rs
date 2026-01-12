@@ -1,3 +1,8 @@
+//! Session management for requestx
+//!
+//! Provides the Session struct for persistent HTTP connections with
+//! cookie and header management, supporting retry logic and hooks.
+
 use cookie_store::CookieStore;
 use hyper::header::{HeaderValue, SET_COOKIE};
 use hyper::{Method, Uri};
@@ -6,9 +11,10 @@ use pyo3::types::{PyDict, PyString};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::core::client::{create_client, RequestxClient, ResponseData};
+use crate::core::http_client::{create_client, RequestxClient, ResponseData};
 use crate::core::runtime::get_global_runtime_manager;
 use crate::error::RequestxError;
+use crate::types::headers::CaseInsensitiveHeaders;
 use crate::{parse_kwargs, response_data_to_py_response};
 
 /// Simple retry configuration extracted from Python Retry object
@@ -26,82 +32,6 @@ impl Default for RetryConfig {
             backoff_factor: 0.1,
             status_forcelist: Vec::new(),
         }
-    }
-}
-
-/// Case-insensitive header wrapper for session headers
-#[derive(Clone, Debug)]
-pub struct CaseInsensitiveHeaders {
-    inner: HashMap<String, String>,
-    lowercase_map: HashMap<String, String>,
-}
-
-impl CaseInsensitiveHeaders {
-    pub fn new() -> Self {
-        Self {
-            inner: HashMap::new(),
-            lowercase_map: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, key: String, value: String) {
-        let lowercase_key = key.to_lowercase();
-        self.lowercase_map
-            .insert(lowercase_key.clone(), key.clone());
-        self.inner.insert(key, value);
-    }
-
-    pub fn get(&self, key: &str) -> Option<&String> {
-        let lowercase_key = key.to_lowercase();
-        self.lowercase_map
-            .get(&lowercase_key)
-            .and_then(|original_key| self.inner.get(original_key))
-    }
-
-    pub fn get_mut(&mut self, key: &str) -> Option<&mut String> {
-        let lowercase_key = key.to_lowercase();
-        self.lowercase_map
-            .get(&lowercase_key)
-            .and_then(|original_key| self.inner.get_mut(original_key))
-    }
-
-    pub fn remove(&mut self, key: &str) {
-        let lowercase_key = key.to_lowercase();
-        if let Some(original_key) = self.lowercase_map.get(&lowercase_key) {
-            self.inner.remove(original_key);
-        }
-        self.lowercase_map.remove(&lowercase_key);
-    }
-
-    pub fn clear(&mut self) {
-        self.inner.clear();
-        self.lowercase_map.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.inner.iter()
-    }
-
-    pub fn keys(&self) -> impl Iterator<Item = &String> {
-        self.inner.keys()
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &String> {
-        self.inner.values()
-    }
-}
-
-impl Default for CaseInsensitiveHeaders {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -650,7 +580,10 @@ impl Session {
                             continue;
                         }
 
-                        // Process cookies from response
+                        // Process cookies from response (including redirect history)
+                        for history_data in &response_data.history {
+                            Self::process_response_cookies(&cookies, history_data).await;
+                        }
                         Self::process_response_cookies(&cookies, &response_data).await;
 
                         // Update session headers if needed

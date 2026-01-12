@@ -1,0 +1,931 @@
+use base64::prelude::*;
+use bytes::Bytes;
+use futures_util::StreamExt;
+use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
+use hyper_tls::HttpsConnector;
+use sonic_rs::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+use tokio::runtime::Runtime;
+
+use crate::config::get_http_client_config;
+use crate::error::RequestxError;
+
+// Re-export from submodules
+pub use crate::core::client::auth::{add_auth_header, add_query_params, build_basic_auth_header};
+pub use crate::core::client::body::{
+    build_body, build_multipart_body, generate_boundary, BuiltBody,
+};
+pub use crate::core::client::redirect::{
+    build_redirect_url, follow_redirects, get_redirect_method, is_redirect, process_redirect,
+    RedirectHistoryItem, MAX_REDIRECTS,
+};
+
+// Content type constant for JSON
+const CONTENT_TYPE_JSON: &str = "application/json";
+
+pub fn create_client() -> Client<HttpsConnector<hyper::client::HttpConnector>> {
+    let config = get_http_client_config();
+    let https = HttpsConnector::new();
+
+    Client::builder()
+        .pool_idle_timeout(config.pool_idle_timeout())
+        .pool_max_idle_per_host(config.pool_max_idle_per_host)
+        .http2_only(config.http2_only)
+        .http2_initial_stream_window_size(Some(config.http2_initial_stream_window_size))
+        .http2_initial_connection_window_size(Some(config.http2_initial_connection_window_size))
+        .http2_keep_alive_interval(Some(config.http2_keep_alive_interval()))
+        .http2_keep_alive_timeout(config.http2_keep_alive_timeout())
+        .build::<_, hyper::Body>(https)
+}
+
+static GLOBAL_CLIENT: OnceLock<Client<HttpsConnector<hyper::client::HttpConnector>>> =
+    OnceLock::new();
+
+// Cached no-verify client (lazy initialized)
+static NOVERIFY_CLIENT: OnceLock<Option<Client<HttpsConnector<hyper::client::HttpConnector>>>> =
+    OnceLock::new();
+
+#[inline]
+fn get_global_client() -> &'static Client<HttpsConnector<hyper::client::HttpConnector>> {
+    GLOBAL_CLIENT.get_or_init(create_client)
+}
+
+/// Get cached no-verify client (avoids creating new TLS connector per request)
+#[inline]
+fn get_noverify_client(
+) -> Result<&'static Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+    let client_opt = NOVERIFY_CLIENT.get_or_init(|| create_custom_client(false).ok());
+
+    client_opt.as_ref().ok_or_else(|| {
+        RequestxError::SslError("No-verify client initialization failed".to_string())
+    })
+}
+
+/// Create a custom client with specific SSL verification settings
+fn create_custom_client(
+    verify: bool,
+) -> Result<Client<HttpsConnector<hyper::client::HttpConnector>>, RequestxError> {
+    if verify {
+        // For verify=true, use the standard configured client
+        return Ok(create_client());
+    }
+
+    let config = get_http_client_config();
+
+    // For verify=false, create a custom TLS connector that accepts invalid certs
+    let mut https_builder = hyper_tls::native_tls::TlsConnector::builder();
+    https_builder.danger_accept_invalid_certs(true);
+    https_builder.danger_accept_invalid_hostnames(true);
+
+    let tls_connector = https_builder
+        .build()
+        .map_err(|e| RequestxError::SslError(format!("Failed to create TLS connector: {e}")))?;
+
+    let mut http_connector = hyper::client::HttpConnector::new();
+    http_connector.enforce_http(false);
+
+    let https_connector = HttpsConnector::from((http_connector, tls_connector.into()));
+
+    Ok(Client::builder()
+        .pool_idle_timeout(config.pool_idle_timeout())
+        .pool_max_idle_per_host(config.pool_max_idle_per_host)
+        .http2_only(config.http2_only)
+        .http2_initial_stream_window_size(Some(config.http2_initial_stream_window_size))
+        .http2_initial_connection_window_size(Some(config.http2_initial_connection_window_size))
+        .build::<_, hyper::Body>(https_connector))
+}
+
+/// Request configuration for HTTP requests
+#[derive(Debug, Clone)]
+pub struct RequestConfig {
+    pub method: Method,
+    pub url: Uri,
+    pub headers: Option<HeaderMap>,
+    pub params: Option<HashMap<String, String>>,
+    pub data: Option<RequestData>,
+    pub json: Option<Value>,
+    pub files: Option<Vec<FilePart>>,
+    pub timeout: Option<Duration>,
+    pub allow_redirects: bool,
+    pub max_redirects: Option<u32>,
+    pub verify: bool,
+    #[allow(dead_code)]
+    pub cert: Option<String>,
+    #[allow(dead_code)]
+    pub proxies: Option<HashMap<String, String>>,
+    pub auth: Option<(String, String)>,
+    #[allow(dead_code)]
+    pub stream: bool,
+}
+
+/// Represents a file to be uploaded
+#[derive(Debug, Clone)]
+pub struct FilePart {
+    pub field_name: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+    pub data: Vec<u8>,
+}
+
+/// Request data types
+#[derive(Debug, Clone)]
+pub enum RequestData {
+    Text(String),
+    Bytes(Vec<u8>),
+    Form(HashMap<String, String>),
+    Multipart {
+        /// Form fields (text key-value pairs)
+        fields: HashMap<String, String>,
+        /// Files to include in the multipart body
+        files: Vec<FilePart>,
+        /// Generated boundary string
+        boundary: String,
+    },
+}
+
+/// Response data from HTTP requests
+#[derive(Debug)]
+pub struct ResponseData {
+    pub status_code: u16,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+    pub url: Uri,
+    /// Indicates if the body was streamed (not fully buffered)
+    pub is_stream: bool,
+    /// Elapsed time from request start to response headers received (in microseconds)
+    pub elapsed_us: u64,
+    /// History of redirect responses (empty for non-redirect responses)
+    pub history: Vec<ResponseData>,
+    /// For streaming responses: pre-chunked body parts for efficient iteration
+    #[allow(dead_code)]
+    pub body_chunks: Option<Vec<Bytes>>,
+}
+
+/// Read body into chunks for streaming responses
+async fn read_body_chunks(mut body: Body) -> Result<(Bytes, Vec<Bytes>), RequestxError> {
+    let mut chunks = Vec::new();
+    let mut total_size = 0;
+
+    // Read body in chunks
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk
+            .map_err(|e| RequestxError::RuntimeError(format!("Failed to read body chunk: {e}")))?;
+        total_size += chunk.len();
+        chunks.push(chunk);
+
+        // Optional: Add a size limit to prevent memory exhaustion
+        // For now, we allow up to 1GB in streaming mode
+        if total_size > 1024 * 1024 * 1024 {
+            return Err(RequestxError::RuntimeError(
+                "Response body exceeds 1GB limit for streaming".to_string(),
+            ));
+        }
+    }
+
+    // Combine all chunks into a single Bytes for backward compatibility
+    let mut combined = Vec::with_capacity(total_size);
+    for chunk in chunks.iter() {
+        combined.extend_from_slice(chunk);
+    }
+
+    Ok((combined.into(), chunks))
+}
+
+/// Core HTTP client using hyper
+pub struct RequestxClient {
+    // Use reference to global client for better performance
+    use_global_client: bool,
+    custom_client: Option<Client<HttpsConnector<hyper::client::HttpConnector>>>,
+    #[allow(dead_code)]
+    custom_runtime: Option<Arc<Runtime>>,
+}
+
+#[allow(dead_code)]
+impl RequestxClient {
+    // Constants for default values to reduce allocations
+    #[allow(dead_code)]
+    const DEFAULT_ALLOW_REDIRECTS: bool = true;
+    #[allow(dead_code)]
+    const DEFAULT_VERIFY: bool = true;
+
+    /// Create a new RequestxClient using global shared resources
+    pub fn new() -> Result<Self, RequestxError> {
+        Ok(RequestxClient {
+            use_global_client: true,
+            custom_client: None,
+            custom_runtime: None,
+        })
+    }
+
+    /// Create a new RequestxClient with custom runtime
+    #[allow(dead_code)]
+    pub fn with_runtime(runtime: Runtime) -> Result<Self, RequestxError> {
+        Ok(RequestxClient {
+            use_global_client: true,
+            custom_client: None,
+            custom_runtime: Some(Arc::new(runtime)),
+        })
+    }
+
+    /// Create a new RequestxClient with custom client configuration
+    pub fn with_custom_client(
+        client: Client<HttpsConnector<hyper::client::HttpConnector>>,
+    ) -> Result<Self, RequestxError> {
+        Ok(RequestxClient {
+            use_global_client: false,
+            custom_client: Some(client),
+            custom_runtime: None,
+        })
+    }
+
+    /// Get the HTTP client to use (global or custom)
+    #[allow(dead_code)]
+    fn get_client(&self) -> &Client<HttpsConnector<hyper::client::HttpConnector>> {
+        if self.use_global_client {
+            get_global_client()
+        } else {
+            self.custom_client.as_ref().unwrap()
+        }
+    }
+
+    /// Get the runtime to use (global or custom)
+    #[allow(dead_code)]
+    fn get_runtime(&self) -> &Runtime {
+        if let Some(ref custom_runtime) = self.custom_runtime {
+            custom_runtime
+        } else {
+            crate::core::runtime::get_global_runtime_manager().get_runtime()
+        }
+    }
+
+    /// Create a default RequestConfig for a given method and URL
+    #[allow(dead_code)]
+    fn create_default_config(&self, method: Method, url: Uri) -> RequestConfig {
+        RequestConfig {
+            method,
+            url,
+            headers: None,
+            params: None,
+            data: None,
+            json: None,
+            files: None,
+            timeout: None,
+            allow_redirects: Self::DEFAULT_ALLOW_REDIRECTS,
+            max_redirects: None,
+            verify: Self::DEFAULT_VERIFY,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        }
+    }
+
+    /// Perform an async HTTP GET request
+    pub async fn get_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::GET, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP POST request
+    pub async fn post_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::POST, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP PUT request
+    pub async fn put_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config = config.unwrap_or_else(|| self.create_default_config(Method::PUT, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP DELETE request
+    pub async fn delete_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::DELETE, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP HEAD request
+    pub async fn head_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::HEAD, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP OPTIONS request
+    pub async fn options_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::OPTIONS, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform an async HTTP PATCH request
+    pub async fn patch_async(
+        &self,
+        url: Uri,
+        config: Option<RequestConfig>,
+    ) -> Result<ResponseData, RequestxError> {
+        let request_config =
+            config.unwrap_or_else(|| self.create_default_config(Method::PATCH, url));
+        self.request_async(request_config).await
+    }
+
+    /// Perform a generic async HTTP request
+    pub async fn request_async(
+        &self,
+        config: RequestConfig,
+    ) -> Result<ResponseData, RequestxError> {
+        let client = self.get_client().clone();
+        Self::execute_request_async(client, config).await
+    }
+
+    /// Perform a synchronous HTTP request by spawning on async runtime
+    pub fn request_sync(&self, config: RequestConfig) -> Result<ResponseData, RequestxError> {
+        let runtime = self.get_runtime();
+        let client = self.get_client().clone();
+
+        let handle =
+            runtime.spawn(async move { Self::execute_request_async(client, config).await });
+
+        runtime
+            .block_on(handle)
+            .map_err(|e| RequestxError::RuntimeError(format!("Task execution failed: {e}")))?
+    }
+
+    async fn execute_request_async(
+        client: Client<HttpsConnector<hyper::client::HttpConnector>>,
+        config: RequestConfig,
+    ) -> Result<ResponseData, RequestxError> {
+        let start_time = Instant::now();
+        let actual_client = if !config.verify {
+            get_noverify_client()?.clone()
+        } else {
+            client
+        };
+        // Build URL with query parameters if provided
+        let mut final_url = if let Some(ref params) = config.params {
+            if params.is_empty() {
+                config.url.clone()
+            } else {
+                let mut url_with_params = config.url.to_string();
+                let separator = if config.url.query().is_some() {
+                    '&'
+                } else {
+                    '?'
+                };
+                url_with_params.push(separator);
+
+                let encoded_params: Vec<String> = params
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                    .collect();
+
+                url_with_params.push_str(&encoded_params.join("&"));
+                url_with_params
+                    .parse::<Uri>()
+                    .map_err(RequestxError::InvalidUrl)?
+            }
+        } else {
+            config.url.clone()
+        };
+
+        // Build the request more efficiently
+        let mut request_builder = Request::builder()
+            .method(config.method.clone())
+            .uri(&final_url);
+
+        if let Some(ref headers) = config.headers {
+            for (name, value) in headers.iter() {
+                request_builder = request_builder.header(name, value);
+            }
+        }
+
+        // Add authentication header if provided
+        request_builder = add_auth_header(request_builder, config.auth.as_ref());
+
+        // Build request body using the body module
+        let built_body = build_body(config.data, config.json, config.files)?;
+
+        if built_body.has_content_type {
+            if let Some(ct) = built_body.multipart_content_type {
+                request_builder = request_builder.header("content-type", ct);
+            } else {
+                request_builder = request_builder.header("content-type", CONTENT_TYPE_JSON);
+            }
+        }
+
+        let request = request_builder
+            .body(built_body.body)
+            .map_err(|e| RequestxError::RuntimeError(format!("Failed to build request: {e}")))?;
+
+        // Execute the request with optional timeout
+        let response = if let Some(timeout) = config.timeout {
+            match tokio::time::timeout(timeout, actual_client.request(request)).await {
+                Ok(result) => result,
+                Err(_) => return Err(RequestxError::ReadTimeout), // Timeout elapsed
+            }
+        } else {
+            actual_client.request(request).await
+        };
+
+        // Handle specific hyper errors and convert them to appropriate RequestxError types
+        let mut response = match response {
+            Ok(resp) => resp,
+            Err(e) => {
+                let error_msg = e.to_string().to_lowercase();
+
+                // Map specific hyper errors to appropriate RequestxError types
+                if error_msg.contains("dns")
+                    || error_msg.contains("resolve")
+                    || error_msg.contains("connect")
+                    || error_msg.contains("connection refused")
+                {
+                    return Err(RequestxError::NetworkError(e));
+                } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                    return Err(RequestxError::ConnectTimeout);
+                } else if error_msg.contains("ssl")
+                    || error_msg.contains("tls")
+                    || error_msg.contains("certificate")
+                {
+                    return Err(RequestxError::SslError(error_msg));
+                } else if error_msg.contains("absolute-form uris")
+                    || error_msg.contains("invalid uri")
+                {
+                    return Err(RequestxError::RuntimeError(format!(
+                        "Invalid URL: {error_msg}"
+                    )));
+                } else if error_msg.contains("proxy") {
+                    return Err(RequestxError::ProxyError(error_msg));
+                } else {
+                    return Err(RequestxError::NetworkError(e));
+                }
+            }
+        };
+
+        // Handle redirects with optimized logic
+        if config.allow_redirects && response.status().is_redirection() {
+            let mut redirect_count = 0;
+            let max_redirects = config.max_redirects.unwrap_or(30) as u8;
+            let mut history: Vec<ResponseData> = Vec::new();
+            let original_method = config.method.clone();
+
+            while response.status().is_redirection() && redirect_count < max_redirects {
+                let redirect_status = response.status().as_u16();
+                let redirect_headers = response.headers().clone();
+                let current_url = final_url.clone();
+
+                // Get redirect URL from Location header
+                let redirect_url_str = match response.headers().get("location") {
+                    Some(location) => match location.to_str() {
+                        Ok(s) if s.starts_with("http") => s.to_string(),
+                        Ok(s) => {
+                            let base_scheme = final_url.scheme_str().unwrap_or("https");
+                            let base_host = final_url.host().unwrap_or("");
+                            let base_port = final_url
+                                .port_u16()
+                                .map(|p| format!(":{p}"))
+                                .unwrap_or_default();
+                            format!("{base_scheme}://{base_host}{base_port}{s}")
+                        }
+                        Err(_) => final_url.to_string(),
+                    },
+                    None => final_url.to_string(),
+                };
+
+                // Determine redirect method per RFC 7231
+                let redirect_method = match redirect_status {
+                    307 | 308 => original_method.clone(),
+                    303 if original_method != Method::HEAD => Method::GET,
+                    302 | 301 if original_method == Method::POST => Method::GET,
+                    _ => original_method.clone(),
+                };
+
+                let redirect_request = Request::builder()
+                    .method(redirect_method.clone())
+                    .uri(&redirect_url_str)
+                    .body(Body::empty())
+                    .map_err(|e| {
+                        RequestxError::RuntimeError(format!(
+                            "Failed to build redirect request: {e}"
+                        ))
+                    })?;
+
+                let history_item = ResponseData {
+                    status_code: redirect_status,
+                    headers: redirect_headers,
+                    body: Bytes::new(),
+                    url: current_url,
+                    is_stream: false,
+                    elapsed_us: 0,
+                    history: Vec::new(),
+                    body_chunks: None,
+                };
+                history.push(history_item);
+
+                response = actual_client.request(redirect_request).await?;
+                if let Ok(new_uri) = redirect_url_str.parse::<Uri>() {
+                    final_url = new_uri;
+                }
+                redirect_count += 1;
+            }
+
+            let elapsed_us = start_time.elapsed().as_micros() as u64;
+            let status_code = response.status().as_u16();
+            let headers = response.headers().clone();
+            let is_stream = config.stream;
+
+            if is_stream {
+                let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url: final_url,
+                    is_stream,
+                    elapsed_us,
+                    history,
+                    body_chunks: Some(body_chunks),
+                })
+            } else {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url: final_url,
+                    is_stream,
+                    elapsed_us,
+                    history,
+                    body_chunks: None,
+                })
+            }
+        } else {
+            let elapsed_us = start_time.elapsed().as_micros() as u64;
+            let status_code = response.status().as_u16();
+            let headers = response.headers().clone();
+            let is_stream = config.stream;
+
+            if is_stream {
+                let (body_bytes, body_chunks) = read_body_chunks(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url: final_url,
+                    is_stream,
+                    elapsed_us,
+                    history: Vec::new(),
+                    body_chunks: Some(body_chunks),
+                })
+            } else {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+                Ok(ResponseData {
+                    status_code,
+                    headers,
+                    body: body_bytes,
+                    url: final_url,
+                    is_stream,
+                    elapsed_us,
+                    history: Vec::new(),
+                    body_chunks: None,
+                })
+            }
+        }
+    }
+}
+
+impl Default for RequestxClient {
+    fn default() -> Self {
+        Self::new().expect("Failed to create default RequestxClient")
+    }
+}
+
+impl Clone for RequestxClient {
+    fn clone(&self) -> Self {
+        if self.use_global_client {
+            RequestxClient::new().expect("Failed to clone RequestxClient")
+        } else if let Some(ref custom_client) = self.custom_client {
+            RequestxClient::with_custom_client(custom_client.clone())
+                .expect("Failed to clone RequestxClient with custom client")
+        } else {
+            RequestxClient::new().expect("Failed to clone RequestxClient")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    #[tokio::test]
+    async fn test_client_creation() {
+        let client = RequestxClient::new();
+        assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_client_with_runtime() {
+        let rt = Runtime::new().unwrap();
+        let client = RequestxClient::with_runtime(rt);
+        assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/get".parse().unwrap();
+
+        let result = client.get_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+        assert!(!response.body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_post_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/post".parse().unwrap();
+
+        let result = client.post_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_put_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/put".parse().unwrap();
+
+        let result = client.put_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_delete_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/delete".parse().unwrap();
+
+        let result = client.delete_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_head_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/get".parse().unwrap();
+
+        let result = client.head_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+        // HEAD requests should have empty body
+        assert!(response.body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_options_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/get".parse().unwrap();
+
+        let result = client.options_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        // OPTIONS requests typically return 200 or 204
+        assert!(response.status_code == 200 || response.status_code == 204);
+    }
+
+    #[tokio::test]
+    async fn test_patch_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/patch".parse().unwrap();
+
+        let result = client.patch_async(url, None).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_request_with_json_data() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/post".parse().unwrap();
+
+        let json_data = sonic_rs::json!({
+            "key": "value",
+            "number": 42
+        });
+
+        let config = RequestConfig {
+            method: Method::POST,
+            url, // Remove unnecessary clone
+            headers: None,
+            params: None,
+            data: None,
+            json: Some(json_data),
+            files: None,
+            timeout: None,
+            allow_redirects: true,
+            max_redirects: None,
+            verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        };
+
+        let result = client.request_async(config).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_request_with_form_data() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/post".parse().unwrap();
+
+        let mut form_data = HashMap::new();
+        form_data.insert("key1".to_string(), "value1".to_string());
+        form_data.insert("key2".to_string(), "value2".to_string());
+
+        let config = RequestConfig {
+            method: Method::POST,
+            url, // Remove unnecessary clone
+            headers: None,
+            params: None,
+            data: Some(RequestData::Form(form_data)),
+            json: None,
+            files: None,
+            timeout: None,
+            allow_redirects: true,
+            max_redirects: None,
+            verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        };
+
+        let result = client.request_async(config).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_request_with_text_data() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/post".parse().unwrap();
+
+        let config = RequestConfig {
+            method: Method::POST,
+            url, // Remove unnecessary clone
+            headers: None,
+            params: None,
+            data: Some(RequestData::Text("Hello, World!".to_string())),
+            json: None,
+            files: None,
+            timeout: None,
+            allow_redirects: true,
+            max_redirects: None,
+            verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        };
+
+        let result = client.request_async(config).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeout() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/delay/5".parse().unwrap();
+
+        let config = RequestConfig {
+            method: Method::GET,
+            url, // Remove unnecessary clone
+            headers: None,
+            params: None,
+            data: None,
+            json: None,
+            files: None,
+            timeout: Some(Duration::from_secs(1)), // 1 second timeout for 5 second delay
+            allow_redirects: true,
+            max_redirects: None,
+            verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        };
+
+        let result = client.request_async(config).await;
+        assert!(result.is_err());
+
+        // Should be a timeout error
+        match result.unwrap_err() {
+            RequestxError::ReadTimeout => (),
+            _ => panic!("Expected timeout error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_url() {
+        let _client = RequestxClient::new().unwrap();
+        let invalid_url = "not-a-valid-url";
+
+        let result: Result<Uri, _> = invalid_url.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sync_request() {
+        let client = RequestxClient::new().unwrap();
+        let url: Uri = "https://httpbin.org/get".parse().unwrap();
+
+        let config = RequestConfig {
+            method: Method::GET,
+            url, // Remove unnecessary clone
+            headers: None,
+            params: None,
+            data: None,
+            json: None,
+            files: None,
+            timeout: None,
+            allow_redirects: true,
+            max_redirects: None,
+            verify: true,
+            cert: None,
+            proxies: None,
+            auth: None,
+            stream: false,
+        };
+
+        let result = client.request_sync(config);
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[test]
+    fn test_error_conversion() {
+        // Test that our error types can be created and converted
+        let network_error = RequestxError::RuntimeError("Test error".to_string());
+        let py_err: pyo3::PyErr = network_error.into();
+        assert!(py_err.to_string().contains("Test error"));
+    }
+}

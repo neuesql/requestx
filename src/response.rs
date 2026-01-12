@@ -1,3 +1,8 @@
+//! Response handling for requestx
+//!
+//! Provides the Response struct exposed to Python with all the methods
+//! for accessing response data like headers, content, JSON, etc.
+
 use bytes::Bytes;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -5,65 +10,10 @@ use sonic_rs::Value;
 use std::collections::HashMap;
 
 use crate::error::RequestxError;
+use crate::types::headers::CaseInsensitiveHeaders;
 
 /// Case-insensitive headers wrapper (internal use only)
-#[pyclass]
-#[derive(Clone)]
-pub struct CaseInsensitiveHeaders {
-    inner: HashMap<String, String>,
-    lowercase_map: HashMap<String, String>,
-}
-
-impl CaseInsensitiveHeaders {
-    pub fn new() -> Self {
-        Self {
-            inner: HashMap::new(),
-            lowercase_map: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, key: String, value: String) {
-        let lowercase_key = key.to_lowercase();
-        self.lowercase_map
-            .insert(lowercase_key.clone(), value.clone());
-        self.inner.insert(key, value);
-    }
-
-    pub fn from_hashmap(headers: HashMap<String, String>) -> Self {
-        let mut ci_headers = Self {
-            inner: HashMap::new(),
-            lowercase_map: HashMap::new(),
-        };
-        for (key, value) in headers {
-            ci_headers.insert(key, value);
-        }
-        ci_headers
-    }
-
-    pub fn get(&self, key: &str) -> Option<&String> {
-        self.lowercase_map.get(&key.to_lowercase())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.inner.iter()
-    }
-
-    pub fn keys(&self) -> impl Iterator<Item = &String> {
-        self.inner.keys()
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &String> {
-        self.inner.values()
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-}
+/// Now uses the shared types::CaseInsensitiveHeaders
 
 /// Python dict-like wrapper with case-insensitive header access
 #[pyclass]
