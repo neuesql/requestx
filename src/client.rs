@@ -65,12 +65,12 @@ impl Default for ClientConfig {
 
 /// Load certificate from PEM file
 fn load_cert_pem(path: &str) -> Result<Vec<reqwest::Certificate>> {
-    let mut file = File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?;
+    let mut file = File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {e}")))?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)
-        .map_err(|e| Error::request(format!("Failed to read cert file: {}", e)))?;
+        .map_err(|e| Error::request(format!("Failed to read cert file: {e}")))?;
 
-    let cert = reqwest::Certificate::from_pem(&buf).map_err(|e| Error::request(format!("Failed to parse cert: {}", e)))?;
+    let cert = reqwest::Certificate::from_pem(&buf).map_err(|e| Error::request(format!("Failed to parse cert: {e}")))?;
     Ok(vec![cert])
 }
 
@@ -78,24 +78,24 @@ fn load_cert_pem(path: &str) -> Result<Vec<reqwest::Certificate>> {
 fn load_identity_pem(cert_path: &str, key_path: Option<&str>) -> Result<reqwest::Identity> {
     let mut cert_buf = Vec::new();
     File::open(cert_path)
-        .map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?
+        .map_err(|e| Error::request(format!("Failed to open cert file: {e}")))?
         .read_to_end(&mut cert_buf)
-        .map_err(|e| Error::request(format!("Failed to read cert file: {}", e)))?;
+        .map_err(|e| Error::request(format!("Failed to read cert file: {e}")))?;
 
     if let Some(key_path) = key_path {
         // Separate key file - combine them
         let mut key_buf = Vec::new();
         File::open(key_path)
-            .map_err(|e| Error::request(format!("Failed to open key file: {}", e)))?
+            .map_err(|e| Error::request(format!("Failed to open key file: {e}")))?
             .read_to_end(&mut key_buf)
-            .map_err(|e| Error::request(format!("Failed to read key file: {}", e)))?;
+            .map_err(|e| Error::request(format!("Failed to read key file: {e}")))?;
 
         // Combine cert and key
         cert_buf.extend_from_slice(b"\n");
         cert_buf.extend_from_slice(&key_buf);
     }
 
-    reqwest::Identity::from_pem(&cert_buf).map_err(|e| Error::request(format!("Failed to create identity: {}", e)))
+    reqwest::Identity::from_pem(&cert_buf).map_err(|e| Error::request(format!("Failed to create identity: {e}")))
 }
 
 /// Build reqwest client from config
@@ -300,7 +300,7 @@ fn resolve_url(base_url: &Option<String>, url: &str) -> Result<String> {
         let resolved = base_url.join(url)?;
         Ok(resolved.to_string())
     } else {
-        Err(Error::invalid_url(format!("Relative URL '{}' requires a base_url", url)))
+        Err(Error::invalid_url(format!("Relative URL '{url}' requires a base_url")))
     }
 }
 
@@ -424,7 +424,7 @@ impl Client {
         let mut req = self.client.request(
             method
                 .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
             &resolved_url,
         );
 
@@ -448,13 +448,13 @@ impl Client {
         if let Some(c) = cookies {
             let cookies_map = extract_cookies(c)?;
             for (name, value) in &cookies_map {
-                req = req.header("Cookie", format!("{}={}", name, value));
+                req = req.header("Cookie", format!("{name}={value}"));
             }
         }
 
         // Add client-level cookies
         for (name, value) in &self.config.cookies.inner {
-            req = req.header("Cookie", format!("{}={}", name, value));
+            req = req.header("Cookie", format!("{name}={value}"));
         }
 
         // Set body
@@ -715,7 +715,7 @@ impl Client {
         let mut req = self.client.request(
             method
                 .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
             &resolved_url,
         );
 
@@ -739,13 +739,13 @@ impl Client {
         if let Some(c) = cookies {
             let cookies_map = extract_cookies(c)?;
             for (name, value) in &cookies_map {
-                req = req.header("Cookie", format!("{}={}", name, value));
+                req = req.header("Cookie", format!("{name}={value}"));
             }
         }
 
         // Add client-level cookies
         for (name, value) in &self.config.cookies.inner {
-            req = req.header("Cookie", format!("{}={}", name, value));
+            req = req.header("Cookie", format!("{name}={value}"));
         }
 
         // Set body
@@ -986,7 +986,7 @@ impl AsyncClient {
             let mut req = client.request(
                 method
                     .parse()
-                    .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                    .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
                 &resolved_url,
             );
 
@@ -1007,13 +1007,13 @@ impl AsyncClient {
             // Add cookies
             if let Some(c) = cookies_obj {
                 for (name, value) in &c.inner {
-                    req = req.header("Cookie", format!("{}={}", name, value));
+                    req = req.header("Cookie", format!("{name}={value}"));
                 }
             }
 
             // Add client-level cookies
             for (name, value) in &config.cookies.inner {
-                req = req.header("Cookie", format!("{}={}", name, value));
+                req = req.header("Cookie", format!("{name}={value}"));
             }
 
             // Set body
@@ -1269,7 +1269,7 @@ impl AsyncClient {
             let mut req = client.request(
                 method
                     .parse()
-                    .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                    .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
                 &resolved_url,
             );
 
@@ -1290,13 +1290,13 @@ impl AsyncClient {
             // Add cookies
             if let Some(c) = cookies_obj {
                 for (name, value) in &c.inner {
-                    req = req.header("Cookie", format!("{}={}", name, value));
+                    req = req.header("Cookie", format!("{name}={value}"));
                 }
             }
 
             // Add client-level cookies
             for (name, value) in &config.cookies.inner {
-                req = req.header("Cookie", format!("{}={}", name, value));
+                req = req.header("Cookie", format!("{name}={value}"));
             }
 
             // Set body

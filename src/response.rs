@@ -95,7 +95,7 @@ impl Response {
     /// Parse response as JSON
     pub fn json<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let text = self.text()?;
-        let value: sonic_rs::Value = sonic_rs::from_str(&text).map_err(|e| Error::decode(format!("JSON decode error: {}", e)))?;
+        let value: sonic_rs::Value = sonic_rs::from_str(&text).map_err(|e| Error::decode(format!("JSON decode error: {e}")))?;
         json_to_py(py, &value)
     }
 
@@ -183,7 +183,7 @@ impl Response {
             .chunks(chunk_size)
             .map(|chunk| PyBytes::new(py, chunk))
             .collect();
-        Ok(PyList::new(py, chunks)?)
+        PyList::new(py, chunks)
     }
 
     /// Iterate over response lines

@@ -51,7 +51,7 @@ impl Headers {
     pub fn add(&mut self, key: &str, value: &str) {
         self.inner
             .entry(key.to_lowercase())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(value.to_string());
     }
 
@@ -91,7 +91,7 @@ impl Headers {
 
     pub fn __getitem__(&self, key: &str) -> PyResult<String> {
         self.get(key)
-            .ok_or_else(|| PyValueError::new_err(format!("Header '{}' not found", key)))
+            .ok_or_else(|| PyValueError::new_err(format!("Header '{key}' not found")))
     }
 
     pub fn __setitem__(&mut self, key: &str, value: &str) {
@@ -207,7 +207,7 @@ impl Cookies {
 
     pub fn __getitem__(&self, name: &str) -> PyResult<String> {
         self.get(name)
-            .ok_or_else(|| PyValueError::new_err(format!("Cookie '{}' not found", name)))
+            .ok_or_else(|| PyValueError::new_err(format!("Cookie '{name}' not found")))
     }
 
     pub fn __setitem__(&mut self, name: &str, value: &str) {
@@ -519,9 +519,9 @@ impl Auth {
 
     pub fn __repr__(&self) -> String {
         match &self.auth_type {
-            AuthType::Basic { username, .. } => format!("Auth.basic('{}', '***')", username),
+            AuthType::Basic { username, .. } => format!("Auth.basic('{username}', '***')"),
             AuthType::Bearer { .. } => "Auth.bearer('***')".to_string(),
-            AuthType::Digest { username, .. } => format!("Auth.digest('{}', '***')", username),
+            AuthType::Digest { username, .. } => format!("Auth.digest('{username}', '***')"),
         }
     }
 }
