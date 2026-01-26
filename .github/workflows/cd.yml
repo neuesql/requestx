@@ -6,13 +6,13 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Dry run (skip PyPI publish)'
+      skip_pypi:
+        description: 'Skip PyPI publish (do not release to PyPI)'
         required: false
         type: boolean
         default: false
-      dry_release:
-        description: 'Dry release (skip platform builds)'
+      skip_platforms:
+        description: 'Skip platform builds (release to GitHub directly)'
         required: false
         type: boolean
         default: false
@@ -80,7 +80,7 @@ jobs:
     name: Build Linux ${{ matrix.target }}
     runs-on: ubuntu-22.04
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +121,7 @@ jobs:
     name: Build musllinux ${{ matrix.target }}
     runs-on: ubuntu-22.04
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +162,7 @@ jobs:
     name: Build Windows ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +216,7 @@ jobs:
     name: Build macOS ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -259,7 +259,6 @@ jobs:
     name: Build sdist
     runs-on: ubuntu-latest
     needs: quality
-    if: ${{ !inputs.dry_release }}
     steps:
       - uses: actions/checkout@v6
 
@@ -276,7 +275,7 @@ jobs:
           path: dist
 
   # ===========================================================================
-  # Test
+  # Test Rust (needs build-sdist)
   # ===========================================================================
   test-rust:
     name: Test Rust
@@ -288,12 +287,15 @@ jobs:
       - name: Run Rust tests
         run: cargo test --verbose
 
-  # Test Python (full build mode - uses pre-built wheel)
+  # ===========================================================================
+  # Test Python (needs test-rust, chained after build-sdist)
+  # ===========================================================================
+  # Full mode - uses pre-built wheel when platforms are built
   test-python:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    needs: build-sdist
-    if: ${{ !inputs.dry_release }}
+    needs: [test-rust, build-linux]
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -331,12 +333,12 @@ jobs:
       - name: Run Python tests
         run: uv run pytest tests/ -v
 
-  # Test Python (dry release mode - builds locally)
-  test-python-dry:
-    name: Test Python ${{ matrix.python-version }} (dry)
+  # Skip platforms mode - builds locally
+  test-python-local:
+    name: Test Python ${{ matrix.python-version }} (local build)
     runs-on: ubuntu-latest
-    needs: quality
-    if: ${{ inputs.dry_release }}
+    needs: test-rust
+    if: ${{ inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -362,13 +364,13 @@ jobs:
         run: uv run pytest tests/ -v
 
   # ===========================================================================
-  # GitHub Release (Full)
+  # GitHub Release (Full - with platform artifacts)
   # ===========================================================================
   release-github:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-musllinux, build-windows, build-macos, build-sdist, test-rust, test-python]
-    if: ${{ !inputs.dry_release }}
+    needs: [build-linux, build-musllinux, build-windows, build-macos, build-sdist, test-python]
+    if: ${{ !inputs.skip_platforms }}
     environment:
       name: PROD
     permissions:
@@ -413,13 +415,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
   # ===========================================================================
-  # GitHub Release (Dry - no artifacts)
+  # GitHub Release (Skip platforms - sdist only)
   # ===========================================================================
-  release-github-dry:
-    name: GitHub Release (dry)
+  release-github-skip-platforms:
+    name: GitHub Release (skip platforms)
     runs-on: ubuntu-latest
-    needs: [test-rust, test-python-dry]
-    if: ${{ inputs.dry_release }}
+    needs: [build-sdist, test-python-local]
+    if: ${{ inputs.skip_platforms }}
     environment:
       name: PROD
     permissions:
@@ -438,18 +440,32 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Create GitHub Release (dry - no assets)
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: wheels-sdist
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
+          echo "Release assets:"
+          ls -la release-assets/
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name: "[DRY] Release v${{ steps.version.outputs.version }}"
+          name: "[Skip Platforms] Release v${{ steps.version.outputs.version }}"
           body: |
-            **This is a dry release for testing purposes.**
+            **This release was created with skip_platforms=true.**
 
-            No wheel artifacts are included. Run the full release pipeline to publish with artifacts.
+            Only source distribution (sdist) is included. Platform-specific wheels were not built.
+          files: release-assets/*
           generate_release_notes: true
-          draft: true
-          prerelease: true
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
@@ -460,7 +476,7 @@ jobs:
     name: PyPI Release
     runs-on: ubuntu-latest
     needs: release-github
-    if: ${{ !inputs.dry_run && !inputs.dry_release }}
+    if: ${{ !inputs.skip_pypi && !inputs.skip_platforms }}
     environment:
       name: PROD
       url: https://pypi.org/p/requestx
@@ -477,6 +493,45 @@ jobs:
         run: |
           mkdir -p upload
           find artifacts -name '*.whl' -exec cp {} upload/ \;
+          find artifacts -name '*.tar.gz' -exec cp {} upload/ \;
+          echo "Files to upload:"
+          ls -la upload/
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: 'upload/*'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Publish to PyPI
+        run: uv publish upload/*
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  # PyPI Release (skip platforms mode - sdist only)
+  release-pypi-skip-platforms:
+    name: PyPI Release (skip platforms)
+    runs-on: ubuntu-latest
+    needs: release-github-skip-platforms
+    if: ${{ !inputs.skip_pypi && inputs.skip_platforms }}
+    environment:
+      name: PROD
+      url: https://pypi.org/p/requestx
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: wheels-sdist
+          path: artifacts
+
+      - name: Prepare upload directory
+        run: |
+          mkdir -p upload
           find artifacts -name '*.tar.gz' -exec cp {} upload/ \;
           echo "Files to upload:"
           ls -la upload/
