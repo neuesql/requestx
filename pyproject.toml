@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=1.4,<2.0"]
+requires = ["maturin>=1.11.5,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "requestx"
-version = "1.0.0"
+version = "1.0.1"
 description = "High-performance Python HTTP client based on reqwest (Rust)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
-    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: HTTP :: CLIENT",
 ]
 keywords = ["http", "client", "async", "rust", "reqwest", "httpx"]
 
