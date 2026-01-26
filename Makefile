@@ -5,7 +5,7 @@
         1-setup 2-format 2-format-check \
         3-lint 4-quality-check \
         5-build 6-test-rust 6-test-python 6-test-all 6-test-coverage \
-        7-doc-build 7-doc-serve \
+        7-doc-build 7-doc-serve 7-doc-deploy \
         8-release-github 8-release-docs 8-release-pypi \
         9-clean version-patch version-minor version-major \
         benchmark-get-test benchmark-run benchmark-compare
@@ -116,22 +116,22 @@ help: ## Show available commands
 
 
 # =============================================================================
-# 7. Documentation
+# 7. Documentation (MkDocs)
 # =============================================================================
 
-7-doc-build: ## Build Sphinx docs
+7-doc-build: ## Build MkDocs documentation
 	@echo "$(BLUE)Building docs...$(RESET)"
-	@if [ -d docs ]; then \
-		cd docs && make html; \
-		echo "$(GREEN)✓ Docs built (docs/_build/html/index.html)$(RESET)"; \
-	else \
-		echo "$(RED)docs/ not found$(RESET)"; \
-		exit 1; \
-	fi
+	uv run mkdocs build
+	@echo "$(GREEN)✓ Docs built (site/index.html)$(RESET)"
 
-7-doc-serve: 7-doc-build ## Build + serve docs locally
+7-doc-serve: ## Serve docs locally with hot reload
 	@echo "$(BLUE)Serving docs at http://localhost:8000$(RESET)"
-	@cd docs/_build/html && python -m http.server 8000
+	uv run mkdocs serve
+
+7-doc-deploy: ## Deploy docs to GitHub Pages
+	@echo "$(BLUE)Deploying docs to GitHub Pages...$(RESET)"
+	uv run mkdocs gh-deploy --force
+	@echo "$(GREEN)✓ Docs deployed$(RESET)"
 
 # =============================================================================
 # 8. Release
@@ -184,7 +184,7 @@ version-major: ## Bump major version (x.0.0)
 	@echo "$(BLUE)Cleaning...$(RESET)"
 	cargo clean
 	rm -rf dist/ target/wheels/ build/ *.egg-info/
-	rm -rf docs/_build/
+	rm -rf site/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
