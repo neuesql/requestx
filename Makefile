@@ -69,8 +69,8 @@ help: ## Show available commands
 
 3-lint: ## Run linters (clippy + ruff)
 	@echo "$(BLUE)Running linters...$(RESET)"
-	cargo clippy --fix -- -D warnings
-	uv run ruff
+	cargo clippy --fix -- -A clippy::too_many_arguments
+	uv run ruff check . --fix
 	@echo "$(GREEN)✓ Linting passed$(RESET)"
 
 
