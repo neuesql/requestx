@@ -103,7 +103,6 @@ help: ## Show available commands
 6-test-rust: ## Run Rust tests
 	@echo "$(BLUE)Running Rust tests...$(RESET)"
 	cargo test --verbose
-	cargo test --doc
 	@echo "$(GREEN)✓ Rust tests passed$(RESET)"
 
 6-test-python: 5-build ## Run Python tests (requires build)

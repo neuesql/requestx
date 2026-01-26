@@ -67,9 +67,6 @@ jobs:
       - name: Run Rust tests
         run: cargo test --verbose
 
-      - name: Run Rust doc tests
-        run: cargo test --doc
-
   test-python:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
