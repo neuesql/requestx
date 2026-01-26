@@ -147,9 +147,6 @@ help: ## Show available commands
 	gh release create v$(VERSION) --generate-notes
 	@echo "$(GREEN)✓ GitHub release created$(RESET)"
 
-8-release-docs: 7-doc-build ## Deploy docs
-	@echo "$(BLUE)Deploying docs...$(RESET)"
-	@echo "$(YELLOW)TODO: Add deploy logic (mike, gh-pages, etc.)$(RESET)"
 
 8-release-pypi: ## Publish to PyPI (requires PYPI_TOKEN)
 	@echo "$(BLUE)Publishing to PyPI...$(RESET)"
