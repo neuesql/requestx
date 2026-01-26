@@ -1,0 +1,93 @@
+site_name: RequestX Documentation
+site_url: https://requestx.readthedocs.io/
+site_description: High-performance Python HTTP client built on Rust
+site_author: RequestX Team
+
+repo_name: neuesql/requestx
+repo_url: https://github.com/neuesql/requestx
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: quickstart.md
+    - Installation: installation.md
+    - Configuration: configuration.md
+  - User Guide:
+    - Async Guide: async-guide.md
+    - Streaming: streaming.md
+    - Authentication: authentication.md
+  - API Reference:
+    - Overview: api/index.md
+    - HTTP Functions: api/functions.md
+    - Response Object: api/response.md
+    - Client Classes: api/client.md
+    - Exceptions: api/exceptions.md
+  - Examples:
+    - Basic Usage: examples/basic-usage.md
+    - Advanced Patterns: examples/advanced.md
+  - Development:
+    - Contributing: contributing.md
+    - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/neuesql/requestx
+  version:
+    provider: mike
+
+copyright: Copyright &copy; 2024 RequestX Team
