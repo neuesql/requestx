@@ -5,9 +5,9 @@
         1-setup 2-format 2-format-check \
         3-lint 4-quality-check \
         5-build 6-test-rust 6-test-python 6-test-all 6-test-coverage \
-        7-doc-build 7-doc-serve 7-doc-deploy \
-        8-release-github 8-release-docs 8-release-pypi \
-        9-clean version-patch version-minor version-major \
+        7-doc-build 7-doc-serve \
+        8-release-github 8-release-pypi \
+        9-clean version-patch version-minor version-major version-show \
         benchmark-get-test benchmark-run benchmark-compare
 
 .DEFAULT_GOAL := help
@@ -128,11 +128,6 @@ help: ## Show available commands
 	@echo "$(BLUE)Serving docs at http://localhost:8000$(RESET)"
 	uv run mkdocs serve
 
-7-doc-deploy: ## Deploy docs to GitHub Pages
-	@echo "$(BLUE)Deploying docs to GitHub Pages...$(RESET)"
-	uv run mkdocs gh-deploy --force
-	@echo "$(GREEN)✓ Docs deployed$(RESET)"
-
 # =============================================================================
 # 8. Release
 # =============================================================================
@@ -158,23 +153,20 @@ help: ## Show available commands
 	@echo "$(GREEN)✓ Published to PyPI$(RESET)"
 
 # =============================================================================
-# Version Bumping (use uv)
+# Version Bumping (syncs Cargo.toml, pyproject.toml, __init__.py)
 # =============================================================================
 
+version-show: ## Show current version
+	@./bump.sh
+
 version-patch: ## Bump patch version (0.0.x)
-	@echo "$(BLUE)Bumping patch version...$(RESET)"
-	uv version --bump patch
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh patch
 
 version-minor: ## Bump minor version (0.x.0)
-	@echo "$(BLUE)Bumping minor version...$(RESET)"
-	uv version --bump minor
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh minor
 
 version-major: ## Bump major version (x.0.0)
-	@echo "$(BLUE)Bumping major version...$(RESET)"
-	uv version --bump major
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh major
 
 # =============================================================================
 # 9. Cleanup

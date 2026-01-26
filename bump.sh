@@ -1,13 +1,13 @@
 #!/bin/bash
-# Version Sync Script for Requestx
+# Version Bump Script for Requestx
 # Updates version in all 3 files: Cargo.toml, pyproject.toml, python/requestx/__init__.py
 #
 # Usage:
-#   ./scripts/version-sync.sh 1.2.3        # Set specific version
-#   ./scripts/version-sync.sh patch        # Bump patch (1.0.0 -> 1.0.1)
-#   ./scripts/version-sync.sh minor        # Bump minor (1.0.0 -> 1.1.0)
-#   ./scripts/version-sync.sh major        # Bump major (1.0.0 -> 2.0.0)
-#   ./scripts/version-sync.sh              # Show current version
+#   ./bump.sh 1.2.3        # Set specific version
+#   ./bump.sh patch        # Bump patch (1.0.0 -> 1.0.1)
+#   ./bump.sh minor        # Bump minor (1.0.0 -> 1.1.0)
+#   ./bump.sh major        # Bump major (1.0.0 -> 2.0.0)
+#   ./bump.sh              # Show current version
 
 set -e
 
@@ -18,9 +18,8 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# File paths (relative to project root)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# File paths (script is in project root)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CARGO_TOML="$PROJECT_ROOT/Cargo.toml"
 PYPROJECT_TOML="$PROJECT_ROOT/pyproject.toml"
 INIT_PY="$PROJECT_ROOT/python/requestx/__init__.py"
