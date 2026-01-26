@@ -101,7 +101,7 @@ help: ## Show available commands
 
 6-test-python: 5-build ## Run Python tests (requires build)
 	@echo "$(BLUE)Running Python tests...$(RESET)"
-	uv run python -m unittest discover tests/ -v
+	uv run python -m pytest tests/ -v
 	@echo "$(GREEN)✓ Python tests passed$(RESET)"
 
 6-test-all: 6-test-rust 6-test-python ## Run all tests
