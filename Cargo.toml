@@ -1,39 +1,61 @@
 [package]
 name = "requestx"
-version = "0.3.0"
+version = "0.1.0"
 edition = "2021"
-description = "High-performance HTTP client for Python with requests-compatible API"
-authors = ["RequestX Team"]
+description = "High-performance Python HTTP client based on reqwest"
 license = "MIT"
-repository = "https://github.com/neuesql/requestx"
-homepage = "https://github.com/neuesql/requestx"
-readme = "README.md"
 
 [lib]
 name = "requestx"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.25.0", features = ["extension-module", "abi3-py38"] }
-pyo3-async-runtimes = { version = "0.25.0", features = ["tokio-runtime"] }
-hyper = { version = "0.14", features = ["full"] }
-hyper-tls = "0.5"
-tokio = { version = "1.47.1", features = ["full"] }
-cookie_store = "0.21"
+# PyO3 for Python bindings
+pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+
+# Reqwest for HTTP
+reqwest = { version = "0.13", features = [
+    "blocking",
+    "json",
+    "query",
+    "form",
+    "cookies",
+    "gzip",
+    "brotli",
+    "deflate",
+    "zstd",
+    "multipart",
+    "stream",
+    "rustls",
+    "socks",
+    "http2",
+] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 sonic-rs = "0.5"
-bytes = "1.0"
-url = "2.0"
-urlencoding = "2.1"
-thiserror = "1.0"
-pythonize = "0.25.0"
-base64 = "0.21"
-toml = "0.8"
 
-[build-dependencies]
-pyo3-build-config = "0.25.0"
+# URL handling
+url = "2"
+
+# Bytes
+bytes = "1"
+
+# HTTP types
+http = "1"
+
+# For multipart
+mime = "0.3"
+mime_guess = "2"
+
+# Futures
+futures = "0.3"
+
 [profile.release]
-opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+opt-level = 3
