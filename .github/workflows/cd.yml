@@ -6,13 +6,13 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Dry run (skip PyPI publish)'
+      skip_pypi:
+        description: 'Skip PyPI publish (do not release to PyPI)'
         required: false
         type: boolean
         default: false
-      dry_release:
-        description: 'Dry release (skip platform builds)'
+      skip_platforms:
+        description: 'Skip platform builds (release to GitHub directly)'
         required: false
         type: boolean
         default: false
@@ -80,7 +80,7 @@ jobs:
     name: Build Linux ${{ matrix.target }}
     runs-on: ubuntu-22.04
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +121,7 @@ jobs:
     name: Build musllinux ${{ matrix.target }}
     runs-on: ubuntu-22.04
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +162,7 @@ jobs:
     name: Build Windows ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +216,7 @@ jobs:
     name: Build macOS ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     needs: quality
-    if: ${{ !inputs.dry_release }}
+    if: ${{ !inputs.skip_platforms }}
     strategy:
       fail-fast: false
       matrix:
@@ -259,7 +259,6 @@ jobs:
     name: Build sdist
     runs-on: ubuntu-latest
     needs: quality
-    if: ${{ !inputs.dry_release }}
     steps:
       - uses: actions/checkout@v6
 
@@ -276,7 +275,7 @@ jobs:
           path: dist
 
   # ===========================================================================
-  # Test
+  # Test Rust (needs build-sdist)
   # ===========================================================================
   test-rust:
     name: Test Rust
@@ -288,12 +287,17 @@ jobs:
       - name: Run Rust tests
         run: cargo test --verbose
 
-  # Test Python (full build mode - uses pre-built wheel)
+  # ===========================================================================
+  # Test Python (needs test-rust, chained: build-sdist -> test-rust -> test-python)
+  # ===========================================================================
   test-python:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    needs: build-sdist
-    if: ${{ !inputs.dry_release }}
+    needs: [test-rust, build-linux]
+    if: |
+      always() &&
+      needs.test-rust.result == 'success' &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -312,13 +316,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      # When platforms are built, use pre-built wheel
       - name: Download Linux x86_64 wheel
+        if: ${{ needs.build-linux.result == 'success' }}
         uses: actions/download-artifact@v5
         with:
           name: wheels-linux-x86_64
           path: dist
 
       - name: Install wheel
+        if: ${{ needs.build-linux.result == 'success' }}
         run: |
           # Find the wheel matching our Python version
           WHEEL=$(ls dist/*.whl | grep -E "cp3(12|13)" | head -1)
@@ -328,47 +335,34 @@ jobs:
           echo "Installing: $WHEEL"
           uv pip install "$WHEEL" --force-reinstall
 
-      - name: Run Python tests
-        run: uv run pytest tests/ -v
-
-  # Test Python (dry release mode - builds locally)
-  test-python-dry:
-    name: Test Python ${{ matrix.python-version }} (dry)
-    runs-on: ubuntu-latest
-    needs: quality
-    if: ${{ inputs.dry_release }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13']
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install dependencies
-        run: uv sync --dev
-
+      # When platforms are skipped, build locally
       - name: Build extension locally
+        if: ${{ needs.build-linux.result == 'skipped' }}
         run: uv run maturin develop
 
       - name: Run Python tests
         run: uv run pytest tests/ -v
 
   # ===========================================================================
-  # GitHub Release (Full)
+  # GitHub Release
   # ===========================================================================
   release-github:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-musllinux, build-windows, build-macos, build-sdist, test-rust, test-python]
-    if: ${{ !inputs.dry_release }}
+    needs: [build-linux, build-musllinux, build-windows, build-macos, build-sdist, test-python]
+    if: |
+      always() &&
+      needs.build-sdist.result == 'success' &&
+      needs.test-python.result == 'success' &&
+      (
+        inputs.skip_platforms ||
+        (
+          needs.build-linux.result == 'success' &&
+          needs.build-musllinux.result == 'success' &&
+          needs.build-windows.result == 'success' &&
+          needs.build-macos.result == 'success'
+        )
+      )
     environment:
       name: PROD
     permissions:
@@ -395,7 +389,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -name '*.whl' -exec cp {} release-assets/ \;
+          find artifacts -name '*.whl' -exec cp {} release-assets/ \; 2>/dev/null || true
           find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
           echo "Release assets:"
           ls -la release-assets/
@@ -413,54 +407,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
   # ===========================================================================
-  # GitHub Release (Dry - no artifacts)
-  # ===========================================================================
-  release-github-dry:
-    name: GitHub Release (dry)
-    runs-on: ubuntu-latest
-    needs: [test-rust, test-python-dry]
-    if: ${{ inputs.dry_release }}
-    environment:
-      name: PROD
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Get version from tag
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Create GitHub Release (dry - no assets)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: "[DRY] Release v${{ steps.version.outputs.version }}"
-          body: |
-            **This is a dry release for testing purposes.**
-
-            No wheel artifacts are included. Run the full release pipeline to publish with artifacts.
-          generate_release_notes: true
-          draft: true
-          prerelease: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
-
-  # ===========================================================================
   # PyPI Release
   # ===========================================================================
   release-pypi:
     name: PyPI Release
     runs-on: ubuntu-latest
     needs: release-github
-    if: ${{ !inputs.dry_run && !inputs.dry_release }}
+    if: ${{ !inputs.skip_pypi }}
     environment:
       name: PROD
       url: https://pypi.org/p/requestx
@@ -476,7 +429,7 @@ jobs:
       - name: Prepare upload directory
         run: |
           mkdir -p upload
-          find artifacts -name '*.whl' -exec cp {} upload/ \;
+          find artifacts -name '*.whl' -exec cp {} upload/ \; 2>/dev/null || true
           find artifacts -name '*.tar.gz' -exec cp {} upload/ \;
           echo "Files to upload:"
           ls -la upload/
