@@ -127,10 +127,7 @@ impl std::error::Error for Error {}
 
 impl Error {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
+        Self { kind, message: message.into() }
     }
 
     // Generic errors
@@ -309,10 +306,7 @@ impl From<std::io::Error> for Error {
         use std::io::ErrorKind as IoErrorKind;
         match err.kind() {
             IoErrorKind::TimedOut => Error::timeout(err.to_string()),
-            IoErrorKind::ConnectionRefused
-            | IoErrorKind::ConnectionReset
-            | IoErrorKind::ConnectionAborted
-            | IoErrorKind::NotConnected => Error::connect(err.to_string()),
+            IoErrorKind::ConnectionRefused | IoErrorKind::ConnectionReset | IoErrorKind::ConnectionAborted | IoErrorKind::NotConnected => Error::connect(err.to_string()),
             IoErrorKind::BrokenPipe | IoErrorKind::WriteZero => Error::write(err.to_string()),
             IoErrorKind::UnexpectedEof => Error::read(err.to_string()),
             _ => Error::transport(err.to_string()),
@@ -345,9 +339,7 @@ impl From<Error> for PyErr {
             ErrorKind::PoolTimeout => PoolTimeout::new_err(err.message),
 
             // HTTP errors
-            ErrorKind::Status(code) => {
-                HTTPStatusError::new_err(format!("{} (status code: {})", err.message, code))
-            }
+            ErrorKind::Status(code) => HTTPStatusError::new_err(format!("{} (status code: {})", err.message, code)),
             ErrorKind::Redirect => TooManyRedirects::new_err(err.message),
 
             // Data errors

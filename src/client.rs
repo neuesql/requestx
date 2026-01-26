@@ -4,9 +4,8 @@ use crate::error::{Error, Result};
 use crate::response::Response;
 use crate::streaming::{AsyncStreamingResponse, StreamingResponse};
 use crate::types::{
-    extract_cert, extract_cookies, extract_headers, extract_limits, extract_params,
-    extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies,
-    Headers, Limits, Proxy, Timeout,
+    extract_cert, extract_cookies, extract_headers, extract_limits, extract_params, extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies, Headers, Limits, Proxy,
+    Timeout,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -66,14 +65,12 @@ impl Default for ClientConfig {
 
 /// Load certificate from PEM file
 fn load_cert_pem(path: &str) -> Result<Vec<reqwest::Certificate>> {
-    let mut file =
-        File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?;
+    let mut file = File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)
         .map_err(|e| Error::request(format!("Failed to read cert file: {}", e)))?;
 
-    let cert = reqwest::Certificate::from_pem(&buf)
-        .map_err(|e| Error::request(format!("Failed to parse cert: {}", e)))?;
+    let cert = reqwest::Certificate::from_pem(&buf).map_err(|e| Error::request(format!("Failed to parse cert: {}", e)))?;
     Ok(vec![cert])
 }
 
@@ -98,8 +95,7 @@ fn load_identity_pem(cert_path: &str, key_path: Option<&str>) -> Result<reqwest:
         cert_buf.extend_from_slice(&key_buf);
     }
 
-    reqwest::Identity::from_pem(&cert_buf)
-        .map_err(|e| Error::request(format!("Failed to create identity: {}", e)))
+    reqwest::Identity::from_pem(&cert_buf).map_err(|e| Error::request(format!("Failed to create identity: {}", e)))
 }
 
 /// Build reqwest client from config
@@ -304,10 +300,7 @@ fn resolve_url(base_url: &Option<String>, url: &str) -> Result<String> {
         let resolved = base_url.join(url)?;
         Ok(resolved.to_string())
     } else {
-        Err(Error::invalid_url(format!(
-            "Relative URL '{}' requires a base_url",
-            url
-        )))
+        Err(Error::invalid_url(format!("Relative URL '{}' requires a base_url", url)))
     }
 }
 
@@ -369,9 +362,7 @@ impl Client {
             config.headers = extract_headers(h)?;
         }
         if let Some(c) = cookies {
-            config.cookies = Cookies {
-                inner: extract_cookies(c)?,
-            };
+            config.cookies = Cookies { inner: extract_cookies(c)? };
         }
         if let Some(t) = timeout {
             config.timeout = extract_timeout(t)?;
@@ -492,8 +483,7 @@ impl Client {
                     form = form.part(field_name, part);
                 } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
                     let (filename, content) = tuple;
-                    let part =
-                        reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
+                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
                     form = form.part(field_name, part);
                 }
             }
@@ -580,20 +570,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "GET",
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("GET", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// POST request
@@ -612,20 +589,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "POST",
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("POST", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// PUT request
@@ -644,20 +608,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "PUT",
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("PUT", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// PATCH request
@@ -676,20 +627,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "PATCH",
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("PATCH", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// DELETE request
@@ -704,20 +642,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "DELETE",
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("DELETE", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// HEAD request
@@ -732,20 +657,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "HEAD",
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("HEAD", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// OPTIONS request
@@ -760,20 +672,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request(
-            "OPTIONS",
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// Close the client (no-op, included for compatibility)
@@ -875,8 +774,7 @@ impl Client {
                     form = form.part(field_name, part);
                 } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
                     let (filename, content) = tuple;
-                    let part =
-                        reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
+                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
                     form = form.part(field_name, part);
                 }
             }
@@ -911,11 +809,7 @@ impl Client {
         let response = req.send().map_err(Error::from)?;
         let elapsed = start.elapsed().as_secs_f64();
 
-        Ok(StreamingResponse::from_blocking(
-            response,
-            elapsed,
-            &method.to_uppercase(),
-        ))
+        Ok(StreamingResponse::from_blocking(response, elapsed, &method.to_uppercase()))
     }
 
     /// Context manager enter
@@ -925,12 +819,7 @@ impl Client {
 
     /// Context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) {
+    pub fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) {
         self.close();
     }
 
@@ -999,9 +888,7 @@ impl AsyncClient {
             config.headers = extract_headers(h)?;
         }
         if let Some(c) = cookies {
-            config.cookies = Cookies {
-                inner: extract_cookies(c)?,
-            };
+            config.cookies = Cookies { inner: extract_cookies(c)? };
         }
         if let Some(t) = timeout {
             config.timeout = extract_timeout(t)?;
@@ -1065,11 +952,7 @@ impl AsyncClient {
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
         let cookies_obj = cookies
-            .map(|c| {
-                Ok::<_, PyErr>(Cookies {
-                    inner: extract_cookies(c)?,
-                })
-            })
+            .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
             .transpose()?;
         let content_vec = content.map(|c| c.as_bytes().to_vec());
         let data_map = data
@@ -1202,21 +1085,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "GET".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "GET".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// Async POST request
@@ -1236,21 +1105,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "POST".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "POST".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// Async PUT request
@@ -1270,21 +1125,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "PUT".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "PUT".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// Async PATCH request
@@ -1304,21 +1145,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "PATCH".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            content,
-            data,
-            json,
-            files,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "PATCH".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
     }
 
     /// Async DELETE request
@@ -1334,21 +1161,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "DELETE".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "DELETE".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// Async HEAD request
@@ -1364,21 +1177,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "HEAD".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "HEAD".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// Async OPTIONS request
@@ -1394,21 +1193,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(
-            py,
-            "OPTIONS".to_string(),
-            url,
-            params,
-            headers,
-            cookies,
-            None,
-            None,
-            None,
-            None,
-            auth,
-            timeout,
-            follow_redirects,
-        )
+        self.request(py, "OPTIONS".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
     /// Close the client
@@ -1450,11 +1235,7 @@ impl AsyncClient {
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
         let cookies_obj = cookies
-            .map(|c| {
-                Ok::<_, PyErr>(Cookies {
-                    inner: extract_cookies(c)?,
-                })
-            })
+            .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
             .transpose()?;
         let content_vec = content.map(|c| c.as_bytes().to_vec());
         let data_map = data
@@ -1563,11 +1344,7 @@ impl AsyncClient {
             let response = req.send().await.map_err(Error::from)?;
             let elapsed = start.elapsed().as_secs_f64();
 
-            Ok(AsyncStreamingResponse::from_async(
-                response,
-                elapsed,
-                &method.to_uppercase(),
-            ))
+            Ok(AsyncStreamingResponse::from_async(response, elapsed, &method.to_uppercase()))
         })
     }
 
@@ -1579,13 +1356,7 @@ impl AsyncClient {
 
     /// Async context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __aexit__<'py>(
-        &self,
-        py: Python<'py>,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn __aexit__<'py>(&self, py: Python<'py>, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
 

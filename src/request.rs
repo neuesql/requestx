@@ -58,20 +58,7 @@ pub fn request(
         true,  // trust_env
     )?;
 
-    client.request(
-        method,
-        url,
-        params,
-        headers,
-        cookies,
-        content,
-        data,
-        json,
-        files,
-        auth,
-        timeout,
-        Some(follow_redirects),
-    )
+    client.request(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
 }
 
 /// Perform a GET request (sync)
@@ -98,22 +85,7 @@ pub fn get(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "GET",
-        url,
-        params,
-        headers,
-        cookies,
-        None,
-        None,
-        None,
-        None,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("GET", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform a POST request (sync)
@@ -148,22 +120,7 @@ pub fn post(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "POST",
-        url,
-        params,
-        headers,
-        cookies,
-        content,
-        data,
-        json,
-        files,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("POST", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform a PUT request (sync)
@@ -198,22 +155,7 @@ pub fn put(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "PUT",
-        url,
-        params,
-        headers,
-        cookies,
-        content,
-        data,
-        json,
-        files,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("PUT", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform a PATCH request (sync)
@@ -248,22 +190,7 @@ pub fn patch(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "PATCH",
-        url,
-        params,
-        headers,
-        cookies,
-        content,
-        data,
-        json,
-        files,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("PATCH", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform a DELETE request (sync)
@@ -290,22 +217,7 @@ pub fn delete(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "DELETE",
-        url,
-        params,
-        headers,
-        cookies,
-        None,
-        None,
-        None,
-        None,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("DELETE", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform a HEAD request (sync)
@@ -332,22 +244,7 @@ pub fn head(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "HEAD",
-        url,
-        params,
-        headers,
-        cookies,
-        None,
-        None,
-        None,
-        None,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("HEAD", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
 
 /// Perform an OPTIONS request (sync)
@@ -374,20 +271,5 @@ pub fn options(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<Proxy>,
 ) -> PyResult<Response> {
-    request(
-        "OPTIONS",
-        url,
-        params,
-        headers,
-        cookies,
-        None,
-        None,
-        None,
-        None,
-        auth,
-        timeout,
-        follow_redirects,
-        verify,
-        proxy,
-    )
+    request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
