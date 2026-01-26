@@ -4,18 +4,18 @@ use crate::error::{Error, Result};
 use crate::response::Response;
 use crate::streaming::{AsyncStreamingResponse, StreamingResponse};
 use crate::types::{
-    extract_cookies, extract_headers, extract_params, extract_timeout, extract_verify,
-    extract_cert, extract_limits, get_env_proxy, get_env_ssl_cert,
-    Auth, AuthType, Cookies, Headers, Limits, Proxy, Timeout,
+    extract_cert, extract_cookies, extract_headers, extract_limits, extract_params,
+    extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies,
+    Headers, Limits, Proxy, Timeout,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use reqwest::redirect::Policy;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::fs::File;
 use std::io::Read as IoRead;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 /// Shared client configuration
@@ -66,9 +66,11 @@ impl Default for ClientConfig {
 
 /// Load certificate from PEM file
 fn load_cert_pem(path: &str) -> Result<Vec<reqwest::Certificate>> {
-    let mut file = File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?;
+    let mut file =
+        File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {}", e)))?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).map_err(|e| Error::request(format!("Failed to read cert file: {}", e)))?;
+    file.read_to_end(&mut buf)
+        .map_err(|e| Error::request(format!("Failed to read cert file: {}", e)))?;
 
     let cert = reqwest::Certificate::from_pem(&buf)
         .map_err(|e| Error::request(format!("Failed to parse cert: {}", e)))?;
@@ -422,15 +424,16 @@ impl Client {
         files: Option<&Bound<'_, PyDict>>,
         auth: Option<Auth>,
         timeout: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)]
-        follow_redirects: Option<bool>,
+        #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
         let resolved_url = resolve_url(&self.config.base_url, url)?;
         let start = Instant::now();
 
         // Build request
         let mut req = self.client.request(
-            method.parse().map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+            method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
             &resolved_url,
         );
 
@@ -489,8 +492,8 @@ impl Client {
                     form = form.part(field_name, part);
                 } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
                     let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename);
+                    let part =
+                        reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
                     form = form.part(field_name, part);
                 }
             }
@@ -577,7 +580,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("GET", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            "GET",
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// POST request
@@ -596,7 +612,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("POST", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            "POST",
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// PUT request
@@ -615,7 +644,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("PUT", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            "PUT",
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// PATCH request
@@ -634,7 +676,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("PATCH", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            "PATCH",
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// DELETE request
@@ -649,7 +704,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("DELETE", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            "DELETE",
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// HEAD request
@@ -664,7 +732,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("HEAD", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            "HEAD",
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// OPTIONS request
@@ -679,7 +760,20 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        self.request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            "OPTIONS",
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Close the client (no-op, included for compatibility)
@@ -713,15 +807,16 @@ impl Client {
         files: Option<&Bound<'_, PyDict>>,
         auth: Option<Auth>,
         timeout: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)]
-        follow_redirects: Option<bool>,
+        #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<StreamingResponse> {
         let resolved_url = resolve_url(&self.config.base_url, url)?;
         let start = Instant::now();
 
         // Build request
         let mut req = self.client.request(
-            method.parse().map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+            method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
             &resolved_url,
         );
 
@@ -780,8 +875,8 @@ impl Client {
                     form = form.part(field_name, part);
                 } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
                     let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename);
+                    let part =
+                        reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
                     form = form.part(field_name, part);
                 }
             }
@@ -816,7 +911,11 @@ impl Client {
         let response = req.send().map_err(Error::from)?;
         let elapsed = start.elapsed().as_secs_f64();
 
-        Ok(StreamingResponse::from_blocking(response, elapsed, &method.to_uppercase()))
+        Ok(StreamingResponse::from_blocking(
+            response,
+            elapsed,
+            &method.to_uppercase(),
+        ))
     }
 
     /// Context manager enter
@@ -961,28 +1060,37 @@ impl AsyncClient {
         files: Option<&Bound<'_, PyDict>>,
         auth: Option<Auth>,
         timeout: Option<f64>,
-        #[allow(unused_variables)]
-        follow_redirects: Option<bool>,
+        #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
-        let cookies_obj = cookies.map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? })).transpose()?;
-        let content_vec = content.map(|c| c.as_bytes().to_vec());
-        let data_map = data.map(|d| {
-            d.iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<HashMap<String, String>>>()
-        }).transpose()?;
-        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
-        let files_map = files.map(|f| {
-            f.iter()
-                .map(|(k, v)| {
-                    let field_name: String = k.extract()?;
-                    let tuple: (String, Vec<u8>, String) = v.extract()?;
-                    Ok((field_name, tuple))
+        let cookies_obj = cookies
+            .map(|c| {
+                Ok::<_, PyErr>(Cookies {
+                    inner: extract_cookies(c)?,
                 })
-                .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
-        }).transpose()?;
+            })
+            .transpose()?;
+        let content_vec = content.map(|c| c.as_bytes().to_vec());
+        let data_map = data
+            .map(|d| {
+                d.iter()
+                    .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+                    .collect::<PyResult<HashMap<String, String>>>()
+            })
+            .transpose()?;
+        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
+        let files_map = files
+            .map(|f| {
+                f.iter()
+                    .map(|(k, v)| {
+                        let field_name: String = k.extract()?;
+                        let tuple: (String, Vec<u8>, String) = v.extract()?;
+                        Ok((field_name, tuple))
+                    })
+                    .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
+            })
+            .transpose()?;
 
         let client = self.client.clone();
         let config = self.config.clone();
@@ -993,7 +1101,9 @@ impl AsyncClient {
 
             // Build request
             let mut req = client.request(
-                method.parse().map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                method
+                    .parse()
+                    .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
                 &resolved_url,
             );
 
@@ -1092,7 +1202,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "GET".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "GET".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async POST request
@@ -1112,7 +1236,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "POST".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "POST".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async PUT request
@@ -1132,7 +1270,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "PUT".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "PUT".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async PATCH request
@@ -1152,7 +1304,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "PATCH".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "PATCH".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            content,
+            data,
+            json,
+            files,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async DELETE request
@@ -1168,7 +1334,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "DELETE".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "DELETE".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async HEAD request
@@ -1184,7 +1364,21 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "HEAD".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "HEAD".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Async OPTIONS request
@@ -1200,14 +1394,26 @@ impl AsyncClient {
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "OPTIONS".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+        self.request(
+            py,
+            "OPTIONS".to_string(),
+            url,
+            params,
+            headers,
+            cookies,
+            None,
+            None,
+            None,
+            None,
+            auth,
+            timeout,
+            follow_redirects,
+        )
     }
 
     /// Close the client
     pub fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(())
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
 
     /// Async stream a request - returns AsyncStreamingResponse without loading body
@@ -1239,28 +1445,37 @@ impl AsyncClient {
         files: Option<&Bound<'_, PyDict>>,
         auth: Option<Auth>,
         timeout: Option<f64>,
-        #[allow(unused_variables)]
-        follow_redirects: Option<bool>,
+        #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
-        let cookies_obj = cookies.map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? })).transpose()?;
-        let content_vec = content.map(|c| c.as_bytes().to_vec());
-        let data_map = data.map(|d| {
-            d.iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<HashMap<String, String>>>()
-        }).transpose()?;
-        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
-        let files_map = files.map(|f| {
-            f.iter()
-                .map(|(k, v)| {
-                    let field_name: String = k.extract()?;
-                    let tuple: (String, Vec<u8>, String) = v.extract()?;
-                    Ok((field_name, tuple))
+        let cookies_obj = cookies
+            .map(|c| {
+                Ok::<_, PyErr>(Cookies {
+                    inner: extract_cookies(c)?,
                 })
-                .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
-        }).transpose()?;
+            })
+            .transpose()?;
+        let content_vec = content.map(|c| c.as_bytes().to_vec());
+        let data_map = data
+            .map(|d| {
+                d.iter()
+                    .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+                    .collect::<PyResult<HashMap<String, String>>>()
+            })
+            .transpose()?;
+        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
+        let files_map = files
+            .map(|f| {
+                f.iter()
+                    .map(|(k, v)| {
+                        let field_name: String = k.extract()?;
+                        let tuple: (String, Vec<u8>, String) = v.extract()?;
+                        Ok((field_name, tuple))
+                    })
+                    .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
+            })
+            .transpose()?;
 
         let client = self.client.clone();
         let config = self.config.clone();
@@ -1271,7 +1486,9 @@ impl AsyncClient {
 
             // Build request
             let mut req = client.request(
-                method.parse().map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
+                method
+                    .parse()
+                    .map_err(|_| Error::request(format!("Invalid method: {}", method)))?,
                 &resolved_url,
             );
 
@@ -1346,16 +1563,18 @@ impl AsyncClient {
             let response = req.send().await.map_err(Error::from)?;
             let elapsed = start.elapsed().as_secs_f64();
 
-            Ok(AsyncStreamingResponse::from_async(response, elapsed, &method.to_uppercase()))
+            Ok(AsyncStreamingResponse::from_async(
+                response,
+                elapsed,
+                &method.to_uppercase(),
+            ))
         })
     }
 
     /// Async context manager enter
     pub fn __aenter__<'py>(slf: Py<Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slf_clone = slf.clone_ref(py);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(slf_clone)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_clone) })
     }
 
     /// Async context manager exit
@@ -1367,9 +1586,7 @@ impl AsyncClient {
         _exc_val: Option<&Bound<'_, PyAny>>,
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(())
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
 
     pub fn __repr__(&self) -> String {

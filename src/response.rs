@@ -81,7 +81,9 @@ impl Response {
     /// Get encoding
     #[getter]
     pub fn encoding(&self) -> Option<String> {
-        self.encoding.clone().or_else(|| Some(self.detect_encoding()))
+        self.encoding
+            .clone()
+            .or_else(|| Some(self.detect_encoding()))
     }
 
     /// Set encoding
@@ -182,7 +184,11 @@ impl Response {
     }
 
     /// Iterate over response content in chunks
-    pub fn iter_bytes<'py>(&self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<Bound<'py, PyList>> {
+    pub fn iter_bytes<'py>(
+        &self,
+        py: Python<'py>,
+        chunk_size: Option<usize>,
+    ) -> PyResult<Bound<'py, PyList>> {
         let chunk_size = chunk_size.unwrap_or(8192);
         let chunks: Vec<Bound<'py, PyBytes>> = self
             .content
@@ -206,7 +212,10 @@ impl Response {
             for link in link_header.split(',') {
                 let parts: Vec<&str> = link.split(';').collect();
                 if let Some(url_part) = parts.first() {
-                    let url = url_part.trim().trim_start_matches('<').trim_end_matches('>');
+                    let url = url_part
+                        .trim()
+                        .trim_start_matches('<')
+                        .trim_end_matches('>');
                     for part in parts.iter().skip(1) {
                         let part = part.trim();
                         if let Some(rel) = part.strip_prefix("rel=") {
@@ -320,9 +329,7 @@ impl Response {
         match encoding.to_lowercase().as_str() {
             "utf-8" | "utf8" => String::from_utf8(self.content.clone())
                 .or_else(|_| Ok(String::from_utf8_lossy(&self.content).to_string())),
-            "ascii" | "us-ascii" => {
-                Ok(self.content.iter().map(|&b| b as char).collect())
-            }
+            "ascii" | "us-ascii" => Ok(self.content.iter().map(|&b| b as char).collect()),
             "iso-8859-1" | "latin-1" | "latin1" => {
                 Ok(self.content.iter().map(|&b| b as char).collect())
             }

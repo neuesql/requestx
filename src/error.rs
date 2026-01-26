@@ -2,9 +2,9 @@
 //!
 //! This module provides exception types compatible with HTTPX SDK.
 
+use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::create_exception;
 
 // ============================================================================
 // Base Exception Hierarchy (matches HTTPX)
@@ -309,13 +309,11 @@ impl From<std::io::Error> for Error {
         use std::io::ErrorKind as IoErrorKind;
         match err.kind() {
             IoErrorKind::TimedOut => Error::timeout(err.to_string()),
-            IoErrorKind::ConnectionRefused | IoErrorKind::ConnectionReset |
-            IoErrorKind::ConnectionAborted | IoErrorKind::NotConnected => {
-                Error::connect(err.to_string())
-            }
-            IoErrorKind::BrokenPipe | IoErrorKind::WriteZero => {
-                Error::write(err.to_string())
-            }
+            IoErrorKind::ConnectionRefused
+            | IoErrorKind::ConnectionReset
+            | IoErrorKind::ConnectionAborted
+            | IoErrorKind::NotConnected => Error::connect(err.to_string()),
+            IoErrorKind::BrokenPipe | IoErrorKind::WriteZero => Error::write(err.to_string()),
             IoErrorKind::UnexpectedEof => Error::read(err.to_string()),
             _ => Error::transport(err.to_string()),
         }

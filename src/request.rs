@@ -42,20 +42,20 @@ pub fn request(
 ) -> PyResult<Response> {
     // Create a one-shot client
     let client = Client::new(
-        None,    // base_url
-        None,    // headers
-        None,    // cookies
-        None,    // timeout
+        None, // base_url
+        None, // headers
+        None, // cookies
+        None, // timeout
         follow_redirects,
-        10,      // max_redirects
-        verify,  // verify (SSL verification)
-        None,    // cert (client certificates)
+        10,     // max_redirects
+        verify, // verify (SSL verification)
+        None,   // cert (client certificates)
         proxy,
-        None,    // auth (passed per-request)
-        false,   // http2
-        None,    // limits
-        None,    // default_encoding
-        true,    // trust_env
+        None,  // auth (passed per-request)
+        false, // http2
+        None,  // limits
+        None,  // default_encoding
+        true,  // trust_env
     )?;
 
     client.request(

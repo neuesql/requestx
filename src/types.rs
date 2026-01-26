@@ -31,15 +31,21 @@ impl Headers {
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
-        self.inner.get(&key.to_lowercase()).and_then(|v| v.first().cloned())
+        self.inner
+            .get(&key.to_lowercase())
+            .and_then(|v| v.first().cloned())
     }
 
     pub fn get_list(&self, key: &str) -> Vec<String> {
-        self.inner.get(&key.to_lowercase()).cloned().unwrap_or_default()
+        self.inner
+            .get(&key.to_lowercase())
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn set(&mut self, key: &str, value: &str) {
-        self.inner.insert(key.to_lowercase(), vec![value.to_string()]);
+        self.inner
+            .insert(key.to_lowercase(), vec![value.to_string()]);
     }
 
     pub fn add(&mut self, key: &str, value: &str) {
@@ -58,7 +64,10 @@ impl Headers {
     }
 
     pub fn values(&self) -> Vec<String> {
-        self.inner.values().flat_map(|v| v.iter().cloned()).collect()
+        self.inner
+            .values()
+            .flat_map(|v| v.iter().cloned())
+            .collect()
     }
 
     pub fn items(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
@@ -579,7 +588,9 @@ pub fn extract_cookies(cookies: &Bound<'_, PyAny>) -> PyResult<HashMap<String, S
         }
         Ok(result)
     } else {
-        Err(PyValueError::new_err("cookies must be a dict or Cookies object"))
+        Err(PyValueError::new_err(
+            "cookies must be a dict or Cookies object",
+        ))
     }
 }
 
@@ -591,7 +602,9 @@ pub fn extract_headers(headers: &Bound<'_, PyAny>) -> PyResult<Headers> {
         let dict = headers.extract::<Bound<'_, PyDict>>()?;
         Headers::new(Some(&dict))
     } else {
-        Err(PyValueError::new_err("headers must be a dict or Headers object"))
+        Err(PyValueError::new_err(
+            "headers must be a dict or Headers object",
+        ))
     }
 }
 
@@ -604,7 +617,9 @@ pub fn extract_timeout(timeout: &Bound<'_, PyAny>) -> PyResult<Timeout> {
     } else if let Ok(tuple) = timeout.extract::<(f64, f64)>() {
         Ok(Timeout::new(None, Some(tuple.0), Some(tuple.1), None, None))
     } else {
-        Err(PyValueError::new_err("timeout must be a float, tuple, or Timeout object"))
+        Err(PyValueError::new_err(
+            "timeout must be a float, tuple, or Timeout object",
+        ))
     }
 }
 
@@ -616,12 +631,16 @@ pub fn extract_verify(verify: &Bound<'_, PyAny>) -> PyResult<(bool, Option<Strin
         // If it's a string, it's a path to a CA bundle
         Ok((true, Some(path)))
     } else {
-        Err(PyValueError::new_err("verify must be a bool or a path string"))
+        Err(PyValueError::new_err(
+            "verify must be a bool or a path string",
+        ))
     }
 }
 
 /// Extract cert parameter (path string or tuple of (cert, key) or (cert, key, password))
-pub fn extract_cert(cert: &Bound<'_, PyAny>) -> PyResult<(Option<String>, Option<String>, Option<String>)> {
+pub fn extract_cert(
+    cert: &Bound<'_, PyAny>,
+) -> PyResult<(Option<String>, Option<String>, Option<String>)> {
     if let Ok(path) = cert.extract::<String>() {
         // Single path - cert file only (key might be in same file)
         Ok((Some(path), None, None))
@@ -632,7 +651,9 @@ pub fn extract_cert(cert: &Bound<'_, PyAny>) -> PyResult<(Option<String>, Option
         // Tuple of (cert, key, password)
         Ok((Some(cert_path), Some(key_path), Some(password)))
     } else {
-        Err(PyValueError::new_err("cert must be a path string or tuple of (cert, key) or (cert, key, password)"))
+        Err(PyValueError::new_err(
+            "cert must be a path string or tuple of (cert, key) or (cert, key, password)",
+        ))
     }
 }
 
@@ -642,12 +663,24 @@ pub fn extract_limits(limits: &Bound<'_, PyAny>) -> PyResult<Limits> {
         Ok(limits_obj)
     } else if limits.is_instance_of::<PyDict>() {
         let dict = limits.extract::<Bound<'_, PyDict>>()?;
-        let max_connections = dict.get_item("max_connections")?.and_then(|v| v.extract().ok());
-        let max_keepalive = dict.get_item("max_keepalive_connections")?.and_then(|v| v.extract().ok());
-        let keepalive_expiry = dict.get_item("keepalive_expiry")?.and_then(|v| v.extract().ok());
-        Ok(Limits::new(max_connections, max_keepalive, keepalive_expiry))
+        let max_connections = dict
+            .get_item("max_connections")?
+            .and_then(|v| v.extract().ok());
+        let max_keepalive = dict
+            .get_item("max_keepalive_connections")?
+            .and_then(|v| v.extract().ok());
+        let keepalive_expiry = dict
+            .get_item("keepalive_expiry")?
+            .and_then(|v| v.extract().ok());
+        Ok(Limits::new(
+            max_connections,
+            max_keepalive,
+            keepalive_expiry,
+        ))
     } else {
-        Err(PyValueError::new_err("limits must be a Limits object or dict"))
+        Err(PyValueError::new_err(
+            "limits must be a Limits object or dict",
+        ))
     }
 }
 

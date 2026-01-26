@@ -127,10 +127,16 @@ impl StreamingResponse {
 
     /// Read all remaining content and return as bytes
     pub fn read<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         if let Some(response) = inner.take() {
             let bytes = response.bytes().map_err(Error::from)?;
-            *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+            *self
+                .closed
+                .lock()
+                .map_err(|e| Error::request(e.to_string()))? = true;
             Ok(PyBytes::new(py, &bytes))
         } else {
             Err(Error::request("Response body already consumed").into())
@@ -139,10 +145,16 @@ impl StreamingResponse {
 
     /// Read all remaining content as text
     pub fn text(&self) -> PyResult<String> {
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         if let Some(response) = inner.take() {
             let text = response.text().map_err(Error::from)?;
-            *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+            *self
+                .closed
+                .lock()
+                .map_err(|e| Error::request(e.to_string()))? = true;
             Ok(text)
         } else {
             Err(Error::request("Response body already consumed").into())
@@ -193,9 +205,15 @@ impl StreamingResponse {
 
     /// Close the streaming response
     pub fn close(&self) -> PyResult<()> {
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         *inner = None;
-        *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+        *self
+            .closed
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))? = true;
         Ok(())
     }
 
@@ -216,7 +234,10 @@ impl StreamingResponse {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("<StreamingResponse [{} {}]>", self.status_code, self.reason_phrase)
+        format!(
+            "<StreamingResponse [{} {}]>",
+            self.status_code, self.reason_phrase
+        )
     }
 }
 
@@ -294,18 +315,22 @@ impl BytesIterator {
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
         use std::io::Read;
 
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         if let Some(ref mut response) = *inner {
             self.buffer.resize(self.chunk_size, 0);
             match response.read(&mut self.buffer) {
                 Ok(0) => {
                     // EOF
-                    *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+                    *self
+                        .closed
+                        .lock()
+                        .map_err(|e| Error::request(e.to_string()))? = true;
                     Ok(None)
                 }
-                Ok(n) => {
-                    Ok(Some(PyBytes::new(py, &self.buffer[..n])))
-                }
+                Ok(n) => Ok(Some(PyBytes::new(py, &self.buffer[..n]))),
                 Err(e) => Err(Error::request(e.to_string()).into()),
             }
         } else {
@@ -334,12 +359,18 @@ impl TextIterator {
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyString>>> {
         use std::io::Read;
 
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         if let Some(ref mut response) = *inner {
             self.buffer.resize(self.chunk_size, 0);
             match response.read(&mut self.buffer) {
                 Ok(0) => {
-                    *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+                    *self
+                        .closed
+                        .lock()
+                        .map_err(|e| Error::request(e.to_string()))? = true;
                     Ok(None)
                 }
                 Ok(n) => {
@@ -381,14 +412,20 @@ impl LinesIterator {
         }
 
         // Read more data
-        let mut inner = self.inner.lock().map_err(|e| Error::request(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::request(e.to_string()))?;
         if let Some(ref mut response) = *inner {
             let mut chunk = vec![0u8; 4096];
             loop {
                 match response.read(&mut chunk) {
                     Ok(0) => {
                         // EOF - return remaining buffer if any
-                        *self.closed.lock().map_err(|e| Error::request(e.to_string()))? = true;
+                        *self
+                            .closed
+                            .lock()
+                            .map_err(|e| Error::request(e.to_string()))? = true;
                         if !self.buffer.is_empty() {
                             let line = std::mem::take(&mut self.buffer);
                             return Ok(Some(PyString::new(py, &line)));
@@ -621,9 +658,7 @@ impl AsyncStreamingResponse {
     /// Async context manager enter
     pub fn __aenter__<'py>(slf: Py<Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slf_clone = slf.clone_ref(py);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(slf_clone)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_clone) })
     }
 
     /// Async context manager exit
@@ -647,17 +682,16 @@ impl AsyncStreamingResponse {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("<AsyncStreamingResponse [{} {}]>", self.status_code, self.reason_phrase)
+        format!(
+            "<AsyncStreamingResponse [{} {}]>",
+            self.status_code, self.reason_phrase
+        )
     }
 }
 
 impl AsyncStreamingResponse {
     /// Create a new AsyncStreamingResponse from reqwest async response
-    pub fn from_async(
-        response: reqwest::Response,
-        elapsed: f64,
-        request_method: &str,
-    ) -> Self {
+    pub fn from_async(response: reqwest::Response, elapsed: f64, request_method: &str) -> Self {
         let status_code = response.status().as_u16();
         let reason_phrase = response
             .status()

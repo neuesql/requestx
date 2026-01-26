@@ -22,8 +22,7 @@ class TestAsyncClient:
         """Test async POST request with JSON."""
         async with AsyncClient() as client:
             response = await client.post(
-                "https://httpbin.org/post",
-                json={"key": "value"}
+                "https://httpbin.org/post", json={"key": "value"}
             )
             assert response.status_code == 200
             data = response.json()
@@ -34,8 +33,7 @@ class TestAsyncClient:
         """Test async POST request with form data."""
         async with AsyncClient() as client:
             response = await client.post(
-                "https://httpbin.org/post",
-                data={"field": "value"}
+                "https://httpbin.org/post", data={"field": "value"}
             )
             assert response.status_code == 200
             data = response.json()
@@ -46,8 +44,7 @@ class TestAsyncClient:
         """Test async request with custom headers."""
         async with AsyncClient() as client:
             response = await client.get(
-                "https://httpbin.org/headers",
-                headers={"X-Test-Header": "test-value"}
+                "https://httpbin.org/headers", headers={"X-Test-Header": "test-value"}
             )
             assert response.status_code == 200
             data = response.json()
@@ -58,8 +55,7 @@ class TestAsyncClient:
         """Test async request with query parameters."""
         async with AsyncClient() as client:
             response = await client.get(
-                "https://httpbin.org/get",
-                params={"key": "value"}
+                "https://httpbin.org/get", params={"key": "value"}
             )
             assert response.status_code == 200
             data = response.json()
@@ -91,8 +87,7 @@ class TestAsyncClient:
         """Test async PUT request."""
         async with AsyncClient() as client:
             response = await client.put(
-                "https://httpbin.org/put",
-                json={"updated": True}
+                "https://httpbin.org/put", json={"updated": True}
             )
             assert response.status_code == 200
 
@@ -101,8 +96,7 @@ class TestAsyncClient:
         """Test async PATCH request."""
         async with AsyncClient() as client:
             response = await client.patch(
-                "https://httpbin.org/patch",
-                json={"patched": True}
+                "https://httpbin.org/patch", json={"patched": True}
             )
             assert response.status_code == 200
 
@@ -133,7 +127,7 @@ class TestAsyncClient:
         async with AsyncClient() as client:
             response = await client.get(
                 "https://httpbin.org/basic-auth/user/pass",
-                auth=Auth.basic("user", "pass")
+                auth=Auth.basic("user", "pass"),
             )
             assert response.status_code == 200
 
@@ -142,8 +136,7 @@ class TestAsyncClient:
         """Test async request with bearer auth."""
         async with AsyncClient() as client:
             response = await client.get(
-                "https://httpbin.org/bearer",
-                auth=Auth.bearer("test-token")
+                "https://httpbin.org/bearer", auth=Auth.bearer("test-token")
             )
             assert response.status_code == 200
 
@@ -160,10 +153,7 @@ class TestAsyncClient:
         """Test async request with timeout."""
         async with AsyncClient() as client:
             # Short timeout should work for fast requests
-            response = await client.get(
-                "https://httpbin.org/get",
-                timeout=30.0
-            )
+            response = await client.get("https://httpbin.org/get", timeout=30.0)
             assert response.status_code == 200
 
     @pytest.mark.asyncio
@@ -213,10 +203,7 @@ class TestAsyncClientPerformance:
         """Test handling many concurrent requests."""
         async with AsyncClient() as client:
             # Create 10 concurrent requests
-            tasks = [
-                client.get(f"https://httpbin.org/get?id={i}")
-                for i in range(10)
-            ]
+            tasks = [client.get(f"https://httpbin.org/get?id={i}") for i in range(10)]
             responses = await asyncio.gather(*tasks)
 
             assert len(responses) == 10

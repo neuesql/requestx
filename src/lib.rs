@@ -48,25 +48,43 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("WriteError", m.py().get_type::<error::WriteError>())?;
     m.add("CloseError", m.py().get_type::<error::CloseError>())?;
     m.add("ProxyError", m.py().get_type::<error::ProxyError>())?;
-    m.add("UnsupportedProtocol", m.py().get_type::<error::UnsupportedProtocol>())?;
+    m.add(
+        "UnsupportedProtocol",
+        m.py().get_type::<error::UnsupportedProtocol>(),
+    )?;
 
     // Protocol errors
     m.add("ProtocolError", m.py().get_type::<error::ProtocolError>())?;
-    m.add("LocalProtocolError", m.py().get_type::<error::LocalProtocolError>())?;
-    m.add("RemoteProtocolError", m.py().get_type::<error::RemoteProtocolError>())?;
+    m.add(
+        "LocalProtocolError",
+        m.py().get_type::<error::LocalProtocolError>(),
+    )?;
+    m.add(
+        "RemoteProtocolError",
+        m.py().get_type::<error::RemoteProtocolError>(),
+    )?;
 
     // Timeout errors
-    m.add("TimeoutException", m.py().get_type::<error::TimeoutException>())?;
+    m.add(
+        "TimeoutException",
+        m.py().get_type::<error::TimeoutException>(),
+    )?;
     m.add("ConnectTimeout", m.py().get_type::<error::ConnectTimeout>())?;
     m.add("ReadTimeout", m.py().get_type::<error::ReadTimeout>())?;
     m.add("WriteTimeout", m.py().get_type::<error::WriteTimeout>())?;
     m.add("PoolTimeout", m.py().get_type::<error::PoolTimeout>())?;
 
     // HTTP status errors
-    m.add("HTTPStatusError", m.py().get_type::<error::HTTPStatusError>())?;
+    m.add(
+        "HTTPStatusError",
+        m.py().get_type::<error::HTTPStatusError>(),
+    )?;
 
     // Redirect errors
-    m.add("TooManyRedirects", m.py().get_type::<error::TooManyRedirects>())?;
+    m.add(
+        "TooManyRedirects",
+        m.py().get_type::<error::TooManyRedirects>(),
+    )?;
 
     // Decoding errors
     m.add("DecodingError", m.py().get_type::<error::DecodingError>())?;
@@ -75,7 +93,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("StreamError", m.py().get_type::<error::StreamError>())?;
     m.add("StreamConsumed", m.py().get_type::<error::StreamConsumed>())?;
     m.add("StreamClosed", m.py().get_type::<error::StreamClosed>())?;
-    m.add("ResponseNotRead", m.py().get_type::<error::ResponseNotRead>())?;
+    m.add(
+        "ResponseNotRead",
+        m.py().get_type::<error::ResponseNotRead>(),
+    )?;
     m.add("RequestNotRead", m.py().get_type::<error::RequestNotRead>())?;
 
     // URL errors

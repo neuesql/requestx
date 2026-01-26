@@ -21,7 +21,7 @@ classifiers = [
 ]
 keywords = ["http", "client", "async", "rust", "reqwest", "httpx"]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     # building PyO3
     "maturin>=1.11.5,<2.0",

@@ -19,8 +19,7 @@ class TestModuleLevelFunctions:
     def test_post_json(self):
         """Test POST request with JSON body."""
         response = requestx.post(
-            "https://httpbin.org/post",
-            json={"key": "value", "number": 42}
+            "https://httpbin.org/post", json={"key": "value", "number": 42}
         )
         assert response.status_code == 200
         data = response.json()
@@ -29,8 +28,7 @@ class TestModuleLevelFunctions:
     def test_post_form_data(self):
         """Test POST request with form data."""
         response = requestx.post(
-            "https://httpbin.org/post",
-            data={"field1": "value1", "field2": "value2"}
+            "https://httpbin.org/post", data={"field1": "value1", "field2": "value2"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -39,8 +37,7 @@ class TestModuleLevelFunctions:
     def test_custom_headers(self):
         """Test request with custom headers."""
         response = requestx.get(
-            "https://httpbin.org/headers",
-            headers={"X-Custom-Header": "test-value"}
+            "https://httpbin.org/headers", headers={"X-Custom-Header": "test-value"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -49,8 +46,7 @@ class TestModuleLevelFunctions:
     def test_query_params(self):
         """Test request with query parameters."""
         response = requestx.get(
-            "https://httpbin.org/get",
-            params={"foo": "bar", "baz": "qux"}
+            "https://httpbin.org/get", params={"foo": "bar", "baz": "qux"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -59,20 +55,14 @@ class TestModuleLevelFunctions:
 
     def test_put_request(self):
         """Test PUT request."""
-        response = requestx.put(
-            "https://httpbin.org/put",
-            json={"updated": True}
-        )
+        response = requestx.put("https://httpbin.org/put", json={"updated": True})
         assert response.status_code == 200
         data = response.json()
         assert data["json"]["updated"] is True
 
     def test_patch_request(self):
         """Test PATCH request."""
-        response = requestx.patch(
-            "https://httpbin.org/patch",
-            json={"patched": True}
-        )
+        response = requestx.patch("https://httpbin.org/patch", json={"patched": True})
         assert response.status_code == 200
 
     def test_delete_request(self):
@@ -238,16 +228,14 @@ class TestAuth:
     def test_basic_auth(self):
         """Test basic authentication."""
         response = requestx.get(
-            "https://httpbin.org/basic-auth/user/pass",
-            auth=Auth.basic("user", "pass")
+            "https://httpbin.org/basic-auth/user/pass", auth=Auth.basic("user", "pass")
         )
         assert response.status_code == 200
 
     def test_bearer_auth(self):
         """Test bearer token authentication."""
         response = requestx.get(
-            "https://httpbin.org/bearer",
-            auth=Auth.bearer("test-token")
+            "https://httpbin.org/bearer", auth=Auth.bearer("test-token")
         )
         assert response.status_code == 200
 
@@ -264,8 +252,7 @@ class TestRedirects:
     def test_no_follow_redirects(self):
         """Test disabling redirect following."""
         response = requestx.get(
-            "https://httpbin.org/redirect/1",
-            follow_redirects=False
+            "https://httpbin.org/redirect/1", follow_redirects=False
         )
         assert response.status_code == 302
 
