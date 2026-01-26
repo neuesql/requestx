@@ -413,7 +413,10 @@ jobs:
     name: PyPI Release
     runs-on: ubuntu-latest
     needs: release-github
-    if: ${{ !inputs.skip_pypi }}
+    if: |
+      always() &&
+      needs.release-github.result == 'success' &&
+      !inputs.skip_pypi
     environment:
       name: PROD
       url: https://pypi.org/p/requestx
