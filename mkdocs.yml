@@ -1,0 +1,65 @@
+site_name: RequestX Documentation
+site_url: https://requestx.readthedocs.io/
+site_description: High-performance Python HTTP client built on Rust
+site_author: RequestX Team
+
+repo_name: neuesql/requestx
+repo_url: https://github.com/neuesql/requestx
+
+theme:
+  name: readthedocs
+  highlightjs: true
+  hljs_languages:
+    - python
+    - rust
+    - bash
+    - json
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+
+markdown_extensions:
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences
+  - pymdownx.snippets
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: quickstart.md
+    - Installation: installation.md
+    - Configuration: configuration.md
+  - User Guide:
+    - Async Guide: async-guide.md
+    - Streaming: streaming.md
+    - Authentication: authentication.md
+  - API Reference:
+    - Overview: api/index.md
+    - HTTP Functions: api/functions.md
+    - Response Object: api/response.md
+    - Client Classes: api/client.md
+    - Exceptions: api/exceptions.md
+  - Examples:
+    - Basic Usage: examples/basic-usage.md
+    - Advanced Patterns: examples/advanced.md
+  - Development:
+    - Contributing: contributing.md
+    - Changelog: changelog.md
+
+extra:
+  version:
+    provider: mike
+
+copyright: Copyright &copy; 2024 RequestX Team

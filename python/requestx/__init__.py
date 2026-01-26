@@ -1,362 +1,188 @@
 """
-RequestX - High-performance HTTP client for Python
+Requestx - High-performance Python HTTP client based on reqwest (Rust)
 
-A drop-in replacement for the requests library, built with Rust for speed and memory safety.
-Provides both synchronous and asynchronous APIs while maintaining full compatibility with
-the familiar requests interface.
+This library provides a fast HTTP client with an API compatible with HTTPX,
+powered by the Rust reqwest library for maximum performance.
+
+Example usage:
+
+    # Sync API
+    import requestx
+
+    response = requestx.get("https://httpbin.org/get")
+    print(response.status_code)
+    print(response.json())
+
+    # Using client for connection pooling
+    with requestx.Client() as client:
+        response = client.get("https://httpbin.org/get")
+        print(response.text)
+
+    # Async API
+    import asyncio
+
+    async def main():
+        async with requestx.AsyncClient() as client:
+            response = await client.get("https://httpbin.org/get")
+            print(response.json())
+
+    asyncio.run(main())
+
+    # Streaming Responses (sync)
+    with requestx.Client() as client:
+        with client.stream("GET", "https://httpbin.org/bytes/1000") as response:
+            for chunk in response.iter_bytes(chunk_size=100):
+                print(len(chunk))
+
+    # Streaming Responses (async)
+    async def stream_example():
+        async with requestx.AsyncClient() as client:
+            async with await client.stream("GET", "https://httpbin.org/bytes/1000") as response:
+                async for chunk in response.aiter_bytes(chunk_size=100):
+                    print(len(chunk))
+
+    asyncio.run(stream_example())
 """
 
-from ._requestx import (
-    # Classes
-    Response as _Response,
+from requestx._core import (
+    # Client classes
+    Client,
+    AsyncClient,
+    # Response classes
+    Response,
+    StreamingResponse,
+    AsyncStreamingResponse,
+    # Iterator classes
+    BytesIterator,
+    TextIterator,
+    LinesIterator,
+    AsyncBytesIterator,
+    AsyncTextIterator,
+    AsyncLinesIterator,
+    # Type classes
+    Headers,
+    Cookies,
+    Timeout,
+    Proxy,
+    Auth,
+    Limits,
+    SSLConfig,
+    # Exception classes - Base
+    RequestError,
+    # Transport errors
+    TransportError,
+    ConnectError,
+    ReadError,
+    WriteError,
+    CloseError,
+    ProxyError,
+    UnsupportedProtocol,
+    # Protocol errors
+    ProtocolError,
+    LocalProtocolError,
+    RemoteProtocolError,
+    # Timeout errors
+    TimeoutException,
+    ConnectTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    PoolTimeout,
+    # HTTP status errors
+    HTTPStatusError,
+    # Redirect errors
+    TooManyRedirects,
+    # Decoding errors
+    DecodingError,
+    # Stream errors
+    StreamError,
+    StreamConsumed,
+    StreamClosed,
+    ResponseNotRead,
+    RequestNotRead,
+    # URL errors
+    InvalidURL,
+    # Cookie errors
+    CookieConflict,
+    # Module-level functions
+    request,
+    get,
+    post,
+    put,
+    patch,
+    delete,
+    head,
+    options,
 )
-from ._requestx import (
-    Session,
-)
-from ._requestx import (
-    delete as _delete,
-)
-from ._requestx import (
-    # HTTP method functions
-    get as _get,
-)
-from ._requestx import (
-    head as _head,
-)
-from ._requestx import (
-    options as _options,
-)
-from ._requestx import (
-    patch as _patch,
-)
-from ._requestx import (
-    post as _post,
-)
-from ._requestx import (
-    put as _put,
-)
-from ._requestx import (
-    request as _request,
-)
 
-
-# Exception hierarchy matching requests library
-class RequestException(Exception):
-    """Base exception for all requestx errors.
-
-    This is the base exception class for all errors that occur during
-    HTTP requests. It matches the requests.RequestException interface.
-    """
-
-    pass
-
-
-class ConnectionError(RequestException):
-    """A connection error occurred.
-
-    This exception is raised when there are network-level connection
-    problems, such as DNS resolution failures, connection timeouts,
-    or connection refused errors.
-    """
-
-    pass
-
-
-class HTTPError(RequestException):
-    """An HTTP error occurred.
-
-    This exception is raised when an HTTP request returns an unsuccessful
-    status code (4xx or 5xx). It matches the requests.HTTPError interface.
-    """
-
-    pass
-
-
-class URLRequired(RequestException):
-    """A valid URL is required to make a request."""
-
-    pass
-
-
-class TooManyRedirects(RequestException):
-    """Too many redirects were encountered."""
-
-    pass
-
-
-class Timeout(RequestException):
-    """The request timed out.
-
-    This is the base timeout exception. More specific timeout exceptions
-    inherit from this class.
-    """
-
-    pass
-
-
-class ConnectTimeout(ConnectionError, Timeout):
-    """The request timed out while trying to connect to the remote server."""
-
-    pass
-
-
-class ReadTimeout(Timeout):
-    """The server did not send any data in the allotted amount of time."""
-
-    pass
-
-
-class JSONDecodeError(RequestException):
-    """Failed to decode JSON response."""
-
-    pass
-
-
-class InvalidURL(RequestException):
-    """The URL provided was invalid."""
-
-    pass
-
-
-class InvalidHeader(RequestException):
-    """The header provided was invalid."""
-
-    pass
-
-
-class SSLError(ConnectionError):
-    """An SSL/TLS error occurred."""
-
-    pass
-
-
-class ProxyError(ConnectionError):
-    """A proxy error occurred."""
-
-    pass
-
-
-class RetryError(RequestException):
-    """Custom retries logic failed."""
-
-    pass
-
-
-class UnreachableCodeError(RequestException):
-    """Unreachable code was executed."""
-
-    pass
-
-
-class InvalidSchema(RequestException):
-    """The URL schema (e.g. http or https) is invalid."""
-
-    pass
-
-
-class MissingSchema(RequestException):
-    """The URL schema (e.g. http or https) is missing."""
-
-    pass
-
-
-class ChunkedEncodingError(ConnectionError):
-    """The server declared chunked encoding but sent an invalid chunk."""
-
-    pass
-
-
-class ContentDecodingError(RequestException):
-    """Failed to decode response content."""
-
-    pass
-
-
-class StreamConsumedError(RequestException):
-    """The content for this response was already consumed."""
-
-    pass
-
-
-class FileModeWarning(RequestException):
-    """A file was opened in text mode, but binary mode was expected."""
-
-    pass
-
-
-class RequestsWarning(UserWarning):
-    """Base warning for requests."""
-
-    pass
-
-
-class DependencyWarning(RequestsWarning):
-    """Warning about a dependency issue."""
-
-    pass
-
-
-# Version information
-__version__ = "0.3.0"
-__author__ = "RequestX Team"
-__email__ = "wu.qunfei@gmail.com"
-
-# Public API
+__version__ = "1.0.0"
 __all__ = [
-    # HTTP methods
+    # Version
+    "__version__",
+    # Client classes
+    "Client",
+    "AsyncClient",
+    # Response classes
+    "Response",
+    "StreamingResponse",
+    "AsyncStreamingResponse",
+    # Iterator classes (for streaming)
+    "BytesIterator",
+    "TextIterator",
+    "LinesIterator",
+    "AsyncBytesIterator",
+    "AsyncTextIterator",
+    "AsyncLinesIterator",
+    # Type classes
+    "Headers",
+    "Cookies",
+    "Timeout",
+    "Proxy",
+    "Auth",
+    "Limits",
+    "SSLConfig",
+    # Exception classes - Base
+    "RequestError",
+    # Transport errors
+    "TransportError",
+    "ConnectError",
+    "ReadError",
+    "WriteError",
+    "CloseError",
+    "ProxyError",
+    "UnsupportedProtocol",
+    # Protocol errors
+    "ProtocolError",
+    "LocalProtocolError",
+    "RemoteProtocolError",
+    # Timeout errors
+    "TimeoutException",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteTimeout",
+    "PoolTimeout",
+    # HTTP status errors
+    "HTTPStatusError",
+    # Redirect errors
+    "TooManyRedirects",
+    # Decoding errors
+    "DecodingError",
+    # Stream errors
+    "StreamError",
+    "StreamConsumed",
+    "StreamClosed",
+    "ResponseNotRead",
+    "RequestNotRead",
+    # URL errors
+    "InvalidURL",
+    # Cookie errors
+    "CookieConflict",
+    # Module-level functions (sync)
+    "request",
     "get",
     "post",
     "put",
+    "patch",
     "delete",
     "head",
     "options",
-    "patch",
-    "request",
-    # Classes
-    "Response",
-    "Session",
-    # Exceptions
-    "RequestException",
-    "ConnectionError",
-    "HTTPError",
-    "URLRequired",
-    "TooManyRedirects",
-    "ConnectTimeout",
-    "ReadTimeout",
-    "Timeout",
-    "JSONDecodeError",
-    "InvalidURL",
-    "InvalidHeader",
-    "SSLError",
-    "ProxyError",
-    "RetryError",
-    "UnreachableCodeError",
-    "InvalidSchema",
-    "MissingSchema",
-    "ChunkedEncodingError",
-    "ContentDecodingError",
-    "StreamConsumedError",
-    "FileModeWarning",
-    "RequestsWarning",
-    "DependencyWarning",
-    # Metadata
-    "__version__",
 ]
-
-
-# Exception mapping functions
-def _map_exception(e):
-    """Map basic Python exceptions to requestx exceptions."""
-    import builtins
-
-    if isinstance(e, builtins.ValueError):
-        error_msg = str(e)
-        if "Invalid URL" in error_msg:
-            return InvalidURL(error_msg)
-        elif "Invalid header" in error_msg:
-            return InvalidHeader(error_msg)
-        elif "URL required" in error_msg or "A valid URL is required" in error_msg:
-            return URLRequired(error_msg)
-        elif "Invalid URL schema" in error_msg:
-            return InvalidSchema(error_msg)
-        elif "No connection adapters" in error_msg:
-            return MissingSchema(error_msg)
-        elif "JSON" in error_msg or "decode" in error_msg:
-            return JSONDecodeError(error_msg)
-        elif "Invalid HTTP method:" in error_msg:
-            # Map invalid HTTP method errors to RuntimeError for test compatibility
-            return builtins.RuntimeError(error_msg)
-        else:
-            return RequestException(error_msg)
-    elif isinstance(e, builtins.ConnectionError):
-        return ConnectionError(str(e))
-    elif isinstance(e, builtins.TimeoutError):
-        return ReadTimeout(str(e))
-    elif isinstance(e, builtins.RuntimeError):
-        error_msg = str(e)
-        if "Client Error" in error_msg:
-            return HTTPError(error_msg)
-        elif "Too many redirects" in error_msg:
-            return TooManyRedirects(error_msg)
-        else:
-            return RequestException(error_msg)
-    else:
-        return RequestException(str(e))
-
-
-def _wrap_request_function(func):
-    """Wrap a request function to map exceptions."""
-
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            raise _map_exception(e) from e
-
-    return wrapper
-
-
-# Monkey patch the Response class to map exceptions and add streaming generators
-_original_raise_for_status = _Response.raise_for_status
-_original_json = _Response.json
-# Store the original Rust methods before monkey-patching
-_original_iter_content_rust = _Response.iter_content
-_original_iter_lines_rust = _Response.iter_lines
-
-
-def _wrapped_raise_for_status(self):
-    """Raise HTTPError for bad status codes."""
-    try:
-        return _original_raise_for_status(self)
-    except Exception as e:
-        raise _map_exception(e) from e
-
-
-def _wrapped_json(self, *args, **kwargs):
-    """Parse JSON response with proper exception mapping."""
-    try:
-        return _original_json(self, *args, **kwargs)
-    except Exception as e:
-        raise _map_exception(e) from e
-
-
-def _iter_content_generator(self, chunk_size=512):
-    """Generator that yields chunks from the response content.
-
-    This provides true streaming behavior when iterating over large responses.
-    Each chunk is decoded bytes of the specified size.
-    """
-    yield from _original_iter_content_rust(self, chunk_size)
-
-
-def _iter_lines_generator(self):
-    """Generator that yields lines from the response content.
-
-    This provides line-by-line iteration over the response body,
-    useful for processing large text streams or SSE responses.
-    """
-    yield from _original_iter_lines_rust(self)
-
-
-_Response.raise_for_status = _wrapped_raise_for_status
-_Response.json = _wrapped_json
-_Response.iter_content = _iter_content_generator
-_Response.iter_lines = _iter_lines_generator
-Response = _Response
-
-# Wrapped HTTP method functions
-get = _wrap_request_function(_get)
-post = _wrap_request_function(_post)
-put = _wrap_request_function(_put)
-delete = _wrap_request_function(_delete)
-head = _wrap_request_function(_head)
-options = _wrap_request_function(_options)
-patch = _wrap_request_function(_patch)
-request = _wrap_request_function(_request)
-
-
-# Compatibility aliases (for requests compatibility)
-# These can be used for drop-in replacement
-def session():
-    """Create a new Session object for persistent connections."""
-    return Session()

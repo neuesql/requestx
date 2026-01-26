@@ -6,8 +6,8 @@
         3-lint 4-quality-check \
         5-build 6-test-rust 6-test-python 6-test-all 6-test-coverage \
         7-doc-build 7-doc-serve \
-        8-release-github 8-release-docs 8-release-pypi \
-        9-clean version-patch version-minor version-major \
+        8-release-github 8-release-pypi \
+        9-clean version-patch version-minor version-major version-show \
         benchmark-get-test benchmark-run benchmark-compare
 
 .DEFAULT_GOAL := help
@@ -101,7 +101,7 @@ help: ## Show available commands
 
 6-test-python: 5-build ## Run Python tests (requires build)
 	@echo "$(BLUE)Running Python tests...$(RESET)"
-	uv run python -m unittest discover tests/ -v
+	uv run python -m pytest tests/ -v
 	@echo "$(GREEN)✓ Python tests passed$(RESET)"
 
 6-test-all: 6-test-rust 6-test-python ## Run all tests
@@ -116,22 +116,17 @@ help: ## Show available commands
 
 
 # =============================================================================
-# 7. Documentation
+# 7. Documentation (MkDocs)
 # =============================================================================
 
-7-doc-build: ## Build Sphinx docs
+7-doc-build: ## Build MkDocs documentation
 	@echo "$(BLUE)Building docs...$(RESET)"
-	@if [ -d docs ]; then \
-		cd docs && make html; \
-		echo "$(GREEN)✓ Docs built (docs/_build/html/index.html)$(RESET)"; \
-	else \
-		echo "$(RED)docs/ not found$(RESET)"; \
-		exit 1; \
-	fi
+	uv run mkdocs build
+	@echo "$(GREEN)✓ Docs built (site/index.html)$(RESET)"
 
-7-doc-serve: 7-doc-build ## Build + serve docs locally
+7-doc-serve: ## Serve docs locally with hot reload
 	@echo "$(BLUE)Serving docs at http://localhost:8000$(RESET)"
-	@cd docs/_build/html && python -m http.server 8000
+	uv run mkdocs serve
 
 # =============================================================================
 # 8. Release
@@ -147,9 +142,6 @@ help: ## Show available commands
 	gh release create v$(VERSION) --generate-notes
 	@echo "$(GREEN)✓ GitHub release created$(RESET)"
 
-8-release-docs: 7-doc-build ## Deploy docs
-	@echo "$(BLUE)Deploying docs...$(RESET)"
-	@echo "$(YELLOW)TODO: Add deploy logic (mike, gh-pages, etc.)$(RESET)"
 
 8-release-pypi: ## Publish to PyPI (requires PYPI_TOKEN)
 	@echo "$(BLUE)Publishing to PyPI...$(RESET)"
@@ -161,23 +153,20 @@ help: ## Show available commands
 	@echo "$(GREEN)✓ Published to PyPI$(RESET)"
 
 # =============================================================================
-# Version Bumping (use uv)
+# Version Bumping (syncs Cargo.toml, pyproject.toml, __init__.py)
 # =============================================================================
 
+version-show: ## Show current version
+	@./bump.sh
+
 version-patch: ## Bump patch version (0.0.x)
-	@echo "$(BLUE)Bumping patch version...$(RESET)"
-	uv version --bump patch
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh patch
 
 version-minor: ## Bump minor version (0.x.0)
-	@echo "$(BLUE)Bumping minor version...$(RESET)"
-	uv version --bump minor
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh minor
 
 version-major: ## Bump major version (x.0.0)
-	@echo "$(BLUE)Bumping major version...$(RESET)"
-	uv version --bump major
-	@echo "$(GREEN)✓ Version: $$(uv version --short)$(RESET)"
+	@./bump.sh major
 
 # =============================================================================
 # 9. Cleanup
@@ -187,7 +176,7 @@ version-major: ## Bump major version (x.0.0)
 	@echo "$(BLUE)Cleaning...$(RESET)"
 	cargo clean
 	rm -rf dist/ target/wheels/ build/ *.egg-info/
-	rm -rf docs/_build/
+	rm -rf site/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
