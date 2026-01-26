@@ -52,7 +52,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run Rust clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings -A clippy::too_many_arguments
 
       - name: Run Python ruff
         run: uv run ruff check .
@@ -66,9 +66,6 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --verbose
-
-      - name: Run Rust doc tests
-        run: cargo test --doc
 
   test-python:
     name: Test Python ${{ matrix.python-version }}

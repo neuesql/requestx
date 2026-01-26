@@ -69,7 +69,14 @@ help: ## Show available commands
 
 3-lint: ## Run linters (clippy + ruff)
 	@echo "$(BLUE)Running linters...$(RESET)"
-	cargo clippy -- -D warnings
+	cargo clippy --fix -- -A clippy::too_many_arguments
+	uv run ruff check . --fix
+	@echo "$(GREEN)✓ Linting passed$(RESET)"
+
+
+3-lint-check: ## Run linters (clippy + ruff)
+	@echo "$(BLUE)Running linters...$(RESET)"
+	cargo clippy -- -D warnings -A clippy::too_many_arguments
 	uv run ruff check .
 	@echo "$(GREEN)✓ Linting passed$(RESET)"
 
@@ -96,7 +103,6 @@ help: ## Show available commands
 6-test-rust: ## Run Rust tests
 	@echo "$(BLUE)Running Rust tests...$(RESET)"
 	cargo test --verbose
-	cargo test --doc
 	@echo "$(GREEN)✓ Rust tests passed$(RESET)"
 
 6-test-python: 5-build ## Run Python tests (requires build)

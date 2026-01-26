@@ -95,8 +95,7 @@ impl Response {
     /// Parse response as JSON
     pub fn json<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let text = self.text()?;
-        let value: sonic_rs::Value = sonic_rs::from_str(&text)
-            .map_err(|e| Error::decode(format!("JSON decode error: {}", e)))?;
+        let value: sonic_rs::Value = sonic_rs::from_str(&text).map_err(|e| Error::decode(format!("JSON decode error: {e}")))?;
         json_to_py(py, &value)
     }
 
@@ -165,14 +164,7 @@ impl Response {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(
-                self.status_code,
-                format!(
-                    "{} {} for url {}",
-                    self.status_code, self.reason_phrase, self.url
-                ),
-            )
-            .into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
         } else {
             Ok(())
         }
@@ -184,18 +176,14 @@ impl Response {
     }
 
     /// Iterate over response content in chunks
-    pub fn iter_bytes<'py>(
-        &self,
-        py: Python<'py>,
-        chunk_size: Option<usize>,
-    ) -> PyResult<Bound<'py, PyList>> {
+    pub fn iter_bytes<'py>(&self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<Bound<'py, PyList>> {
         let chunk_size = chunk_size.unwrap_or(8192);
         let chunks: Vec<Bound<'py, PyBytes>> = self
             .content
             .chunks(chunk_size)
             .map(|chunk| PyBytes::new(py, chunk))
             .collect();
-        Ok(PyList::new(py, chunks)?)
+        PyList::new(py, chunks)
     }
 
     /// Iterate over response lines
@@ -253,17 +241,7 @@ impl Response {
 
 impl Response {
     /// Create a new Response from reqwest response data
-    pub fn new(
-        status_code: u16,
-        headers: Headers,
-        content: Vec<u8>,
-        url: String,
-        http_version: String,
-        cookies: Cookies,
-        elapsed: f64,
-        request_method: String,
-        reason_phrase: String,
-    ) -> Self {
+    pub fn new(status_code: u16, headers: Headers, content: Vec<u8>, url: String, http_version: String, cookies: Cookies, elapsed: f64, request_method: String, reason_phrase: String) -> Self {
         Self {
             status_code,
             headers,
@@ -327,12 +305,9 @@ impl Response {
     /// Decode content using the specified encoding
     fn decode_content(&self, encoding: &str) -> Result<String> {
         match encoding.to_lowercase().as_str() {
-            "utf-8" | "utf8" => String::from_utf8(self.content.clone())
-                .or_else(|_| Ok(String::from_utf8_lossy(&self.content).to_string())),
+            "utf-8" | "utf8" => String::from_utf8(self.content.clone()).or_else(|_| Ok(String::from_utf8_lossy(&self.content).to_string())),
             "ascii" | "us-ascii" => Ok(self.content.iter().map(|&b| b as char).collect()),
-            "iso-8859-1" | "latin-1" | "latin1" => {
-                Ok(self.content.iter().map(|&b| b as char).collect())
-            }
+            "iso-8859-1" | "latin-1" | "latin1" => Ok(self.content.iter().map(|&b| b as char).collect()),
             _ => {
                 // Fall back to UTF-8 with lossy conversion
                 Ok(String::from_utf8_lossy(&self.content).to_string())
@@ -341,11 +316,7 @@ impl Response {
     }
 
     /// Create response from reqwest response (async)
-    pub async fn from_reqwest(
-        response: reqwest::Response,
-        start_time: std::time::Instant,
-        request_method: &str,
-    ) -> Result<Self> {
+    pub async fn from_reqwest(response: reqwest::Response, start_time: std::time::Instant, request_method: &str) -> Result<Self> {
         let status_code = response.status().as_u16();
         let reason_phrase = response
             .status()
@@ -369,17 +340,7 @@ impl Response {
         let content = response.bytes().await?.to_vec();
         let elapsed = start_time.elapsed().as_secs_f64();
 
-        Ok(Self::new(
-            status_code,
-            headers,
-            content,
-            url,
-            http_version,
-            cookies,
-            elapsed,
-            request_method.to_string(),
-            reason_phrase,
-        ))
+        Ok(Self::new(status_code, headers, content, url, http_version, cookies, elapsed, request_method.to_string(), reason_phrase))
     }
 }
 

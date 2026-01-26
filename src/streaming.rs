@@ -112,14 +112,7 @@ impl StreamingResponse {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(
-                self.status_code,
-                format!(
-                    "{} {} for url {}",
-                    self.status_code, self.reason_phrase, self.url
-                ),
-            )
-            .into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
         } else {
             Ok(())
         }
@@ -224,30 +217,18 @@ impl StreamingResponse {
 
     /// Context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
+    pub fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         self.close()
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "<StreamingResponse [{} {}]>",
-            self.status_code, self.reason_phrase
-        )
+        format!("<StreamingResponse [{} {}]>", self.status_code, self.reason_phrase)
     }
 }
 
 impl StreamingResponse {
     /// Create a new StreamingResponse from reqwest blocking response
-    pub fn from_blocking(
-        response: reqwest::blocking::Response,
-        elapsed: f64,
-        request_method: &str,
-    ) -> Self {
+    pub fn from_blocking(response: reqwest::blocking::Response, elapsed: f64, request_method: &str) -> Self {
         let status_code = response.status().as_u16();
         let reason_phrase = response
             .status()
@@ -556,14 +537,7 @@ impl AsyncStreamingResponse {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(
-                self.status_code,
-                format!(
-                    "{} {} for url {}",
-                    self.status_code, self.reason_phrase, self.url
-                ),
-            )
-            .into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
         } else {
             Ok(())
         }
@@ -663,13 +637,7 @@ impl AsyncStreamingResponse {
 
     /// Async context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __aexit__<'py>(
-        &self,
-        py: Python<'py>,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn __aexit__<'py>(&self, py: Python<'py>, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let closed = self.closed.clone();
 
@@ -682,10 +650,7 @@ impl AsyncStreamingResponse {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "<AsyncStreamingResponse [{} {}]>",
-            self.status_code, self.reason_phrase
-        )
+        format!("<AsyncStreamingResponse [{} {}]>", self.status_code, self.reason_phrase)
     }
 }
 

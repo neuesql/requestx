@@ -51,7 +51,7 @@ impl Headers {
     pub fn add(&mut self, key: &str, value: &str) {
         self.inner
             .entry(key.to_lowercase())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(value.to_string());
     }
 
@@ -91,7 +91,7 @@ impl Headers {
 
     pub fn __getitem__(&self, key: &str) -> PyResult<String> {
         self.get(key)
-            .ok_or_else(|| PyValueError::new_err(format!("Header '{}' not found", key)))
+            .ok_or_else(|| PyValueError::new_err(format!("Header '{key}' not found")))
     }
 
     pub fn __setitem__(&mut self, key: &str, value: &str) {
@@ -207,7 +207,7 @@ impl Cookies {
 
     pub fn __getitem__(&self, name: &str) -> PyResult<String> {
         self.get(name)
-            .ok_or_else(|| PyValueError::new_err(format!("Cookie '{}' not found", name)))
+            .ok_or_else(|| PyValueError::new_err(format!("Cookie '{name}' not found")))
     }
 
     pub fn __setitem__(&mut self, name: &str, value: &str) {
@@ -273,13 +273,7 @@ pub struct Timeout {
 impl Timeout {
     #[new]
     #[pyo3(signature = (timeout=None, connect=None, read=None, write=None, pool=None))]
-    pub fn new(
-        timeout: Option<f64>,
-        connect: Option<f64>,
-        read: Option<f64>,
-        write: Option<f64>,
-        pool: Option<f64>,
-    ) -> Self {
+    pub fn new(timeout: Option<f64>, connect: Option<f64>, read: Option<f64>, write: Option<f64>, pool: Option<f64>) -> Self {
         Self {
             total: timeout.map(Duration::from_secs_f64),
             connect: connect.map(Duration::from_secs_f64),
@@ -348,13 +342,7 @@ pub struct Proxy {
 impl Proxy {
     #[new]
     #[pyo3(signature = (url=None, http=None, https=None, all=None, no_proxy=None))]
-    pub fn new(
-        url: Option<String>,
-        http: Option<String>,
-        https: Option<String>,
-        all: Option<String>,
-        no_proxy: Option<String>,
-    ) -> Self {
+    pub fn new(url: Option<String>, http: Option<String>, https: Option<String>, all: Option<String>, no_proxy: Option<String>) -> Self {
         // If a single url is provided, use it for all protocols
         let all_proxy = all.or(url);
         Self {
@@ -376,10 +364,7 @@ impl Proxy {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "Proxy(http={:?}, https={:?}, no_proxy={:?})",
-            self.http, self.https, self.no_proxy
-        )
+        format!("Proxy(http={:?}, https={:?}, no_proxy={:?})", self.http, self.https, self.no_proxy)
     }
 }
 
@@ -396,11 +381,7 @@ pub struct Limits {
 impl Limits {
     #[new]
     #[pyo3(signature = (max_connections=None, max_keepalive_connections=None, keepalive_expiry=None))]
-    pub fn new(
-        max_connections: Option<usize>,
-        max_keepalive_connections: Option<usize>,
-        keepalive_expiry: Option<f64>,
-    ) -> Self {
+    pub fn new(max_connections: Option<usize>, max_keepalive_connections: Option<usize>, keepalive_expiry: Option<f64>) -> Self {
         Self {
             max_connections,
             max_keepalive_connections,
@@ -461,13 +442,7 @@ pub struct SSLConfig {
 impl SSLConfig {
     #[new]
     #[pyo3(signature = (verify=true, ca_bundle=None, cert=None, key=None, key_password=None))]
-    pub fn new(
-        verify: bool,
-        ca_bundle: Option<String>,
-        cert: Option<String>,
-        key: Option<String>,
-        key_password: Option<String>,
-    ) -> Self {
+    pub fn new(verify: bool, ca_bundle: Option<String>, cert: Option<String>, key: Option<String>, key_password: Option<String>) -> Self {
         Self {
             verify,
             ca_bundle,
@@ -498,10 +473,7 @@ impl SSLConfig {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "SSLConfig(verify={}, ca_bundle={:?}, cert={:?}, key={:?})",
-            self.verify, self.ca_bundle, self.cert_file, self.key_file
-        )
+        format!("SSLConfig(verify={}, ca_bundle={:?}, cert={:?}, key={:?})", self.verify, self.ca_bundle, self.cert_file, self.key_file)
     }
 }
 
@@ -547,9 +519,9 @@ impl Auth {
 
     pub fn __repr__(&self) -> String {
         match &self.auth_type {
-            AuthType::Basic { username, .. } => format!("Auth.basic('{}', '***')", username),
+            AuthType::Basic { username, .. } => format!("Auth.basic('{username}', '***')"),
             AuthType::Bearer { .. } => "Auth.bearer('***')".to_string(),
-            AuthType::Digest { username, .. } => format!("Auth.digest('{}', '***')", username),
+            AuthType::Digest { username, .. } => format!("Auth.digest('{username}', '***')"),
         }
     }
 }
@@ -588,9 +560,7 @@ pub fn extract_cookies(cookies: &Bound<'_, PyAny>) -> PyResult<HashMap<String, S
         }
         Ok(result)
     } else {
-        Err(PyValueError::new_err(
-            "cookies must be a dict or Cookies object",
-        ))
+        Err(PyValueError::new_err("cookies must be a dict or Cookies object"))
     }
 }
 
@@ -602,9 +572,7 @@ pub fn extract_headers(headers: &Bound<'_, PyAny>) -> PyResult<Headers> {
         let dict = headers.extract::<Bound<'_, PyDict>>()?;
         Headers::new(Some(&dict))
     } else {
-        Err(PyValueError::new_err(
-            "headers must be a dict or Headers object",
-        ))
+        Err(PyValueError::new_err("headers must be a dict or Headers object"))
     }
 }
 
@@ -617,9 +585,7 @@ pub fn extract_timeout(timeout: &Bound<'_, PyAny>) -> PyResult<Timeout> {
     } else if let Ok(tuple) = timeout.extract::<(f64, f64)>() {
         Ok(Timeout::new(None, Some(tuple.0), Some(tuple.1), None, None))
     } else {
-        Err(PyValueError::new_err(
-            "timeout must be a float, tuple, or Timeout object",
-        ))
+        Err(PyValueError::new_err("timeout must be a float, tuple, or Timeout object"))
     }
 }
 
@@ -631,16 +597,12 @@ pub fn extract_verify(verify: &Bound<'_, PyAny>) -> PyResult<(bool, Option<Strin
         // If it's a string, it's a path to a CA bundle
         Ok((true, Some(path)))
     } else {
-        Err(PyValueError::new_err(
-            "verify must be a bool or a path string",
-        ))
+        Err(PyValueError::new_err("verify must be a bool or a path string"))
     }
 }
 
 /// Extract cert parameter (path string or tuple of (cert, key) or (cert, key, password))
-pub fn extract_cert(
-    cert: &Bound<'_, PyAny>,
-) -> PyResult<(Option<String>, Option<String>, Option<String>)> {
+pub fn extract_cert(cert: &Bound<'_, PyAny>) -> PyResult<(Option<String>, Option<String>, Option<String>)> {
     if let Ok(path) = cert.extract::<String>() {
         // Single path - cert file only (key might be in same file)
         Ok((Some(path), None, None))
@@ -651,9 +613,7 @@ pub fn extract_cert(
         // Tuple of (cert, key, password)
         Ok((Some(cert_path), Some(key_path), Some(password)))
     } else {
-        Err(PyValueError::new_err(
-            "cert must be a path string or tuple of (cert, key) or (cert, key, password)",
-        ))
+        Err(PyValueError::new_err("cert must be a path string or tuple of (cert, key) or (cert, key, password)"))
     }
 }
 
@@ -672,15 +632,9 @@ pub fn extract_limits(limits: &Bound<'_, PyAny>) -> PyResult<Limits> {
         let keepalive_expiry = dict
             .get_item("keepalive_expiry")?
             .and_then(|v| v.extract().ok());
-        Ok(Limits::new(
-            max_connections,
-            max_keepalive,
-            keepalive_expiry,
-        ))
+        Ok(Limits::new(max_connections, max_keepalive, keepalive_expiry))
     } else {
-        Err(PyValueError::new_err(
-            "limits must be a Limits object or dict",
-        ))
+        Err(PyValueError::new_err("limits must be a Limits object or dict"))
     }
 }
 
