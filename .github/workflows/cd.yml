@@ -288,14 +288,16 @@ jobs:
         run: cargo test --verbose
 
   # ===========================================================================
-  # Test Python (needs test-rust, chained after build-sdist)
+  # Test Python (needs test-rust, chained: build-sdist -> test-rust -> test-python)
   # ===========================================================================
-  # Full mode - uses pre-built wheel when platforms are built
   test-python:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     needs: [test-rust, build-linux]
-    if: ${{ !inputs.skip_platforms }}
+    if: |
+      always() &&
+      needs.test-rust.result == 'success' &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -314,13 +316,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      # When platforms are built, use pre-built wheel
       - name: Download Linux x86_64 wheel
+        if: ${{ needs.build-linux.result == 'success' }}
         uses: actions/download-artifact@v5
         with:
           name: wheels-linux-x86_64
           path: dist
 
       - name: Install wheel
+        if: ${{ needs.build-linux.result == 'success' }}
         run: |
           # Find the wheel matching our Python version
           WHEEL=$(ls dist/*.whl | grep -E "cp3(12|13)" | head -1)
@@ -330,47 +335,34 @@ jobs:
           echo "Installing: $WHEEL"
           uv pip install "$WHEEL" --force-reinstall
 
-      - name: Run Python tests
-        run: uv run pytest tests/ -v
-
-  # Skip platforms mode - builds locally
-  test-python-local:
-    name: Test Python ${{ matrix.python-version }} (local build)
-    runs-on: ubuntu-latest
-    needs: test-rust
-    if: ${{ inputs.skip_platforms }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13']
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install dependencies
-        run: uv sync --dev
-
+      # When platforms are skipped, build locally
       - name: Build extension locally
+        if: ${{ needs.build-linux.result == 'skipped' }}
         run: uv run maturin develop
 
       - name: Run Python tests
         run: uv run pytest tests/ -v
 
   # ===========================================================================
-  # GitHub Release (Full - with platform artifacts)
+  # GitHub Release
   # ===========================================================================
   release-github:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [build-linux, build-musllinux, build-windows, build-macos, build-sdist, test-python]
-    if: ${{ !inputs.skip_platforms }}
+    if: |
+      always() &&
+      needs.build-sdist.result == 'success' &&
+      needs.test-python.result == 'success' &&
+      (
+        inputs.skip_platforms ||
+        (
+          needs.build-linux.result == 'success' &&
+          needs.build-musllinux.result == 'success' &&
+          needs.build-windows.result == 'success' &&
+          needs.build-macos.result == 'success'
+        )
+      )
     environment:
       name: PROD
     permissions:
@@ -397,7 +389,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -name '*.whl' -exec cp {} release-assets/ \;
+          find artifacts -name '*.whl' -exec cp {} release-assets/ \; 2>/dev/null || true
           find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
           echo "Release assets:"
           ls -la release-assets/
@@ -415,68 +407,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
   # ===========================================================================
-  # GitHub Release (Skip platforms - sdist only)
-  # ===========================================================================
-  release-github-skip-platforms:
-    name: GitHub Release (skip platforms)
-    runs-on: ubuntu-latest
-    needs: [build-sdist, test-python-local]
-    if: ${{ inputs.skip_platforms }}
-    environment:
-      name: PROD
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Get version from tag
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v5
-        with:
-          name: wheels-sdist
-          path: artifacts
-
-      - name: Prepare release assets
-        run: |
-          mkdir -p release-assets
-          find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
-          echo "Release assets:"
-          ls -la release-assets/
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: "[Skip Platforms] Release v${{ steps.version.outputs.version }}"
-          body: |
-            **This release was created with skip_platforms=true.**
-
-            Only source distribution (sdist) is included. Platform-specific wheels were not built.
-          files: release-assets/*
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'alpha') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
-
-  # ===========================================================================
   # PyPI Release
   # ===========================================================================
   release-pypi:
     name: PyPI Release
     runs-on: ubuntu-latest
     needs: release-github
-    if: ${{ !inputs.skip_pypi && !inputs.skip_platforms }}
+    if: ${{ !inputs.skip_pypi }}
     environment:
       name: PROD
       url: https://pypi.org/p/requestx
@@ -492,46 +429,7 @@ jobs:
       - name: Prepare upload directory
         run: |
           mkdir -p upload
-          find artifacts -name '*.whl' -exec cp {} upload/ \;
-          find artifacts -name '*.tar.gz' -exec cp {} upload/ \;
-          echo "Files to upload:"
-          ls -la upload/
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: 'upload/*'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Publish to PyPI
-        run: uv publish upload/*
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-
-  # PyPI Release (skip platforms mode - sdist only)
-  release-pypi-skip-platforms:
-    name: PyPI Release (skip platforms)
-    runs-on: ubuntu-latest
-    needs: release-github-skip-platforms
-    if: ${{ !inputs.skip_pypi && inputs.skip_platforms }}
-    environment:
-      name: PROD
-      url: https://pypi.org/p/requestx
-    permissions:
-      id-token: write
-      attestations: write
-    steps:
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v5
-        with:
-          name: wheels-sdist
-          path: artifacts
-
-      - name: Prepare upload directory
-        run: |
-          mkdir -p upload
+          find artifacts -name '*.whl' -exec cp {} upload/ \; 2>/dev/null || true
           find artifacts -name '*.tar.gz' -exec cp {} upload/ \;
           echo "Files to upload:"
           ls -la upload/
