@@ -29,6 +29,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::SSLConfig>()?;
     m.add_class::<types::URL>()?;
     m.add_class::<types::Request>()?;
+    m.add_class::<types::QueryParams>()?;
+    m.add_class::<types::QueryParamsIterator>()?;
 
     // Streaming response types
     m.add_class::<streaming::StreamingResponse>()?;

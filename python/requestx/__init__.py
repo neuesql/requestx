@@ -74,6 +74,7 @@ from requestx._core import (
     SSLConfig,
     URL,
     Request,
+    QueryParams,
     # Exception classes - Base
     RequestError,
     # Transport errors
@@ -182,7 +183,7 @@ class AsyncBaseTransport(Protocol):
         ...
 
 
-__version__ = "1.0.5"
+__version__ = "1.0.6"
 __all__ = [
     # Version
     "__version__",
@@ -210,6 +211,7 @@ __all__ = [
     "SSLConfig",
     "URL",
     "Request",
+    "QueryParams",
     # Transport protocol classes (HTTPX compatibility)
     "BaseTransport",
     "AsyncBaseTransport",

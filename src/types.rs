@@ -726,6 +726,34 @@ impl URL {
         self.inner.query()
     }
 
+    /// Get the query parameters as a QueryParams object (HTTPX compatible)
+    #[getter]
+    pub fn params(&self) -> QueryParams {
+        match self.inner.query() {
+            Some(query) => {
+                let mut pairs = Vec::new();
+                for pair in query.split('&') {
+                    if pair.is_empty() {
+                        continue;
+                    }
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next().unwrap_or("");
+                    let value = parts.next().unwrap_or("");
+                    // URL decode
+                    let key = urlencoding::decode(key)
+                        .unwrap_or_else(|_| key.into())
+                        .to_string();
+                    let value = urlencoding::decode(value)
+                        .unwrap_or_else(|_| value.into())
+                        .to_string();
+                    pairs.push((key, value));
+                }
+                QueryParams::from_pairs(pairs)
+            }
+            None => QueryParams::default(),
+        }
+    }
+
     /// Get the fragment (without the leading '#')
     #[getter]
     pub fn fragment(&self) -> Option<&str> {
@@ -780,9 +808,23 @@ impl URL {
         Ok(URL { inner: joined })
     }
 
-    /// Copy the URL with modifications
-    #[pyo3(signature = (scheme=None, host=None, port=None, path=None, query=None, fragment=None))]
-    pub fn copy_with(&self, scheme: Option<&str>, host: Option<&str>, port: Option<u16>, path: Option<&str>, query: Option<&str>, fragment: Option<&str>) -> PyResult<URL> {
+    /// Copy the URL with modifications (HTTPX compatible)
+    ///
+    /// Supports both HTTPX-style `params` parameter (dict, QueryParams, or string)
+    /// and the `raw_path` parameter (bytes) for path manipulation.
+    #[pyo3(signature = (scheme=None, host=None, port=None, path=None, raw_path=None, query=None, params=None, fragment=None))]
+    pub fn copy_with(
+        &self,
+        py: Python<'_>,
+        scheme: Option<&str>,
+        host: Option<&str>,
+        port: Option<u16>,
+        path: Option<&str>,
+        raw_path: Option<&Bound<'_, PyAny>>,
+        query: Option<&str>,
+        params: Option<&Bound<'_, PyAny>>,
+        fragment: Option<&str>,
+    ) -> PyResult<URL> {
         let mut new_url = self.inner.clone();
 
         if let Some(s) = scheme {
@@ -800,17 +842,64 @@ impl URL {
                 .set_port(Some(p))
                 .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid port"))?;
         }
-        if let Some(p) = path {
+
+        // Handle raw_path (bytes) - HTTPX compatibility
+        // raw_path can contain both path and query, e.g., b"/path?query=value"
+        if let Some(raw) = raw_path {
+            let raw_bytes: Vec<u8> = if let Ok(bytes) = raw.extract::<Vec<u8>>() {
+                bytes
+            } else if let Ok(pybytes) = raw.downcast::<pyo3::types::PyBytes>() {
+                pybytes.as_bytes().to_vec()
+            } else if let Ok(s) = raw.extract::<String>() {
+                s.into_bytes()
+            } else {
+                return Err(pyo3::exceptions::PyValueError::new_err("raw_path must be bytes or str"));
+            };
+
+            let raw_str = String::from_utf8_lossy(&raw_bytes);
+            // Split into path and query
+            if let Some(query_start) = raw_str.find('?') {
+                let (path_part, query_part) = raw_str.split_at(query_start);
+                new_url.set_path(path_part);
+                // Remove the leading '?' from query
+                new_url.set_query(Some(&query_part[1..]));
+            } else {
+                new_url.set_path(&raw_str);
+            }
+        } else if let Some(p) = path {
             new_url.set_path(p);
         }
-        if let Some(q) = query {
+
+        // Handle params (dict, QueryParams, or string) - HTTPX compatibility
+        // params takes precedence over query if both are specified
+        if let Some(p) = params {
+            let query_str = if let Ok(qp) = p.extract::<QueryParams>() {
+                qp.to_query_string()
+            } else if let Ok(s) = p.extract::<String>() {
+                s
+            } else if p.is_instance_of::<PyDict>() {
+                let qp = QueryParams::new(Some(p))?;
+                qp.to_query_string()
+            } else {
+                return Err(pyo3::exceptions::PyValueError::new_err("params must be a dict, QueryParams, or string"));
+            };
+
+            if query_str.is_empty() {
+                new_url.set_query(None);
+            } else {
+                new_url.set_query(Some(&query_str));
+            }
+        } else if let Some(q) = query {
             new_url.set_query(Some(q));
-        } else if query.is_none() && self.inner.query().is_some() {
-            // Keep existing query if not specified
         }
+        // If neither params nor query specified, keep existing query
+
         if let Some(f) = fragment {
             new_url.set_fragment(Some(f));
         }
+
+        // Suppress unused variable warning
+        let _ = py;
 
         Ok(URL { inner: new_url })
     }
@@ -856,6 +945,330 @@ impl URL {
     /// Get the URL as a string
     pub fn as_str(&self) -> &str {
         self.inner.as_str()
+    }
+}
+
+/// QueryParams type for URL query string handling (HTTPX compatible)
+///
+/// Supports multi-value parameters like HTTPX's QueryParams class.
+/// Can be initialized from:
+/// - None: empty params
+/// - str: raw query string (will be parsed)
+/// - dict: key-value pairs (values can be strings or lists)
+/// - list of tuples: [(key, value), ...]
+/// - another QueryParams object
+#[pyclass(name = "QueryParams")]
+#[derive(Debug, Clone, Default)]
+pub struct QueryParams {
+    /// Internal storage: list of (key, value) pairs to preserve order and support multi-values
+    inner: Vec<(String, String)>,
+}
+
+#[pymethods]
+impl QueryParams {
+    #[new]
+    #[pyo3(signature = (params=None))]
+    pub fn new(params: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let mut inner = Vec::new();
+
+        if let Some(p) = params {
+            // Check if it's None
+            if p.is_none() {
+                return Ok(Self { inner });
+            }
+
+            // Check if it's a QueryParams object
+            if let Ok(qp) = p.extract::<QueryParams>() {
+                return Ok(qp);
+            }
+
+            // Check if it's a string (raw query string)
+            if let Ok(s) = p.extract::<String>() {
+                // Parse the query string
+                let query = s.trim_start_matches('?');
+                for pair in query.split('&') {
+                    if pair.is_empty() {
+                        continue;
+                    }
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next().unwrap_or("");
+                    let value = parts.next().unwrap_or("");
+                    // URL decode
+                    let key = urlencoding::decode(key)
+                        .unwrap_or_else(|_| key.into())
+                        .to_string();
+                    let value = urlencoding::decode(value)
+                        .unwrap_or_else(|_| value.into())
+                        .to_string();
+                    inner.push((key, value));
+                }
+                return Ok(Self { inner });
+            }
+
+            // Check if it's a list of tuples
+            if let Ok(list) = p.downcast::<pyo3::types::PyList>() {
+                for item in list.iter() {
+                    if let Ok(tuple) = item.extract::<(String, String)>() {
+                        inner.push(tuple);
+                    } else if let Ok(tuple) = item.extract::<(&str, &str)>() {
+                        inner.push((tuple.0.to_string(), tuple.1.to_string()));
+                    }
+                }
+                return Ok(Self { inner });
+            }
+
+            // Check if it's a dict
+            if let Ok(dict) = p.downcast::<PyDict>() {
+                for (key, value) in dict.iter() {
+                    let key: String = key.extract()?;
+                    // Handle both single values and lists
+                    if let Ok(values) = value.extract::<Vec<String>>() {
+                        for v in values {
+                            inner.push((key.clone(), v));
+                        }
+                    } else if let Ok(v) = value.extract::<String>() {
+                        inner.push((key, v));
+                    } else {
+                        // Convert other types to string
+                        let v = value.str()?.to_string();
+                        inner.push((key, v));
+                    }
+                }
+                return Ok(Self { inner });
+            }
+
+            return Err(PyValueError::new_err("QueryParams must be initialized with None, str, dict, list of tuples, or QueryParams"));
+        }
+
+        Ok(Self { inner })
+    }
+
+    /// Get the first value for a key, or default if not found
+    #[pyo3(signature = (key, default=None))]
+    pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
+        for (k, v) in &self.inner {
+            if k == key {
+                return Some(v.clone());
+            }
+        }
+        default.map(|s| s.to_string())
+    }
+
+    /// Get all values for a key as a list
+    pub fn get_list(&self, key: &str) -> Vec<String> {
+        self.inner
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+
+    /// Get all unique keys
+    pub fn keys(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.inner
+            .iter()
+            .filter_map(|(k, _)| {
+                if seen.contains(k) {
+                    None
+                } else {
+                    seen.insert(k.clone());
+                    Some(k.clone())
+                }
+            })
+            .collect()
+    }
+
+    /// Get all values (one per unique key, first occurrence)
+    pub fn values(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.inner
+            .iter()
+            .filter_map(|(k, v)| {
+                if seen.contains(k) {
+                    None
+                } else {
+                    seen.insert(k.clone());
+                    Some(v.clone())
+                }
+            })
+            .collect()
+    }
+
+    /// Get all unique key-value pairs (first occurrence per key)
+    pub fn items(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
+        let list = PyList::empty(py);
+        let mut seen = std::collections::HashSet::new();
+        for (key, value) in &self.inner {
+            if !seen.contains(key) {
+                seen.insert(key.clone());
+                let tuple = PyTuple::new(py, &[key.clone(), value.clone()])?;
+                list.append(tuple)?;
+            }
+        }
+        Ok(list.into())
+    }
+
+    /// Get all key-value pairs including duplicates
+    pub fn multi_items(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
+        let list = PyList::empty(py);
+        for (key, value) in &self.inner {
+            let tuple = PyTuple::new(py, &[key.clone(), value.clone()])?;
+            list.append(tuple)?;
+        }
+        Ok(list.into())
+    }
+
+    /// Merge with another QueryParams or dict-like object
+    pub fn merge(&self, other: &Bound<'_, PyAny>) -> PyResult<QueryParams> {
+        let mut new_params = self.clone();
+
+        if let Ok(qp) = other.extract::<QueryParams>() {
+            new_params.inner.extend(qp.inner);
+        } else if let Ok(dict) = other.downcast::<PyDict>() {
+            for (key, value) in dict.iter() {
+                let key: String = key.extract()?;
+                if let Ok(values) = value.extract::<Vec<String>>() {
+                    for v in values {
+                        new_params.inner.push((key.clone(), v));
+                    }
+                } else if let Ok(v) = value.extract::<String>() {
+                    new_params.inner.push((key, v));
+                } else {
+                    let v = value.str()?.to_string();
+                    new_params.inner.push((key, v));
+                }
+            }
+        } else {
+            return Err(PyValueError::new_err("merge argument must be a QueryParams or dict"));
+        }
+
+        Ok(new_params)
+    }
+
+    /// Set a value, removing any existing values for that key
+    pub fn set(&self, key: &str, value: &str) -> QueryParams {
+        let mut new_params = QueryParams {
+            inner: self
+                .inner
+                .iter()
+                .filter(|(k, _)| k != key)
+                .cloned()
+                .collect(),
+        };
+        new_params.inner.push((key.to_string(), value.to_string()));
+        new_params
+    }
+
+    /// Add a value for a key (allows duplicates)
+    pub fn add(&self, key: &str, value: &str) -> QueryParams {
+        let mut new_params = self.clone();
+        new_params.inner.push((key.to_string(), value.to_string()));
+        new_params
+    }
+
+    /// Remove all values for a key
+    pub fn remove(&self, key: &str) -> QueryParams {
+        QueryParams {
+            inner: self
+                .inner
+                .iter()
+                .filter(|(k, _)| k != key)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    pub fn __len__(&self) -> usize {
+        self.keys().len()
+    }
+
+    pub fn __bool__(&self) -> bool {
+        !self.inner.is_empty()
+    }
+
+    pub fn __contains__(&self, key: &str) -> bool {
+        self.inner.iter().any(|(k, _)| k == key)
+    }
+
+    pub fn __getitem__(&self, key: &str) -> PyResult<String> {
+        self.get(key, None)
+            .ok_or_else(|| PyValueError::new_err(format!("Key '{key}' not found")))
+    }
+
+    pub fn __iter__(&self) -> QueryParamsIterator {
+        QueryParamsIterator { keys: self.keys(), index: 0 }
+    }
+
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(qp) = other.extract::<QueryParams>() {
+            Ok(self.inner == qp.inner)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for (k, v) in &self.inner {
+            k.hash(&mut hasher);
+            v.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    pub fn __str__(&self) -> String {
+        self.inner
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&")
+    }
+
+    pub fn __repr__(&self) -> String {
+        format!("QueryParams('{}')", self.__str__())
+    }
+}
+
+impl QueryParams {
+    /// Create from a vector of key-value pairs
+    pub fn from_pairs(pairs: Vec<(String, String)>) -> Self {
+        Self { inner: pairs }
+    }
+
+    /// Get the internal pairs
+    pub fn as_pairs(&self) -> &[(String, String)] {
+        &self.inner
+    }
+
+    /// Convert to URL-encoded query string
+    pub fn to_query_string(&self) -> String {
+        self.__str__()
+    }
+}
+
+/// Iterator for QueryParams keys
+#[pyclass]
+pub struct QueryParamsIterator {
+    keys: Vec<String>,
+    index: usize,
+}
+
+#[pymethods]
+impl QueryParamsIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<String> {
+        if self.index < self.keys.len() {
+            let key = self.keys[self.index].clone();
+            self.index += 1;
+            Some(key)
+        } else {
+            None
+        }
     }
 }
 
