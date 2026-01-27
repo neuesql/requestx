@@ -46,8 +46,6 @@ dev = [
     "mkdocstrings>=0.24.0",
     "mkdocstrings-python>=1.8.0",
     "pymdown-extensions>=10.0",
-    # HTTP Performance Testing
-    "http-client-benchmarker>=5.1.0"
 ]
 
 [tool.maturin]
