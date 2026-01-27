@@ -1,6 +1,6 @@
 //! Response types for requestx
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, create_http_status_error};
 use crate::types::{Cookies, Headers, Request};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -199,9 +199,10 @@ impl Response {
     }
 
     /// Raise an exception if the response indicates an error
-    pub fn raise_for_status(&self) -> PyResult<()> {
+    pub fn raise_for_status(&self, py: Python<'_>) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str)).into())
+            let message = format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str);
+            Err(create_http_status_error(py, &message, self.clone(), self.request.clone()))
         } else {
             Ok(())
         }
@@ -240,6 +241,19 @@ impl Response {
     pub fn iter_lines(&self) -> PyResult<Vec<String>> {
         let text = self.text()?;
         Ok(text.lines().map(|s| s.to_string()).collect())
+    }
+
+    /// Iterate over response text in chunks (HTTPX compatibility)
+    pub fn iter_text(&self) -> PyResult<Vec<String>> {
+        let text = self.text()?;
+        // Return as a single chunk like httpx does for non-streaming responses
+        Ok(vec![text])
+    }
+
+    /// Iterate over raw response bytes (HTTPX compatibility)
+    pub fn iter_raw<'py>(&self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<Bound<'py, PyList>> {
+        // For non-streaming responses, this is the same as iter_bytes
+        self.iter_bytes(py, chunk_size)
     }
 
     /// Get response links from Link header

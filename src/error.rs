@@ -5,6 +5,8 @@
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use crate::response::Response;
+use crate::types::Request;
 
 // ============================================================================
 // Base Exception Hierarchy (matches HTTPX)
@@ -365,3 +367,18 @@ impl From<Error> for PyErr {
 
 /// Result type alias
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Create an HTTPStatusError with response and request attributes (HTTPX compatible)
+/// This function creates the exception and sets .response and .request attributes
+pub fn create_http_status_error(py: Python<'_>, message: &str, response: Response, request: Option<Request>) -> PyErr {
+    let err = HTTPStatusError::new_err(message.to_string());
+
+    // Set the response and request attributes on the exception instance
+    let exc_instance = err.value(py);
+    let _ = exc_instance.setattr("response", response);
+    if let Some(req) = request {
+        let _ = exc_instance.setattr("request", req);
+    }
+
+    err
+}

@@ -1376,13 +1376,17 @@ pub struct Request {
     /// Stream flag - whether this request expects a streaming response
     #[pyo3(get)]
     pub stream: bool,
+
+    /// Extensions dictionary for custom data (HTTPX compatibility)
+    /// Used for things like SNI hostname override
+    extensions: std::collections::HashMap<String, String>,
 }
 
 #[pymethods]
 impl Request {
     #[new]
-    #[pyo3(signature = (method, url, headers=None, content=None, stream=false))]
-    pub fn new(method: &str, url: &Bound<'_, PyAny>, headers: Option<&Bound<'_, PyAny>>, content: Option<&Bound<'_, pyo3::types::PyBytes>>, stream: bool) -> PyResult<Self> {
+    #[pyo3(signature = (method, url, headers=None, content=None, stream=false, extensions=None))]
+    pub fn new(method: &str, url: &Bound<'_, PyAny>, headers: Option<&Bound<'_, PyAny>>, content: Option<&Bound<'_, pyo3::types::PyBytes>>, stream: bool, extensions: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let url = if let Ok(url_obj) = url.extract::<URL>() {
             url_obj
         } else if let Ok(url_str) = url.extract::<String>() {
@@ -1399,12 +1403,26 @@ impl Request {
 
         let content = content.map(|c| c.as_bytes().to_vec());
 
+        // Extract extensions from Python dict
+        let extensions = if let Some(ext) = extensions {
+            let mut map = std::collections::HashMap::new();
+            for (key, value) in ext.iter() {
+                if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                    map.insert(k, v);
+                }
+            }
+            map
+        } else {
+            std::collections::HashMap::new()
+        };
+
         Ok(Self {
             method: method.to_uppercase(),
             url,
             headers,
             content,
             stream,
+            extensions,
         })
     }
 
@@ -1428,6 +1446,16 @@ impl Request {
             .map(|c| pyo3::types::PyBytes::new(py, c))
     }
 
+    /// Get request extensions (HTTPX compatibility)
+    #[getter]
+    pub fn extensions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, value) in &self.extensions {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict)
+    }
+
     pub fn __repr__(&self) -> String {
         format!("<Request('{}', '{}')>", self.method, self.url.as_str())
     }
@@ -1446,6 +1474,19 @@ impl Request {
             headers,
             content,
             stream,
+            extensions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new Request with extensions
+    pub fn new_with_extensions(method: String, url: URL, headers: Headers, content: Option<Vec<u8>>, stream: bool, extensions: std::collections::HashMap<String, String>) -> Self {
+        Self {
+            method,
+            url,
+            headers,
+            content,
+            stream,
+            extensions,
         }
     }
 
