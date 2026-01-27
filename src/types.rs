@@ -732,13 +732,13 @@ impl URL {
         self.inner.fragment()
     }
 
-    /// Get the raw path and query string
+    /// Get the raw path and query string as bytes (HTTPX compatible)
     #[getter]
-    pub fn raw_path(&self) -> String {
+    pub fn raw_path(&self) -> Vec<u8> {
         let path = self.inner.path();
         match self.inner.query() {
-            Some(query) => format!("{path}?{query}"),
-            None => path.to_string(),
+            Some(query) => format!("{path}?{query}").into_bytes(),
+            None => path.as_bytes().to_vec(),
         }
     }
 
