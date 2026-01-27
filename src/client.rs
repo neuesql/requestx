@@ -422,7 +422,7 @@ impl Client {
     pub fn build_request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -431,7 +431,17 @@ impl Client {
         json: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Request> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        // Accept both string and URL object
+        let url_str = if let Ok(s) = url.extract::<String>() {
+            s
+        } else if let Ok(url_obj) = url.extract::<URL>() {
+            url_obj.as_url().to_string()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "url must be a string or URL object"
+            ));
+        };
+        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let parsed_url = URL::new(&resolved_url)?;
 
         // Merge headers
@@ -1228,7 +1238,7 @@ impl AsyncClient {
     pub fn build_request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1237,7 +1247,17 @@ impl AsyncClient {
         json: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] timeout: Option<f64>,
     ) -> PyResult<Request> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        // Accept both string and URL object
+        let url_str = if let Ok(s) = url.extract::<String>() {
+            s
+        } else if let Ok(url_obj) = url.extract::<URL>() {
+            url_obj.as_url().to_string()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "url must be a string or URL object"
+            ));
+        };
+        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let parsed_url = URL::new(&resolved_url)?;
 
         // Merge headers

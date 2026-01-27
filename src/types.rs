@@ -104,6 +104,16 @@ impl Headers {
         self.remove(key);
     }
 
+    /// Pop a header value (HTTPX compatibility)
+    #[pyo3(signature = (key, default=None))]
+    pub fn pop(&mut self, key: &str, default: Option<&str>) -> Option<String> {
+        let lower_key = key.to_lowercase();
+        self.inner
+            .remove(&lower_key)
+            .and_then(|v| v.into_iter().next())
+            .or_else(|| default.map(|s| s.to_string()))
+    }
+
     pub fn __repr__(&self) -> String {
         format!("Headers({:?})", self.inner)
     }
@@ -315,6 +325,31 @@ impl Timeout {
     #[getter]
     pub fn total_timeout(&self) -> Option<f64> {
         self.total.map(|d| d.as_secs_f64())
+    }
+
+    // HTTPX-compatible aliases (returns the same as *_timeout properties)
+    #[pyo3(name = "connect")]
+    #[getter]
+    pub fn connect_alias(&self) -> Option<f64> {
+        self.connect.map(|d| d.as_secs_f64())
+    }
+
+    #[pyo3(name = "read")]
+    #[getter]
+    pub fn read_alias(&self) -> Option<f64> {
+        self.read.map(|d| d.as_secs_f64())
+    }
+
+    #[pyo3(name = "write")]
+    #[getter]
+    pub fn write_alias(&self) -> Option<f64> {
+        self.write.map(|d| d.as_secs_f64())
+    }
+
+    #[pyo3(name = "pool")]
+    #[getter]
+    pub fn pool_alias(&self) -> Option<f64> {
+        self.pool.map(|d| d.as_secs_f64())
     }
 
     pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
