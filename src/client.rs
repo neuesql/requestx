@@ -305,7 +305,7 @@ fn resolve_url(base_url: &Option<String>, url: &str) -> Result<String> {
 }
 
 /// Synchronous HTTP Client
-#[pyclass(name = "Client")]
+#[pyclass(name = "Client", subclass)]
 pub struct Client {
     client: reqwest::blocking::Client,
     config: ClientConfig,
@@ -393,6 +393,12 @@ impl Client {
     #[getter]
     pub fn is_closed(&self) -> bool {
         self.closed
+    }
+
+    /// Get the client timeout configuration
+    #[getter]
+    pub fn timeout(&self) -> Timeout {
+        self.config.timeout.clone()
     }
 
     /// Build a request without sending it
@@ -1078,7 +1084,7 @@ impl Client {
 }
 
 /// Asynchronous HTTP Client
-#[pyclass(name = "AsyncClient")]
+#[pyclass(name = "AsyncClient", subclass)]
 pub struct AsyncClient {
     client: Arc<reqwest::Client>,
     config: ClientConfig,
@@ -1174,6 +1180,12 @@ impl AsyncClient {
     #[getter]
     pub fn is_closed(&self) -> bool {
         *self.closed.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Get the client timeout configuration
+    #[getter]
+    pub fn timeout(&self) -> Timeout {
+        self.config.timeout.clone()
     }
 
     /// Build a request without sending it

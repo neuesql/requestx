@@ -44,6 +44,18 @@ Example usage:
     asyncio.run(stream_example())
 """
 
+from typing import (
+    Any,
+    AsyncIterator,
+    Iterator,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    Union,
+    runtime_checkable,
+)
+
 from requestx._core import (
     # Client classes
     Client,
@@ -116,7 +128,68 @@ from requestx._core import (
     options,
 )
 
-__version__ = "1.0.4"
+# HTTPX-compatible transport protocol classes
+# These are Protocol stubs to allow type checking and isinstance checks
+# for custom transport implementations
+
+
+@runtime_checkable
+class BaseTransport(Protocol):
+    """
+    Base class for synchronous HTTP transports.
+
+    This is a Protocol stub for HTTPX compatibility. Custom transports
+    should implement the handle_request method.
+    """
+
+    def handle_request(self, request: Request) -> Response:
+        """
+        Handle a single HTTP request.
+
+        Args:
+            request: The HTTP request to send.
+
+        Returns:
+            The HTTP response.
+        """
+        ...
+
+    def close(self) -> None:
+        """
+        Close the transport.
+        """
+        ...
+
+
+@runtime_checkable
+class AsyncBaseTransport(Protocol):
+    """
+    Base class for asynchronous HTTP transports.
+
+    This is a Protocol stub for HTTPX compatibility. Custom transports
+    should implement the handle_async_request method.
+    """
+
+    async def handle_async_request(self, request: Request) -> Response:
+        """
+        Handle a single HTTP request asynchronously.
+
+        Args:
+            request: The HTTP request to send.
+
+        Returns:
+            The HTTP response.
+        """
+        ...
+
+    async def aclose(self) -> None:
+        """
+        Close the transport asynchronously.
+        """
+        ...
+
+
+__version__ = "1.0.5"
 __all__ = [
     # Version
     "__version__",
@@ -144,6 +217,9 @@ __all__ = [
     "SSLConfig",
     "URL",
     "Request",
+    # Transport protocol classes (HTTPX compatibility)
+    "BaseTransport",
+    "AsyncBaseTransport",
     # Exception classes - Base
     "RequestError",
     # Transport errors
