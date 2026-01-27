@@ -133,14 +133,14 @@ impl StreamingResponse {
     #[getter]
     pub fn content_length(&self) -> Option<usize> {
         self.headers
-            .get("content-length")
+            .get_value("content-length")
             .and_then(|v| v.parse().ok())
     }
 
     /// Get content type if present
     #[getter]
     pub fn content_type(&self) -> Option<String> {
-        self.headers.get("content-type")
+        self.headers.get_value("content-type")
     }
 
     /// Raise an exception if the response indicates an error
@@ -312,7 +312,7 @@ impl StreamingResponse {
     }
 
     fn detect_encoding(&self) -> String {
-        if let Some(content_type) = self.headers.get("content-type") {
+        if let Some(content_type) = self.headers.get_value("content-type") {
             if let Some(charset_pos) = content_type.to_lowercase().find("charset=") {
                 let charset_start = charset_pos + 8;
                 let charset: String = content_type[charset_start..]
@@ -610,14 +610,14 @@ impl AsyncStreamingResponse {
     #[getter]
     pub fn content_length(&self) -> Option<usize> {
         self.headers
-            .get("content-length")
+            .get_value("content-length")
             .and_then(|v| v.parse().ok())
     }
 
     /// Get content type if present
     #[getter]
     pub fn content_type(&self) -> Option<String> {
-        self.headers.get("content-type")
+        self.headers.get_value("content-type")
     }
 
     /// Raise an exception if the response indicates an error
@@ -788,7 +788,7 @@ impl AsyncStreamingResponse {
     }
 
     fn detect_encoding(&self) -> String {
-        if let Some(content_type) = self.headers.get("content-type") {
+        if let Some(content_type) = self.headers.get_value("content-type") {
             if let Some(charset_pos) = content_type.to_lowercase().find("charset=") {
                 let charset_start = charset_pos + 8;
                 let charset: String = content_type[charset_start..]

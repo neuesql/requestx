@@ -30,10 +30,12 @@ impl Headers {
         Ok(Self { inner })
     }
 
-    pub fn get(&self, key: &str) -> Option<String> {
+    #[pyo3(signature = (key, default=None))]
+    pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
         self.inner
             .get(&key.to_lowercase())
             .and_then(|v| v.first().cloned())
+            .or_else(|| default.map(|s| s.to_string()))
     }
 
     pub fn get_list(&self, key: &str) -> Vec<String> {
@@ -90,7 +92,7 @@ impl Headers {
     }
 
     pub fn __getitem__(&self, key: &str) -> PyResult<String> {
-        self.get(key)
+        self.get(key, None)
             .ok_or_else(|| PyValueError::new_err(format!("Header '{key}' not found")))
     }
 
@@ -112,6 +114,13 @@ impl Headers {
 }
 
 impl Headers {
+    /// Internal helper to get a header value without default parameter
+    pub fn get_value(&self, key: &str) -> Option<String> {
+        self.inner
+            .get(&key.to_lowercase())
+            .and_then(|v| v.first().cloned())
+    }
+
     pub fn to_reqwest_headers(&self) -> reqwest::header::HeaderMap {
         let mut map = reqwest::header::HeaderMap::new();
         for (key, values) in &self.inner {
@@ -306,6 +315,22 @@ impl Timeout {
     #[getter]
     pub fn total_timeout(&self) -> Option<f64> {
         self.total.map(|d| d.as_secs_f64())
+    }
+
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(other_timeout) = other.extract::<Timeout>() {
+            Ok(self.total == other_timeout.total
+                && self.connect == other_timeout.connect
+                && self.read == other_timeout.read
+                && self.write == other_timeout.write
+                && self.pool == other_timeout.pool)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn __ne__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(!self.__eq__(other)?)
     }
 
     pub fn __repr__(&self) -> String {
@@ -685,6 +710,8 @@ pub fn get_env_ssl_cert_dir() -> Option<String> {
 #[allow(clippy::upper_case_acronyms)]
 pub struct URL {
     inner: url::Url,
+    /// Whether this URL was originally relative (for HTTPX compatibility)
+    is_relative: bool,
 }
 
 #[pymethods]
@@ -692,8 +719,19 @@ impl URL {
     #[new]
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
-        let inner = url::Url::parse(url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
-        Ok(Self { inner })
+        // Try to parse as absolute URL first
+        match url::Url::parse(url) {
+            Ok(inner) => Ok(Self { inner, is_relative: false }),
+            Err(_) => {
+                // If parsing fails, it might be a relative URL
+                // Use a dummy base to parse it, mark as relative
+                let base = url::Url::parse("http://relative.url.placeholder/").unwrap();
+                let inner = base.join(url).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}"))
+                })?;
+                Ok(Self { inner, is_relative: true })
+            }
+        }
     }
 
     /// Get the scheme (e.g., "http", "https")
@@ -787,6 +825,13 @@ impl URL {
         }
     }
 
+    /// Check if the URL is relative (no scheme)
+    /// HTTPX compatibility: a URL is relative if it doesn't have a scheme
+    #[getter]
+    pub fn is_relative_url(&self) -> bool {
+        self.is_relative
+    }
+
     /// Get username if present
     #[getter]
     pub fn username(&self) -> &str {
@@ -805,7 +850,7 @@ impl URL {
             .inner
             .join(url)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to join URLs: {e}")))?;
-        Ok(URL { inner: joined })
+        Ok(URL { inner: joined, is_relative: false })
     }
 
     /// Copy the URL with modifications (HTTPX compatible)
@@ -904,7 +949,9 @@ impl URL {
         // Suppress unused variable warning
         let _ = py;
 
-        Ok(URL { inner: new_url })
+        // If scheme or host was explicitly set, it's no longer relative
+        let is_relative = self.is_relative && scheme.is_none() && host.is_none();
+        Ok(URL { inner: new_url, is_relative })
     }
 
     /// Compare equality with another URL or string
@@ -937,7 +984,7 @@ impl URL {
 impl URL {
     /// Create from url::Url
     pub fn from_url(url: url::Url) -> Self {
-        Self { inner: url }
+        Self { inner: url, is_relative: false }
     }
 
     /// Get the inner url::Url

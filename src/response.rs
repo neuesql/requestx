@@ -181,21 +181,21 @@ impl Response {
     /// Get next redirect URL if present
     #[getter]
     pub fn next_url(&self) -> Option<String> {
-        self.headers.get("location")
+        self.headers.get_value("location")
     }
 
     /// Get content length if present
     #[getter]
     pub fn content_length(&self) -> Option<usize> {
         self.headers
-            .get("content-length")
+            .get_value("content-length")
             .and_then(|v| v.parse().ok())
     }
 
     /// Get content type if present
     #[getter]
     pub fn content_type(&self) -> Option<String> {
-        self.headers.get("content-type")
+        self.headers.get_value("content-type")
     }
 
     /// Raise an exception if the response indicates an error
@@ -210,6 +210,19 @@ impl Response {
     /// Read response content (compatibility method)
     pub fn read<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         self.content(py)
+    }
+
+    /// Async read response content (HTTPX compatibility)
+    /// For non-streaming responses, the body is already read, so this just returns the content
+    pub fn aread<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let content = self.content.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(content) })
+    }
+
+    /// Async close the response (HTTPX compatibility)
+    /// For non-streaming responses, this is a no-op
+    pub fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
 
     /// Iterate over response content in chunks
@@ -232,7 +245,7 @@ impl Response {
     /// Get response links from Link header
     pub fn links<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        if let Some(link_header) = self.headers.get("link") {
+        if let Some(link_header) = self.headers.get_value("link") {
             // Parse Link header format: <url>; rel="name", ...
             for link in link_header.split(',') {
                 let parts: Vec<&str> = link.split(';').collect();
@@ -325,7 +338,7 @@ impl Response {
     /// Detect encoding from Content-Type header or content
     fn detect_encoding(&self) -> String {
         // First, check Content-Type header for charset
-        if let Some(content_type) = self.headers.get("content-type") {
+        if let Some(content_type) = self.headers.get_value("content-type") {
             if let Some(charset_pos) = content_type.to_lowercase().find("charset=") {
                 let charset_start = charset_pos + 8;
                 let charset: String = content_type[charset_start..]

@@ -401,6 +401,12 @@ impl Client {
         self.config.timeout.clone()
     }
 
+    /// Get the base URL (HTTPX compatibility)
+    #[getter]
+    pub fn base_url(&self) -> Option<URL> {
+        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+    }
+
     /// Build a request without sending it
     #[pyo3(signature = (
         method,
@@ -657,13 +663,26 @@ impl Client {
             status_code,
             resp_headers,
             body,
-            final_url,
+            final_url.clone(),
             http_version,
             Cookies { inner: cookies_map },
             elapsed,
             method.to_uppercase(),
             reason_phrase,
         );
+
+        // Create and attach a Request object for HTTPX compatibility
+        let request_url = URL::new(&final_url).ok();
+        if let Some(url) = request_url {
+            let request = Request::new_internal(
+                method.to_uppercase(),
+                url,
+                Headers::default(), // The actual headers are already sent
+                None,
+                false,
+            );
+            resp.set_request(request);
+        }
 
         // Set default encoding if configured
         if let Some(ref encoding) = self.config.default_encoding {
@@ -1188,6 +1207,12 @@ impl AsyncClient {
         self.config.timeout.clone()
     }
 
+    /// Get the base URL (HTTPX compatibility)
+    #[getter]
+    pub fn base_url(&self) -> Option<URL> {
+        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+    }
+
     /// Build a request without sending it
     #[pyo3(signature = (
         method,
@@ -1487,8 +1512,23 @@ impl AsyncClient {
             // Execute request
             let response = req.send().await.map_err(Error::from)?;
 
+            // Capture final URL before consuming response
+            let final_url = response.url().to_string();
+
             // Convert to our Response type
             let mut resp = Response::from_reqwest(response, start, &method).await?;
+
+            // Create and attach a Request object for HTTPX compatibility
+            if let Ok(url) = URL::new(&final_url) {
+                let request = Request::new_internal(
+                    method.to_uppercase(),
+                    url,
+                    Headers::default(),
+                    None,
+                    false,
+                );
+                resp.set_request(request);
+            }
 
             // Set default encoding if configured
             if let Some(ref encoding) = config.default_encoding {
