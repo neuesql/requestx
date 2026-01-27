@@ -566,18 +566,14 @@ impl AsyncStreamingResponse {
     #[getter]
     pub fn is_closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let closed = self.closed.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(*closed.lock().await)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(*closed.lock().await) })
     }
 
     /// Whether the stream has been consumed (sync check for compatibility)
     #[getter]
     pub fn is_stream_consumed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let consumed = self.consumed.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(*consumed.lock().await)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(*consumed.lock().await) })
     }
 
     /// Check if request was successful (2xx status)

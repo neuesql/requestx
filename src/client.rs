@@ -448,9 +448,7 @@ impl Client {
         let final_url = if let Some(p) = params {
             let params_vec = extract_params(Some(p))?;
             if !params_vec.is_empty() {
-                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}"))
-                })?;
+                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
                 for (k, v) in params_vec {
                     parsed.query_pairs_mut().append_pair(&k, &v);
                 }
@@ -479,29 +477,16 @@ impl Client {
                 .join("&");
             final_headers.set("content-type", "application/x-www-form-urlencoded");
             Some(encoded.into_bytes())
-        } else if let Some(body) = content {
-            Some(body.as_bytes().to_vec())
         } else {
-            None
+            content.map(|body| body.as_bytes().to_vec())
         };
 
-        Ok(Request::new_internal(
-            method.to_uppercase(),
-            final_url,
-            final_headers,
-            body_content,
-            false,
-        ))
+        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
     }
 
     /// Send a pre-built request
     #[pyo3(signature = (request, stream=false))]
-    pub fn send(
-        &self,
-        py: Python<'_>,
-        request: &Request,
-        stream: bool,
-    ) -> PyResult<Py<PyAny>> {
+    pub fn send(&self, py: Python<'_>, request: &Request, stream: bool) -> PyResult<Py<PyAny>> {
         if stream {
             let streaming_response = self.send_streaming(request)?;
             Ok(streaming_response.into_pyobject(py)?.into_any().unbind())
@@ -961,7 +946,10 @@ impl Client {
 
         // Build reqwest request
         let mut req = self.client.request(
-            request.method.parse().map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+            request
+                .method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
             request.url_str(),
         );
 
@@ -1044,7 +1032,10 @@ impl Client {
 
         // Build reqwest request
         let mut req = self.client.request(
-            request.method.parse().map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+            request
+                .method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
             request.url_str(),
         );
 
@@ -1238,9 +1229,7 @@ impl AsyncClient {
         let final_url = if let Some(p) = params {
             let params_vec = extract_params(Some(p))?;
             if !params_vec.is_empty() {
-                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}"))
-                })?;
+                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
                 for (k, v) in params_vec {
                     parsed.query_pairs_mut().append_pair(&k, &v);
                 }
@@ -1269,29 +1258,16 @@ impl AsyncClient {
                 .join("&");
             final_headers.set("content-type", "application/x-www-form-urlencoded");
             Some(encoded.into_bytes())
-        } else if let Some(body) = content {
-            Some(body.as_bytes().to_vec())
         } else {
-            None
+            content.map(|body| body.as_bytes().to_vec())
         };
 
-        Ok(Request::new_internal(
-            method.to_uppercase(),
-            final_url,
-            final_headers,
-            body_content,
-            false,
-        ))
+        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
     }
 
     /// Send a pre-built request (async)
     #[pyo3(signature = (request, stream=false))]
-    pub fn send<'py>(
-        &self,
-        py: Python<'py>,
-        request: Request,
-        stream: bool,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn send<'py>(&self, py: Python<'py>, request: Request, stream: bool) -> PyResult<Bound<'py, PyAny>> {
         let client = self.client.clone();
         let config = self.config.clone();
 
@@ -1300,7 +1276,10 @@ impl AsyncClient {
 
             // Build reqwest request
             let mut req = client.request(
-                request.method.parse().map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+                request
+                    .method
+                    .parse()
+                    .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
                 request.url_str(),
             );
 
@@ -1338,7 +1317,11 @@ impl AsyncClient {
             if stream {
                 let mut streaming_resp = AsyncStreamingResponse::from_async(response, elapsed, &request.method);
                 streaming_resp = streaming_resp.with_request(request);
-                Ok(Python::attach(|py| streaming_resp.into_pyobject(py).map(|o| o.into_any().unbind()))?)
+                Ok(Python::attach(|py| {
+                    streaming_resp
+                        .into_pyobject(py)
+                        .map(|o| o.into_any().unbind())
+                })?)
             } else {
                 let mut resp = crate::response::Response::from_reqwest(response, start, &request.method).await?;
                 resp.set_request(request);

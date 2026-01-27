@@ -682,6 +682,7 @@ pub fn get_env_ssl_cert_dir() -> Option<String> {
 /// URL type for URL parsing and manipulation (HTTPX compatible)
 #[pyclass(name = "URL")]
 #[derive(Debug, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct URL {
     inner: url::Url,
 }
@@ -691,9 +692,7 @@ impl URL {
     #[new]
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
-        let inner = url::Url::parse(url).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}"))
-        })?;
+        let inner = url::Url::parse(url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
         Ok(Self { inner })
     }
 
@@ -774,39 +773,32 @@ impl URL {
 
     /// Join with another URL or path
     pub fn join(&self, url: &str) -> PyResult<URL> {
-        let joined = self.inner.join(url).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to join URLs: {e}"))
-        })?;
+        let joined = self
+            .inner
+            .join(url)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to join URLs: {e}")))?;
         Ok(URL { inner: joined })
     }
 
     /// Copy the URL with modifications
     #[pyo3(signature = (scheme=None, host=None, port=None, path=None, query=None, fragment=None))]
-    pub fn copy_with(
-        &self,
-        scheme: Option<&str>,
-        host: Option<&str>,
-        port: Option<u16>,
-        path: Option<&str>,
-        query: Option<&str>,
-        fragment: Option<&str>,
-    ) -> PyResult<URL> {
+    pub fn copy_with(&self, scheme: Option<&str>, host: Option<&str>, port: Option<u16>, path: Option<&str>, query: Option<&str>, fragment: Option<&str>) -> PyResult<URL> {
         let mut new_url = self.inner.clone();
 
         if let Some(s) = scheme {
-            new_url.set_scheme(s).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err("Invalid scheme")
-            })?;
+            new_url
+                .set_scheme(s)
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid scheme"))?;
         }
         if let Some(h) = host {
-            new_url.set_host(Some(h)).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid host: {e}"))
-            })?;
+            new_url
+                .set_host(Some(h))
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid host: {e}")))?;
         }
         if let Some(p) = port {
-            new_url.set_port(Some(p)).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err("Invalid port")
-            })?;
+            new_url
+                .set_port(Some(p))
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid port"))?;
         }
         if let Some(p) = path {
             new_url.set_path(p);
@@ -893,21 +885,13 @@ pub struct Request {
 impl Request {
     #[new]
     #[pyo3(signature = (method, url, headers=None, content=None, stream=false))]
-    pub fn new(
-        method: &str,
-        url: &Bound<'_, PyAny>,
-        headers: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, pyo3::types::PyBytes>>,
-        stream: bool,
-    ) -> PyResult<Self> {
+    pub fn new(method: &str, url: &Bound<'_, PyAny>, headers: Option<&Bound<'_, PyAny>>, content: Option<&Bound<'_, pyo3::types::PyBytes>>, stream: bool) -> PyResult<Self> {
         let url = if let Ok(url_obj) = url.extract::<URL>() {
             url_obj
         } else if let Ok(url_str) = url.extract::<String>() {
             URL::new(&url_str)?
         } else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "url must be a string or URL object",
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err("url must be a string or URL object"));
         };
 
         let headers = if let Some(h) = headers {
@@ -958,13 +942,7 @@ impl Request {
 
 impl Request {
     /// Create a new Request with all fields
-    pub fn new_internal(
-        method: String,
-        url: URL,
-        headers: Headers,
-        content: Option<Vec<u8>>,
-        stream: bool,
-    ) -> Self {
+    pub fn new_internal(method: String, url: URL, headers: Headers, content: Option<Vec<u8>>, stream: bool) -> Self {
         Self {
             method,
             url,

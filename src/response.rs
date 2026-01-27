@@ -292,7 +292,7 @@ impl Response {
             encoding: None,
             reason_phrase,
             request: None,
-            is_closed: true, // For non-streaming responses, body is already read
+            is_closed: true,          // For non-streaming responses, body is already read
             is_stream_consumed: true, // Body is already consumed
         }
     }
