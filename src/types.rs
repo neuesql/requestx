@@ -849,7 +849,10 @@ impl URL {
             let raw_bytes: Vec<u8> = if let Ok(bytes) = raw.extract::<Vec<u8>>() {
                 bytes
             } else if raw.is_instance_of::<pyo3::types::PyBytes>() {
-                raw.cast::<pyo3::types::PyBytes>().unwrap().as_bytes().to_vec()
+                raw.cast::<pyo3::types::PyBytes>()
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec()
             } else if let Ok(s) = raw.extract::<String>() {
                 s.into_bytes()
             } else {
