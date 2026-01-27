@@ -848,8 +848,8 @@ impl URL {
         if let Some(raw) = raw_path {
             let raw_bytes: Vec<u8> = if let Ok(bytes) = raw.extract::<Vec<u8>>() {
                 bytes
-            } else if let Ok(pybytes) = raw.downcast::<pyo3::types::PyBytes>() {
-                pybytes.as_bytes().to_vec()
+            } else if raw.is_instance_of::<pyo3::types::PyBytes>() {
+                raw.cast::<pyo3::types::PyBytes>().unwrap().as_bytes().to_vec()
             } else if let Ok(s) = raw.extract::<String>() {
                 s.into_bytes()
             } else {
@@ -1006,7 +1006,8 @@ impl QueryParams {
             }
 
             // Check if it's a list of tuples
-            if let Ok(list) = p.downcast::<pyo3::types::PyList>() {
+            if p.is_instance_of::<pyo3::types::PyList>() {
+                let list = p.cast::<pyo3::types::PyList>().unwrap();
                 for item in list.iter() {
                     if let Ok(tuple) = item.extract::<(String, String)>() {
                         inner.push(tuple);
@@ -1018,7 +1019,8 @@ impl QueryParams {
             }
 
             // Check if it's a dict
-            if let Ok(dict) = p.downcast::<PyDict>() {
+            if p.is_instance_of::<PyDict>() {
+                let dict = p.cast::<PyDict>().unwrap();
                 for (key, value) in dict.iter() {
                     let key: String = key.extract()?;
                     // Handle both single values and lists
@@ -1125,7 +1127,8 @@ impl QueryParams {
 
         if let Ok(qp) = other.extract::<QueryParams>() {
             new_params.inner.extend(qp.inner);
-        } else if let Ok(dict) = other.downcast::<PyDict>() {
+        } else if other.is_instance_of::<PyDict>() {
+            let dict = other.cast::<PyDict>().unwrap();
             for (key, value) in dict.iter() {
                 let key: String = key.extract()?;
                 if let Ok(values) = value.extract::<Vec<String>>() {
