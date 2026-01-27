@@ -114,7 +114,7 @@ from requestx._core import (
     options,
 )
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 __all__ = [
     # Version
     "__version__",
