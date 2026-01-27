@@ -27,6 +27,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::Auth>()?;
     m.add_class::<types::Limits>()?;
     m.add_class::<types::SSLConfig>()?;
+    m.add_class::<types::URL>()?;
+    m.add_class::<types::Request>()?;
 
     // Streaming response types
     m.add_class::<streaming::StreamingResponse>()?;

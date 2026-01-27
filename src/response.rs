@@ -1,7 +1,7 @@
 //! Response types for requestx
 
 use crate::error::{Error, Result};
-use crate::types::{Cookies, Headers};
+use crate::types::{Cookies, Headers, Request};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::collections::HashMap;
@@ -21,8 +21,7 @@ pub struct Response {
     content: Vec<u8>,
 
     /// Final URL after redirects
-    #[pyo3(get)]
-    pub url: String,
+    url_str: String,
 
     /// HTTP version
     #[pyo3(get)]
@@ -35,9 +34,8 @@ pub struct Response {
     #[pyo3(get)]
     pub elapsed: f64,
 
-    /// Request method
-    #[pyo3(get)]
-    pub request_method: String,
+    /// Request method (kept for backward compatibility)
+    request_method: String,
 
     /// History of redirect responses
     history: Vec<Response>,
@@ -48,6 +46,15 @@ pub struct Response {
     /// Reason phrase
     #[pyo3(get)]
     pub reason_phrase: String,
+
+    /// The original request that generated this response
+    request: Option<Request>,
+
+    /// Whether the response is closed
+    is_closed: bool,
+
+    /// Whether the stream has been consumed
+    is_stream_consumed: bool,
 }
 
 #[pymethods]
@@ -103,6 +110,36 @@ impl Response {
     #[getter]
     pub fn history(&self) -> Vec<Response> {
         self.history.clone()
+    }
+
+    /// Get the final URL after redirects (as string for backward compatibility)
+    #[getter]
+    pub fn url(&self) -> String {
+        self.url_str.clone()
+    }
+
+    /// Get the original request that generated this response
+    #[getter]
+    pub fn request(&self) -> Option<Request> {
+        self.request.clone()
+    }
+
+    /// Get the request method (for backward compatibility)
+    #[getter]
+    pub fn request_method(&self) -> String {
+        self.request_method.clone()
+    }
+
+    /// Whether the response is closed
+    #[getter]
+    pub fn is_closed(&self) -> bool {
+        self.is_closed
+    }
+
+    /// Whether the stream has been consumed
+    #[getter]
+    pub fn is_stream_consumed(&self) -> bool {
+        self.is_stream_consumed
     }
 
     /// Check if request was successful (2xx status)
@@ -164,7 +201,7 @@ impl Response {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str)).into())
         } else {
             Ok(())
         }
@@ -246,7 +283,7 @@ impl Response {
             status_code,
             headers,
             content,
-            url,
+            url_str: url,
             http_version,
             cookies,
             elapsed,
@@ -254,6 +291,9 @@ impl Response {
             history: Vec::new(),
             encoding: None,
             reason_phrase,
+            request: None,
+            is_closed: true,          // For non-streaming responses, body is already read
+            is_stream_consumed: true, // Body is already consumed
         }
     }
 
@@ -263,12 +303,23 @@ impl Response {
         self
     }
 
+    /// Set the request that generated this response
+    pub fn with_request(mut self, request: Request) -> Self {
+        self.request = Some(request);
+        self
+    }
+
     /// Set default encoding (used by client when default_encoding is configured)
     pub fn set_default_encoding(&mut self, encoding: String) {
         // Only set if not already explicitly set
         if self.encoding.is_none() {
             self.encoding = Some(encoding);
         }
+    }
+
+    /// Set the request that generated this response (mutable version)
+    pub fn set_request(&mut self, request: Request) {
+        self.request = Some(request);
     }
 
     /// Detect encoding from Content-Type header or content

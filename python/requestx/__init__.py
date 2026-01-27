@@ -67,6 +67,8 @@ from requestx._core import (
     Auth,
     Limits,
     SSLConfig,
+    URL,
+    Request,
     # Exception classes - Base
     RequestError,
     # Transport errors
@@ -140,6 +142,8 @@ __all__ = [
     "Auth",
     "Limits",
     "SSLConfig",
+    "URL",
+    "Request",
     # Exception classes - Base
     "RequestError",
     # Transport errors

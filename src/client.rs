@@ -5,7 +5,7 @@ use crate::response::Response;
 use crate::streaming::{AsyncStreamingResponse, StreamingResponse};
 use crate::types::{
     extract_cert, extract_cookies, extract_headers, extract_limits, extract_params, extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies, Headers, Limits, Proxy,
-    Timeout,
+    Request, Timeout, URL,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -309,6 +309,8 @@ fn resolve_url(base_url: &Option<String>, url: &str) -> Result<String> {
 pub struct Client {
     client: reqwest::blocking::Client,
     config: ClientConfig,
+    /// Whether the client is closed
+    closed: bool,
 }
 
 #[pymethods]
@@ -384,7 +386,114 @@ impl Client {
 
         let client = build_blocking_client(&config)?;
 
-        Ok(Self { client, config })
+        Ok(Self { client, config, closed: false })
+    }
+
+    /// Whether the client is closed
+    #[getter]
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Build a request without sending it
+    #[pyo3(signature = (
+        method,
+        url,
+        params=None,
+        headers=None,
+        cookies=None,
+        content=None,
+        data=None,
+        json=None,
+        timeout=None
+    ))]
+    pub fn build_request(
+        &self,
+        method: &str,
+        url: &str,
+        params: Option<&Bound<'_, PyDict>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        content: Option<&Bound<'_, PyBytes>>,
+        data: Option<&Bound<'_, PyDict>>,
+        json: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Request> {
+        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        let parsed_url = URL::new(&resolved_url)?;
+
+        // Merge headers
+        let mut final_headers = self.config.headers.clone();
+        if let Some(h) = headers {
+            let req_headers = extract_headers(h)?;
+            for (key, values) in &req_headers.inner {
+                for value in values {
+                    final_headers.add(key, value);
+                }
+            }
+        }
+
+        // Add cookies to headers
+        if let Some(c) = cookies {
+            let cookies_map = extract_cookies(c)?;
+            for (name, value) in &cookies_map {
+                final_headers.add("cookie", &format!("{name}={value}"));
+            }
+        }
+        for (name, value) in &self.config.cookies.inner {
+            final_headers.add("cookie", &format!("{name}={value}"));
+        }
+
+        // Add query params to URL
+        let final_url = if let Some(p) = params {
+            let params_vec = extract_params(Some(p))?;
+            if !params_vec.is_empty() {
+                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
+                for (k, v) in params_vec {
+                    parsed.query_pairs_mut().append_pair(&k, &v);
+                }
+                URL::from_url(parsed)
+            } else {
+                parsed_url
+            }
+        } else {
+            parsed_url
+        };
+
+        // Build content
+        let body_content = if let Some(json_data) = json {
+            let json_str = py_to_json_string(json_data)?;
+            final_headers.set("content-type", "application/json");
+            Some(json_str.into_bytes())
+        } else if let Some(form_data) = data {
+            let form: HashMap<String, String> = form_data
+                .iter()
+                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+                .collect::<PyResult<_>>()?;
+            let encoded = form
+                .iter()
+                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            final_headers.set("content-type", "application/x-www-form-urlencoded");
+            Some(encoded.into_bytes())
+        } else {
+            content.map(|body| body.as_bytes().to_vec())
+        };
+
+        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
+    }
+
+    /// Send a pre-built request
+    #[pyo3(signature = (request, stream=false))]
+    pub fn send(&self, py: Python<'_>, request: &Request, stream: bool) -> PyResult<Py<PyAny>> {
+        if stream {
+            let streaming_response = self.send_streaming(request)?;
+            Ok(streaming_response.into_pyobject(py)?.into_any().unbind())
+        } else {
+            let response = self.send_request(request)?;
+            Ok(response.into_pyobject(py)?.into_any().unbind())
+        }
     }
 
     /// Perform a request
@@ -675,8 +784,10 @@ impl Client {
         self.request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
     }
 
-    /// Close the client (no-op, included for compatibility)
-    pub fn close(&self) {}
+    /// Close the client
+    pub fn close(&mut self) {
+        self.closed = true;
+    }
 
     /// Stream a request - returns StreamingResponse without loading body
     #[pyo3(signature = (
@@ -819,12 +930,150 @@ impl Client {
 
     /// Context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) {
+    pub fn __exit__(&mut self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) {
         self.close();
     }
 
     pub fn __repr__(&self) -> String {
         format!("<Client base_url={:?}>", self.config.base_url)
+    }
+}
+
+impl Client {
+    /// Internal method to send a Request and get a Response
+    fn send_request(&self, request: &Request) -> PyResult<Response> {
+        let start = Instant::now();
+
+        // Build reqwest request
+        let mut req = self.client.request(
+            request
+                .method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+            request.url_str(),
+        );
+
+        // Add headers
+        for (key, values) in &request.headers_ref().inner {
+            for value in values {
+                req = req.header(key.as_str(), value.as_str());
+            }
+        }
+
+        // Add body
+        if let Some(body) = request.content_ref() {
+            req = req.body(body.clone());
+        }
+
+        // Authentication
+        if let Some(auth_config) = self.config.auth.as_ref() {
+            match &auth_config.auth_type {
+                AuthType::Basic { username, password } => {
+                    req = req.basic_auth(username, Some(password));
+                }
+                AuthType::Bearer { token } => {
+                    req = req.bearer_auth(token);
+                }
+                AuthType::Digest { username, password } => {
+                    req = req.basic_auth(username, Some(password));
+                }
+            }
+        }
+
+        // Execute request
+        let response = req.send().map_err(Error::from)?;
+
+        // Convert to our Response type
+        let status_code = response.status().as_u16();
+        let reason_phrase = response
+            .status()
+            .canonical_reason()
+            .unwrap_or("Unknown")
+            .to_string();
+        let final_url = response.url().to_string();
+        let http_version = format!("{:?}", response.version());
+
+        let resp_headers = Headers::from_reqwest_headers(response.headers());
+
+        let mut cookies_map = HashMap::new();
+        for cookie in response.cookies() {
+            cookies_map.insert(cookie.name().to_string(), cookie.value().to_string());
+        }
+
+        let body = response.bytes().map_err(Error::from)?.to_vec();
+        let elapsed = start.elapsed().as_secs_f64();
+
+        let mut resp = Response::new(
+            status_code,
+            resp_headers,
+            body,
+            final_url,
+            http_version,
+            Cookies { inner: cookies_map },
+            elapsed,
+            request.method.clone(),
+            reason_phrase,
+        );
+
+        // Set the request on the response
+        resp.set_request(request.clone());
+
+        // Set default encoding if configured
+        if let Some(ref encoding) = self.config.default_encoding {
+            resp.set_default_encoding(encoding.clone());
+        }
+
+        Ok(resp)
+    }
+
+    /// Internal method to send a Request and get a StreamingResponse
+    fn send_streaming(&self, request: &Request) -> PyResult<StreamingResponse> {
+        let start = Instant::now();
+
+        // Build reqwest request
+        let mut req = self.client.request(
+            request
+                .method
+                .parse()
+                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+            request.url_str(),
+        );
+
+        // Add headers
+        for (key, values) in &request.headers_ref().inner {
+            for value in values {
+                req = req.header(key.as_str(), value.as_str());
+            }
+        }
+
+        // Add body
+        if let Some(body) = request.content_ref() {
+            req = req.body(body.clone());
+        }
+
+        // Authentication
+        if let Some(auth_config) = self.config.auth.as_ref() {
+            match &auth_config.auth_type {
+                AuthType::Basic { username, password } => {
+                    req = req.basic_auth(username, Some(password));
+                }
+                AuthType::Bearer { token } => {
+                    req = req.bearer_auth(token);
+                }
+                AuthType::Digest { username, password } => {
+                    req = req.basic_auth(username, Some(password));
+                }
+            }
+        }
+
+        // Execute request
+        let response = req.send().map_err(Error::from)?;
+        let elapsed = start.elapsed().as_secs_f64();
+
+        let mut streaming_resp = StreamingResponse::from_blocking(response, elapsed, &request.method);
+        streaming_resp = streaming_resp.with_request(request.clone());
+
+        Ok(streaming_resp)
     }
 }
 
@@ -835,6 +1084,8 @@ pub struct AsyncClient {
     config: ClientConfig,
     #[allow(dead_code)]
     runtime: Arc<Runtime>,
+    /// Whether the client is closed
+    closed: Arc<std::sync::Mutex<bool>>,
 }
 
 #[pymethods]
@@ -915,6 +1166,170 @@ impl AsyncClient {
             client: Arc::new(client),
             config,
             runtime: Arc::new(runtime),
+            closed: Arc::new(std::sync::Mutex::new(false)),
+        })
+    }
+
+    /// Whether the client is closed
+    #[getter]
+    pub fn is_closed(&self) -> bool {
+        *self.closed.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Build a request without sending it
+    #[pyo3(signature = (
+        method,
+        url,
+        params=None,
+        headers=None,
+        cookies=None,
+        content=None,
+        data=None,
+        json=None,
+        timeout=None
+    ))]
+    pub fn build_request(
+        &self,
+        method: &str,
+        url: &str,
+        params: Option<&Bound<'_, PyDict>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        content: Option<&Bound<'_, PyBytes>>,
+        data: Option<&Bound<'_, PyDict>>,
+        json: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] timeout: Option<f64>,
+    ) -> PyResult<Request> {
+        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        let parsed_url = URL::new(&resolved_url)?;
+
+        // Merge headers
+        let mut final_headers = self.config.headers.clone();
+        if let Some(h) = headers {
+            let req_headers = extract_headers(h)?;
+            for (key, values) in &req_headers.inner {
+                for value in values {
+                    final_headers.add(key, value);
+                }
+            }
+        }
+
+        // Add cookies to headers
+        if let Some(c) = cookies {
+            let cookies_map = extract_cookies(c)?;
+            for (name, value) in &cookies_map {
+                final_headers.add("cookie", &format!("{name}={value}"));
+            }
+        }
+        for (name, value) in &self.config.cookies.inner {
+            final_headers.add("cookie", &format!("{name}={value}"));
+        }
+
+        // Add query params to URL
+        let final_url = if let Some(p) = params {
+            let params_vec = extract_params(Some(p))?;
+            if !params_vec.is_empty() {
+                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
+                for (k, v) in params_vec {
+                    parsed.query_pairs_mut().append_pair(&k, &v);
+                }
+                URL::from_url(parsed)
+            } else {
+                parsed_url
+            }
+        } else {
+            parsed_url
+        };
+
+        // Build content
+        let body_content = if let Some(json_data) = json {
+            let json_str = py_to_json_string(json_data)?;
+            final_headers.set("content-type", "application/json");
+            Some(json_str.into_bytes())
+        } else if let Some(form_data) = data {
+            let form: HashMap<String, String> = form_data
+                .iter()
+                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+                .collect::<PyResult<_>>()?;
+            let encoded = form
+                .iter()
+                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            final_headers.set("content-type", "application/x-www-form-urlencoded");
+            Some(encoded.into_bytes())
+        } else {
+            content.map(|body| body.as_bytes().to_vec())
+        };
+
+        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
+    }
+
+    /// Send a pre-built request (async)
+    #[pyo3(signature = (request, stream=false))]
+    pub fn send<'py>(&self, py: Python<'py>, request: Request, stream: bool) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.client.clone();
+        let config = self.config.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let start = Instant::now();
+
+            // Build reqwest request
+            let mut req = client.request(
+                request
+                    .method
+                    .parse()
+                    .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
+                request.url_str(),
+            );
+
+            // Add headers
+            for (key, values) in &request.headers_ref().inner {
+                for value in values {
+                    req = req.header(key.as_str(), value.as_str());
+                }
+            }
+
+            // Add body
+            if let Some(body) = request.content_ref() {
+                req = req.body(body.clone());
+            }
+
+            // Authentication
+            if let Some(auth_config) = config.auth.as_ref() {
+                match &auth_config.auth_type {
+                    AuthType::Basic { username, password } => {
+                        req = req.basic_auth(username, Some(password));
+                    }
+                    AuthType::Bearer { token } => {
+                        req = req.bearer_auth(token);
+                    }
+                    AuthType::Digest { username, password } => {
+                        req = req.basic_auth(username, Some(password));
+                    }
+                }
+            }
+
+            // Execute request
+            let response = req.send().await.map_err(Error::from)?;
+            let elapsed = start.elapsed().as_secs_f64();
+
+            if stream {
+                let mut streaming_resp = AsyncStreamingResponse::from_async(response, elapsed, &request.method);
+                streaming_resp = streaming_resp.with_request(request);
+                Ok(Python::attach(|py| {
+                    streaming_resp
+                        .into_pyobject(py)
+                        .map(|o| o.into_any().unbind())
+                })?)
+            } else {
+                let mut resp = crate::response::Response::from_reqwest(response, start, &request.method).await?;
+                resp.set_request(request);
+                if let Some(ref encoding) = config.default_encoding {
+                    resp.set_default_encoding(encoding.clone());
+                }
+                Ok(Python::attach(|py| resp.into_pyobject(py).map(|o| o.into_any().unbind()))?)
+            }
         })
     }
 
@@ -1198,7 +1613,11 @@ impl AsyncClient {
 
     /// Close the client
     pub fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
+        let closed = self.closed.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            *closed.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            Ok(())
+        })
     }
 
     /// Async stream a request - returns AsyncStreamingResponse without loading body
@@ -1357,7 +1776,11 @@ impl AsyncClient {
     /// Async context manager exit
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
     pub fn __aexit__<'py>(&self, py: Python<'py>, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
-        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
+        let closed = self.closed.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            *closed.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            Ok(())
+        })
     }
 
     pub fn __repr__(&self) -> String {

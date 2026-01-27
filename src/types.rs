@@ -678,3 +678,292 @@ pub fn get_env_ssl_cert() -> Option<String> {
 pub fn get_env_ssl_cert_dir() -> Option<String> {
     std::env::var("SSL_CERT_DIR").ok()
 }
+
+/// URL type for URL parsing and manipulation (HTTPX compatible)
+#[pyclass(name = "URL")]
+#[derive(Debug, Clone)]
+#[allow(clippy::upper_case_acronyms)]
+pub struct URL {
+    inner: url::Url,
+}
+
+#[pymethods]
+impl URL {
+    #[new]
+    #[pyo3(signature = (url))]
+    pub fn new(url: &str) -> PyResult<Self> {
+        let inner = url::Url::parse(url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
+        Ok(Self { inner })
+    }
+
+    /// Get the scheme (e.g., "http", "https")
+    #[getter]
+    pub fn scheme(&self) -> &str {
+        self.inner.scheme()
+    }
+
+    /// Get the host (e.g., "example.com")
+    #[getter]
+    pub fn host(&self) -> Option<String> {
+        self.inner.host_str().map(|s| s.to_string())
+    }
+
+    /// Get the port number
+    #[getter]
+    pub fn port(&self) -> Option<u16> {
+        self.inner.port_or_known_default()
+    }
+
+    /// Get the path (e.g., "/api/v1/users")
+    #[getter]
+    pub fn path(&self) -> &str {
+        self.inner.path()
+    }
+
+    /// Get the query string (without the leading '?')
+    #[getter]
+    pub fn query(&self) -> Option<&str> {
+        self.inner.query()
+    }
+
+    /// Get the fragment (without the leading '#')
+    #[getter]
+    pub fn fragment(&self) -> Option<&str> {
+        self.inner.fragment()
+    }
+
+    /// Get the raw path and query string
+    #[getter]
+    pub fn raw_path(&self) -> String {
+        let path = self.inner.path();
+        match self.inner.query() {
+            Some(query) => format!("{path}?{query}"),
+            None => path.to_string(),
+        }
+    }
+
+    /// Check if the URL uses a default port for its scheme
+    #[getter]
+    pub fn is_default_port(&self) -> bool {
+        self.inner.port().is_none()
+    }
+
+    /// Get the origin (scheme + host + port)
+    #[getter]
+    pub fn origin(&self) -> String {
+        let scheme = self.inner.scheme();
+        let host = self.inner.host_str().unwrap_or("");
+        match self.inner.port() {
+            Some(port) => format!("{scheme}://{host}:{port}"),
+            None => format!("{scheme}://{host}"),
+        }
+    }
+
+    /// Get username if present
+    #[getter]
+    pub fn username(&self) -> &str {
+        self.inner.username()
+    }
+
+    /// Get password if present
+    #[getter]
+    pub fn password(&self) -> Option<&str> {
+        self.inner.password()
+    }
+
+    /// Join with another URL or path
+    pub fn join(&self, url: &str) -> PyResult<URL> {
+        let joined = self
+            .inner
+            .join(url)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to join URLs: {e}")))?;
+        Ok(URL { inner: joined })
+    }
+
+    /// Copy the URL with modifications
+    #[pyo3(signature = (scheme=None, host=None, port=None, path=None, query=None, fragment=None))]
+    pub fn copy_with(&self, scheme: Option<&str>, host: Option<&str>, port: Option<u16>, path: Option<&str>, query: Option<&str>, fragment: Option<&str>) -> PyResult<URL> {
+        let mut new_url = self.inner.clone();
+
+        if let Some(s) = scheme {
+            new_url
+                .set_scheme(s)
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid scheme"))?;
+        }
+        if let Some(h) = host {
+            new_url
+                .set_host(Some(h))
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid host: {e}")))?;
+        }
+        if let Some(p) = port {
+            new_url
+                .set_port(Some(p))
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid port"))?;
+        }
+        if let Some(p) = path {
+            new_url.set_path(p);
+        }
+        if let Some(q) = query {
+            new_url.set_query(Some(q));
+        } else if query.is_none() && self.inner.query().is_some() {
+            // Keep existing query if not specified
+        }
+        if let Some(f) = fragment {
+            new_url.set_fragment(Some(f));
+        }
+
+        Ok(URL { inner: new_url })
+    }
+
+    /// Compare equality with another URL or string
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(url) = other.extract::<URL>() {
+            Ok(self.inner == url.inner)
+        } else if let Ok(s) = other.extract::<String>() {
+            Ok(self.inner.as_str() == s)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.as_str().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn __str__(&self) -> String {
+        self.inner.to_string()
+    }
+
+    pub fn __repr__(&self) -> String {
+        format!("URL('{}')", self.inner)
+    }
+}
+
+impl URL {
+    /// Create from url::Url
+    pub fn from_url(url: url::Url) -> Self {
+        Self { inner: url }
+    }
+
+    /// Get the inner url::Url
+    pub fn as_url(&self) -> &url::Url {
+        &self.inner
+    }
+
+    /// Get the URL as a string
+    pub fn as_str(&self) -> &str {
+        self.inner.as_str()
+    }
+}
+
+/// Request type for representing HTTP requests (HTTPX compatible)
+#[pyclass(name = "Request")]
+#[derive(Debug, Clone)]
+pub struct Request {
+    /// HTTP method
+    #[pyo3(get)]
+    pub method: String,
+
+    /// Request URL
+    url: URL,
+
+    /// Request headers
+    headers: Headers,
+
+    /// Request body content
+    content: Option<Vec<u8>>,
+
+    /// Stream flag - whether this request expects a streaming response
+    #[pyo3(get)]
+    pub stream: bool,
+}
+
+#[pymethods]
+impl Request {
+    #[new]
+    #[pyo3(signature = (method, url, headers=None, content=None, stream=false))]
+    pub fn new(method: &str, url: &Bound<'_, PyAny>, headers: Option<&Bound<'_, PyAny>>, content: Option<&Bound<'_, pyo3::types::PyBytes>>, stream: bool) -> PyResult<Self> {
+        let url = if let Ok(url_obj) = url.extract::<URL>() {
+            url_obj
+        } else if let Ok(url_str) = url.extract::<String>() {
+            URL::new(&url_str)?
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err("url must be a string or URL object"));
+        };
+
+        let headers = if let Some(h) = headers {
+            extract_headers(h)?
+        } else {
+            Headers::default()
+        };
+
+        let content = content.map(|c| c.as_bytes().to_vec());
+
+        Ok(Self {
+            method: method.to_uppercase(),
+            url,
+            headers,
+            content,
+            stream,
+        })
+    }
+
+    /// Get request URL
+    #[getter]
+    pub fn url(&self) -> URL {
+        self.url.clone()
+    }
+
+    /// Get request headers
+    #[getter]
+    pub fn headers(&self) -> Headers {
+        self.headers.clone()
+    }
+
+    /// Get request content as bytes
+    #[getter]
+    pub fn content<'py>(&self, py: Python<'py>) -> Option<Bound<'py, pyo3::types::PyBytes>> {
+        self.content
+            .as_ref()
+            .map(|c| pyo3::types::PyBytes::new(py, c))
+    }
+
+    pub fn __repr__(&self) -> String {
+        format!("<Request('{}', '{}')>", self.method, self.url.as_str())
+    }
+
+    pub fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl Request {
+    /// Create a new Request with all fields
+    pub fn new_internal(method: String, url: URL, headers: Headers, content: Option<Vec<u8>>, stream: bool) -> Self {
+        Self {
+            method,
+            url,
+            headers,
+            content,
+            stream,
+        }
+    }
+
+    /// Get the URL as a string
+    pub fn url_str(&self) -> &str {
+        self.url.as_str()
+    }
+
+    /// Get the headers reference
+    pub fn headers_ref(&self) -> &Headers {
+        &self.headers
+    }
+
+    /// Get the content reference
+    pub fn content_ref(&self) -> Option<&Vec<u8>> {
+        self.content.as_ref()
+    }
+}

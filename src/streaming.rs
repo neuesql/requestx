@@ -1,7 +1,7 @@
 //! Streaming response types for requestx
 
 use crate::error::Error;
-use crate::types::{Cookies, Headers};
+use crate::types::{Cookies, Headers, Request};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};
 use std::collections::HashMap;
@@ -19,8 +19,7 @@ pub struct StreamingResponse {
     headers: Headers,
 
     /// Final URL after redirects
-    #[pyo3(get)]
-    pub url: String,
+    url_str: String,
 
     /// HTTP version
     #[pyo3(get)]
@@ -34,8 +33,7 @@ pub struct StreamingResponse {
     pub elapsed: f64,
 
     /// Request method
-    #[pyo3(get)]
-    pub request_method: String,
+    request_method: String,
 
     /// Reason phrase
     #[pyo3(get)]
@@ -49,6 +47,12 @@ pub struct StreamingResponse {
 
     /// Whether the stream is closed
     closed: Arc<Mutex<bool>>,
+
+    /// Whether the stream has been consumed
+    consumed: Arc<Mutex<bool>>,
+
+    /// The original request that generated this response
+    request: Option<Request>,
 }
 
 #[pymethods]
@@ -63,6 +67,36 @@ impl StreamingResponse {
     #[getter]
     pub fn cookies(&self) -> Cookies {
         self.cookies.clone()
+    }
+
+    /// Get the URL
+    #[getter]
+    pub fn url(&self) -> String {
+        self.url_str.clone()
+    }
+
+    /// Get the request method
+    #[getter]
+    pub fn request_method(&self) -> String {
+        self.request_method.clone()
+    }
+
+    /// Get the original request that generated this response
+    #[getter]
+    pub fn request(&self) -> Option<Request> {
+        self.request.clone()
+    }
+
+    /// Whether the response is closed
+    #[getter]
+    pub fn is_closed(&self) -> bool {
+        *self.closed.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether the stream has been consumed
+    #[getter]
+    pub fn is_stream_consumed(&self) -> bool {
+        *self.consumed.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Check if request was successful (2xx status)
@@ -112,7 +146,7 @@ impl StreamingResponse {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str)).into())
         } else {
             Ok(())
         }
@@ -128,6 +162,10 @@ impl StreamingResponse {
             let bytes = response.bytes().map_err(Error::from)?;
             *self
                 .closed
+                .lock()
+                .map_err(|e| Error::request(e.to_string()))? = true;
+            *self
+                .consumed
                 .lock()
                 .map_err(|e| Error::request(e.to_string()))? = true;
             Ok(PyBytes::new(py, &bytes))
@@ -146,6 +184,10 @@ impl StreamingResponse {
             let text = response.text().map_err(Error::from)?;
             *self
                 .closed
+                .lock()
+                .map_err(|e| Error::request(e.to_string()))? = true;
+            *self
+                .consumed
                 .lock()
                 .map_err(|e| Error::request(e.to_string()))? = true;
             Ok(text)
@@ -249,7 +291,7 @@ impl StreamingResponse {
         Self {
             status_code,
             headers,
-            url,
+            url_str: url,
             http_version,
             cookies,
             elapsed,
@@ -258,7 +300,15 @@ impl StreamingResponse {
             inner: Arc::new(Mutex::new(Some(response))),
             chunk_size: 4096,
             closed: Arc::new(Mutex::new(false)),
+            consumed: Arc::new(Mutex::new(false)),
+            request: None,
         }
+    }
+
+    /// Set the request that generated this response
+    pub fn with_request(mut self, request: Request) -> Self {
+        self.request = Some(request);
+        self
     }
 
     fn detect_encoding(&self) -> String {
@@ -444,8 +494,7 @@ pub struct AsyncStreamingResponse {
     headers: Headers,
 
     /// Final URL after redirects
-    #[pyo3(get)]
-    pub url: String,
+    url_str: String,
 
     /// HTTP version
     #[pyo3(get)]
@@ -459,8 +508,7 @@ pub struct AsyncStreamingResponse {
     pub elapsed: f64,
 
     /// Request method
-    #[pyo3(get)]
-    pub request_method: String,
+    request_method: String,
 
     /// Reason phrase
     #[pyo3(get)]
@@ -474,6 +522,12 @@ pub struct AsyncStreamingResponse {
 
     /// Whether the stream is closed
     closed: Arc<TokioMutex<bool>>,
+
+    /// Whether the stream has been consumed
+    consumed: Arc<TokioMutex<bool>>,
+
+    /// The original request that generated this response
+    request: Option<Request>,
 }
 
 #[pymethods]
@@ -488,6 +542,38 @@ impl AsyncStreamingResponse {
     #[getter]
     pub fn cookies(&self) -> Cookies {
         self.cookies.clone()
+    }
+
+    /// Get the URL
+    #[getter]
+    pub fn url(&self) -> String {
+        self.url_str.clone()
+    }
+
+    /// Get the request method
+    #[getter]
+    pub fn request_method(&self) -> String {
+        self.request_method.clone()
+    }
+
+    /// Get the original request that generated this response
+    #[getter]
+    pub fn request(&self) -> Option<Request> {
+        self.request.clone()
+    }
+
+    /// Whether the response is closed (sync check for compatibility)
+    #[getter]
+    pub fn is_closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let closed = self.closed.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(*closed.lock().await) })
+    }
+
+    /// Whether the stream has been consumed (sync check for compatibility)
+    #[getter]
+    pub fn is_stream_consumed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let consumed = self.consumed.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(*consumed.lock().await) })
     }
 
     /// Check if request was successful (2xx status)
@@ -537,7 +623,7 @@ impl AsyncStreamingResponse {
     /// Raise an exception if the response indicates an error
     pub fn raise_for_status(&self) -> PyResult<()> {
         if self.is_error() {
-            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url)).into())
+            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str)).into())
         } else {
             Ok(())
         }
@@ -547,12 +633,14 @@ impl AsyncStreamingResponse {
     pub fn aread<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let closed = self.closed.clone();
+        let consumed = self.consumed.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
             if let Some(response) = guard.take() {
                 let bytes = response.bytes().await.map_err(Error::from)?;
                 *closed.lock().await = true;
+                *consumed.lock().await = true;
                 Ok(bytes.to_vec())
             } else {
                 Err(Error::request("Response body already consumed").into())
@@ -564,12 +652,14 @@ impl AsyncStreamingResponse {
     pub fn atext<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let closed = self.closed.clone();
+        let consumed = self.consumed.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
             if let Some(response) = guard.take() {
                 let text = response.text().await.map_err(Error::from)?;
                 *closed.lock().await = true;
+                *consumed.lock().await = true;
                 Ok(text)
             } else {
                 Err(Error::request("Response body already consumed").into())
@@ -677,7 +767,7 @@ impl AsyncStreamingResponse {
         Self {
             status_code,
             headers,
-            url,
+            url_str: url,
             http_version,
             cookies,
             elapsed,
@@ -686,7 +776,15 @@ impl AsyncStreamingResponse {
             inner: Arc::new(TokioMutex::new(Some(response))),
             chunk_size: 4096,
             closed: Arc::new(TokioMutex::new(false)),
+            consumed: Arc::new(TokioMutex::new(false)),
+            request: None,
         }
+    }
+
+    /// Set the request that generated this response
+    pub fn with_request(mut self, request: Request) -> Self {
+        self.request = Some(request);
+        self
     }
 
     fn detect_encoding(&self) -> String {
