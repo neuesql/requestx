@@ -45,14 +45,7 @@ Example usage:
 """
 
 from typing import (
-    Any,
-    AsyncIterator,
-    Iterator,
-    Mapping,
-    Optional,
     Protocol,
-    Tuple,
-    Union,
     runtime_checkable,
 )
 
