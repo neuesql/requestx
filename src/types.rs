@@ -354,11 +354,7 @@ impl Timeout {
 
     pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_timeout) = other.extract::<Timeout>() {
-            Ok(self.total == other_timeout.total
-                && self.connect == other_timeout.connect
-                && self.read == other_timeout.read
-                && self.write == other_timeout.write
-                && self.pool == other_timeout.pool)
+            Ok(self.total == other_timeout.total && self.connect == other_timeout.connect && self.read == other_timeout.read && self.write == other_timeout.write && self.pool == other_timeout.pool)
         } else {
             Ok(false)
         }
@@ -761,9 +757,9 @@ impl URL {
                 // If parsing fails, it might be a relative URL
                 // Use a dummy base to parse it, mark as relative
                 let base = url::Url::parse("http://relative.url.placeholder/").unwrap();
-                let inner = base.join(url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}"))
-                })?;
+                let inner = base
+                    .join(url)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
                 Ok(Self { inner, is_relative: true })
             }
         }

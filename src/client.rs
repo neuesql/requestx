@@ -437,9 +437,7 @@ impl Client {
         } else if let Ok(url_obj) = url.extract::<URL>() {
             url_obj.as_url().to_string()
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "url must be a string or URL object"
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
         };
         let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let parsed_url = URL::new(&resolved_url)?;
@@ -1253,9 +1251,7 @@ impl AsyncClient {
         } else if let Ok(url_obj) = url.extract::<URL>() {
             url_obj.as_url().to_string()
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "url must be a string or URL object"
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
         };
         let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let parsed_url = URL::new(&resolved_url)?;
@@ -1540,13 +1536,7 @@ impl AsyncClient {
 
             // Create and attach a Request object for HTTPX compatibility
             if let Ok(url) = URL::new(&final_url) {
-                let request = Request::new_internal(
-                    method.to_uppercase(),
-                    url,
-                    Headers::default(),
-                    None,
-                    false,
-                );
+                let request = Request::new_internal(method.to_uppercase(), url, Headers::default(), None, false);
                 resp.set_request(request);
             }
 
