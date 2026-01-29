@@ -6,7 +6,7 @@ import random
 import pytest
 
 import requestx as httpx
-from httpx._utils import URLPattern, get_environment_proxies  # TODO: requestx internal
+from requestx._utils import URLPattern, get_environment_proxies
 
 
 @pytest.mark.parametrize(
