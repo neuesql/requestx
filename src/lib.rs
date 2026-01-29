@@ -97,6 +97,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(request::delete, m)?)?;
     m.add_function(wrap_pyfunction!(request::head, m)?)?;
     m.add_function(wrap_pyfunction!(request::options, m)?)?;
+    m.add_function(wrap_pyfunction!(request::stream, m)?)?;
 
     Ok(())
 }

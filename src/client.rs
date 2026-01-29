@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::response::Response;
 use crate::streaming::{AsyncStreamingResponse, StreamingResponse};
 use crate::types::{
-    extract_cert, extract_cookies, extract_headers, extract_limits, extract_params, extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies, Headers, Limits, Proxy,
+    extract_auth, extract_cert, extract_cookies, extract_headers, extract_limits, extract_params, extract_proxy, extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies, Headers, Limits, Proxy,
     Request, Timeout, URL,
 };
 use pyo3::prelude::*;
@@ -341,8 +341,8 @@ impl Client {
         max_redirects: usize,
         verify: Option<&Bound<'_, PyAny>>,
         cert: Option<&Bound<'_, PyAny>>,
-        proxy: Option<Proxy>,
-        auth: Option<Auth>,
+        proxy: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         http2: bool,
         limits: Option<&Bound<'_, PyAny>>,
         default_encoding: Option<String>,
@@ -352,8 +352,6 @@ impl Client {
             base_url,
             follow_redirects,
             max_redirects,
-            proxy,
-            auth,
             http2,
             default_encoding,
             trust_env,
@@ -379,6 +377,12 @@ impl Client {
             config.cert_file = cert_file;
             config.key_file = key_file;
             config.key_password = key_password;
+        }
+        if let Some(p) = proxy {
+            config.proxy = extract_proxy(p)?;
+        }
+        if let Some(a) = auth {
+            config.auth = extract_auth(a)?;
         }
         if let Some(l) = limits {
             config.limits = extract_limits(l)?;
@@ -538,11 +542,11 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
+        content: Option<&Bound<'_, PyAny>>,
+        data: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        files: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -592,35 +596,88 @@ impl Client {
             req = req.header("Content-Type", "application/json");
             req = req.body(json_str);
         } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            req = req.form(&form);
-        } else if let Some(body) = content {
-            req = req.body(body.as_bytes().to_vec());
-        } else if let Some(files_dict) = files {
-            let mut form = reqwest::blocking::multipart::Form::new();
-            for (field_name, file_info) in files_dict.iter() {
-                let field_name: String = field_name.extract()?;
-                if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
-                    let (filename, content, content_type) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
-                    let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
-                    form = form.part(field_name, part);
+            // Handle data parameter - can be dict or other form-encodable
+            if form_data.is_instance_of::<PyDict>() {
+                let dict = form_data.cast::<PyDict>().unwrap();
+                let form: HashMap<String, String> = dict
+                    .iter()
+                    .map(|(k, v)| {
+                        let key = k.extract::<String>()?;
+                        // Handle None values as empty strings
+                        let val = if v.is_none() {
+                            String::new()
+                        } else if let Ok(b) = v.extract::<bool>() {
+                            // Handle boolean values HTTPX-style
+                            if b { "true".to_string() } else { "false".to_string() }
+                        } else {
+                            v.str()?.to_string()
+                        };
+                        Ok((key, val))
+                    })
+                    .collect::<PyResult<_>>()?;
+                req = req.form(&form);
+            } else {
+                // Try to extract as bytes
+                if let Ok(bytes) = form_data.extract::<Vec<u8>>() {
+                    req = req.body(bytes);
+                } else if let Ok(s) = form_data.extract::<String>() {
+                    req = req.body(s);
                 }
             }
-            req = req.multipart(form);
+        } else if let Some(body) = content {
+            // Handle content parameter - bytes, string, or iterator
+            if body.is_instance_of::<PyBytes>() {
+                let bytes_obj: Bound<'_, PyBytes> = body.extract()?;
+                req = req.body(bytes_obj.as_bytes().to_vec());
+            } else if let Ok(bytes) = body.extract::<Vec<u8>>() {
+                req = req.body(bytes);
+            } else if let Ok(s) = body.extract::<String>() {
+                req = req.body(s);
+            } else if body.hasattr("__iter__")? {
+                // Handle iterator - collect all bytes
+                let mut all_bytes = Vec::new();
+                let iter = body.try_iter()?;
+                for item_result in iter {
+                    let item: Bound<'_, PyAny> = item_result?;
+                    if let Ok(bytes) = item.extract::<Vec<u8>>() {
+                        all_bytes.extend(bytes);
+                    } else if let Ok(s) = item.extract::<String>() {
+                        all_bytes.extend(s.into_bytes());
+                    }
+                }
+                req = req.body(all_bytes);
+            }
+        } else if let Some(files_data) = files {
+            // Handle files parameter - dict of field_name -> file_info
+            if files_data.is_instance_of::<PyDict>() {
+                let files_dict = files_data.extract::<Bound<'_, PyDict>>()?;
+                let mut form = reqwest::blocking::multipart::Form::new();
+                for (field_name, file_info) in files_dict.iter() {
+                    let field_name: String = field_name.extract()?;
+                    if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
+                        let (filename, file_content, content_type) = tuple;
+                        let part = reqwest::blocking::multipart::Part::bytes(file_content)
+                            .file_name(filename)
+                            .mime_str(&content_type)
+                            .map_err(|e| Error::request(e.to_string()))?;
+                        form = form.part(field_name, part);
+                    } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
+                        let (filename, file_content) = tuple;
+                        let part = reqwest::blocking::multipart::Part::bytes(file_content).file_name(filename);
+                        form = form.part(field_name, part);
+                    }
+                }
+                req = req.multipart(form);
+            }
         }
 
-        // Authentication
-        let auth_to_use = auth.as_ref().or(self.config.auth.as_ref());
+        // Authentication - extract from PyAny
+        let auth_extracted = if let Some(a) = auth {
+            extract_auth(a)?
+        } else {
+            None
+        };
+        let auth_to_use = auth_extracted.as_ref().or(self.config.auth.as_ref());
         if let Some(auth_config) = auth_to_use {
             match &auth_config.auth_type {
                 AuthType::Basic { username, password } => {
@@ -708,7 +765,7 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -723,11 +780,11 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
+        content: Option<&Bound<'_, PyAny>>,
+        data: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        files: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -742,11 +799,11 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
+        content: Option<&Bound<'_, PyAny>>,
+        data: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        files: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -761,11 +818,11 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
+        content: Option<&Bound<'_, PyAny>>,
+        data: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        files: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -780,7 +837,7 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -795,7 +852,7 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -810,7 +867,7 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
@@ -844,11 +901,11 @@ impl Client {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
+        content: Option<&Bound<'_, PyAny>>,
+        data: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        files: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<StreamingResponse> {
@@ -898,35 +955,53 @@ impl Client {
             req = req.header("Content-Type", "application/json");
             req = req.body(json_str);
         } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            req = req.form(&form);
-        } else if let Some(body) = content {
-            req = req.body(body.as_bytes().to_vec());
-        } else if let Some(files_dict) = files {
-            let mut form = reqwest::blocking::multipart::Form::new();
-            for (field_name, file_info) in files_dict.iter() {
-                let field_name: String = field_name.extract()?;
-                if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
-                    let (filename, content, content_type) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
-                    let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
-                    form = form.part(field_name, part);
-                }
+            if form_data.is_instance_of::<PyDict>() {
+                let dict = form_data.cast::<PyDict>().unwrap();
+                let form: HashMap<String, String> = dict
+                    .iter()
+                    .map(|(k, v)| Ok((k.extract::<String>()?, v.str()?.to_string())))
+                    .collect::<PyResult<_>>()?;
+                req = req.form(&form);
             }
-            req = req.multipart(form);
+        } else if let Some(body) = content {
+            if body.is_instance_of::<PyBytes>() {
+                let bytes_obj: Bound<'_, PyBytes> = body.extract()?;
+                req = req.body(bytes_obj.as_bytes().to_vec());
+            } else if let Ok(bytes) = body.extract::<Vec<u8>>() {
+                req = req.body(bytes);
+            } else if let Ok(s) = body.extract::<String>() {
+                req = req.body(s);
+            }
+        } else if let Some(files_data) = files {
+            if files_data.is_instance_of::<PyDict>() {
+                let files_dict = files_data.extract::<Bound<'_, PyDict>>()?;
+                let mut form = reqwest::blocking::multipart::Form::new();
+                for (field_name, file_info) in files_dict.iter() {
+                    let field_name: String = field_name.extract()?;
+                    if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
+                        let (filename, file_content, content_type) = tuple;
+                        let part = reqwest::blocking::multipart::Part::bytes(file_content)
+                            .file_name(filename)
+                            .mime_str(&content_type)
+                            .map_err(|e| Error::request(e.to_string()))?;
+                        form = form.part(field_name, part);
+                    } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
+                        let (filename, file_content) = tuple;
+                        let part = reqwest::blocking::multipart::Part::bytes(file_content).file_name(filename);
+                        form = form.part(field_name, part);
+                    }
+                }
+                req = req.multipart(form);
+            }
         }
 
         // Authentication
-        let auth_to_use = auth.as_ref().or(self.config.auth.as_ref());
+        let auth_extracted = if let Some(a) = auth {
+            extract_auth(a)?
+        } else {
+            None
+        };
+        let auth_to_use = auth_extracted.as_ref().or(self.config.auth.as_ref());
         if let Some(auth_config) = auth_to_use {
             match &auth_config.auth_type {
                 AuthType::Basic { username, password } => {

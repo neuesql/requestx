@@ -2,9 +2,27 @@
 
 use crate::client::Client;
 use crate::response::Response;
-use crate::types::{Auth, Proxy};
+use crate::streaming::StreamingResponse;
+use crate::types::URL;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::PyDict;
+
+/// Extract URL string from either a string or URL object
+fn extract_url_str(url: &Bound<'_, PyAny>) -> PyResult<String> {
+    // First try to extract as URL object
+    if let Ok(url_obj) = url.extract::<URL>() {
+        return Ok(url_obj.as_str().to_string());
+    }
+    // Then try as string
+    if let Ok(url_str) = url.extract::<String>() {
+        return Ok(url_str);
+    }
+    // Finally try calling str() on the object
+    if let Ok(s) = url.str() {
+        return Ok(s.to_string());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"))
+}
 
 /// Perform a generic HTTP request (sync)
 #[pyfunction]
@@ -26,20 +44,22 @@ use pyo3::types::{PyBytes, PyDict};
 ))]
 pub fn request(
     method: &str,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    content: Option<&Bound<'_, PyBytes>>,
-    data: Option<&Bound<'_, PyDict>>,
+    content: Option<&Bound<'_, PyAny>>,
+    data: Option<&Bound<'_, PyAny>>,
     json: Option<&Bound<'_, PyAny>>,
-    files: Option<&Bound<'_, PyDict>>,
-    auth: Option<Auth>,
+    files: Option<&Bound<'_, PyAny>>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
+    let url_str = extract_url_str(url)?;
+
     // Create a one-shot client
     let client = Client::new(
         None, // base_url
@@ -58,7 +78,7 @@ pub fn request(
         true,  // trust_env
     )?;
 
-    client.request(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
+    client.request(method, &url_str, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
 }
 
 /// Perform a GET request (sync)
@@ -75,15 +95,15 @@ pub fn request(
     proxy=None
 ))]
 pub fn get(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    auth: Option<Auth>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("GET", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -106,19 +126,19 @@ pub fn get(
     proxy=None
 ))]
 pub fn post(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    content: Option<&Bound<'_, PyBytes>>,
-    data: Option<&Bound<'_, PyDict>>,
+    content: Option<&Bound<'_, PyAny>>,
+    data: Option<&Bound<'_, PyAny>>,
     json: Option<&Bound<'_, PyAny>>,
-    files: Option<&Bound<'_, PyDict>>,
-    auth: Option<Auth>,
+    files: Option<&Bound<'_, PyAny>>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("POST", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -141,19 +161,19 @@ pub fn post(
     proxy=None
 ))]
 pub fn put(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    content: Option<&Bound<'_, PyBytes>>,
-    data: Option<&Bound<'_, PyDict>>,
+    content: Option<&Bound<'_, PyAny>>,
+    data: Option<&Bound<'_, PyAny>>,
     json: Option<&Bound<'_, PyAny>>,
-    files: Option<&Bound<'_, PyDict>>,
-    auth: Option<Auth>,
+    files: Option<&Bound<'_, PyAny>>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("PUT", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -176,19 +196,19 @@ pub fn put(
     proxy=None
 ))]
 pub fn patch(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    content: Option<&Bound<'_, PyBytes>>,
-    data: Option<&Bound<'_, PyDict>>,
+    content: Option<&Bound<'_, PyAny>>,
+    data: Option<&Bound<'_, PyAny>>,
     json: Option<&Bound<'_, PyAny>>,
-    files: Option<&Bound<'_, PyDict>>,
-    auth: Option<Auth>,
+    files: Option<&Bound<'_, PyAny>>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("PATCH", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -207,15 +227,15 @@ pub fn patch(
     proxy=None
 ))]
 pub fn delete(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    auth: Option<Auth>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("DELETE", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -234,15 +254,15 @@ pub fn delete(
     proxy=None
 ))]
 pub fn head(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    auth: Option<Auth>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("HEAD", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
 }
@@ -261,15 +281,72 @@ pub fn head(
     proxy=None
 ))]
 pub fn options(
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyDict>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
-    auth: Option<Auth>,
+    auth: Option<&Bound<'_, PyAny>>,
     timeout: Option<&Bound<'_, PyAny>>,
     follow_redirects: bool,
     verify: Option<&Bound<'_, PyAny>>,
-    proxy: Option<Proxy>,
+    proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
     request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects, verify, proxy)
+}
+
+/// Stream a request (sync) - returns a context manager for streaming responses
+#[pyfunction]
+#[pyo3(signature = (
+    method,
+    url,
+    params=None,
+    headers=None,
+    cookies=None,
+    content=None,
+    data=None,
+    json=None,
+    files=None,
+    auth=None,
+    timeout=None,
+    follow_redirects=true,
+    verify=None,
+    proxy=None
+))]
+pub fn stream(
+    method: &str,
+    url: &Bound<'_, PyAny>,
+    params: Option<&Bound<'_, PyDict>>,
+    headers: Option<&Bound<'_, PyAny>>,
+    cookies: Option<&Bound<'_, PyAny>>,
+    content: Option<&Bound<'_, PyAny>>,
+    data: Option<&Bound<'_, PyAny>>,
+    json: Option<&Bound<'_, PyAny>>,
+    files: Option<&Bound<'_, PyAny>>,
+    auth: Option<&Bound<'_, PyAny>>,
+    timeout: Option<&Bound<'_, PyAny>>,
+    follow_redirects: bool,
+    verify: Option<&Bound<'_, PyAny>>,
+    proxy: Option<&Bound<'_, PyAny>>,
+) -> PyResult<StreamingResponse> {
+    let url_str = extract_url_str(url)?;
+
+    // Create a one-shot client
+    let client = Client::new(
+        None, // base_url
+        None, // headers
+        None, // cookies
+        None, // timeout
+        follow_redirects,
+        10,     // max_redirects
+        verify, // verify (SSL verification)
+        None,   // cert (client certificates)
+        proxy,
+        None,  // auth (passed per-request)
+        false, // http2
+        None,  // limits
+        None,  // default_encoding
+        true,  // trust_env
+    )?;
+
+    client.stream(method, &url_str, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
 }

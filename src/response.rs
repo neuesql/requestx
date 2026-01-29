@@ -59,6 +59,103 @@ pub struct Response {
 
 #[pymethods]
 impl Response {
+    /// Create a Response for testing purposes (HTTPX compatibility)
+    #[new]
+    #[pyo3(signature = (
+        status_code=200,
+        headers=None,
+        content=None,
+        text=None,
+        html=None,
+        json=None,
+        stream=None,
+        request=None,
+        extensions=None
+    ))]
+    pub fn py_new(
+        py: Python<'_>,
+        status_code: u16,
+        headers: Option<&Bound<'_, PyAny>>,
+        content: Option<&Bound<'_, PyAny>>,
+        text: Option<&str>,
+        html: Option<&str>,
+        json: Option<&Bound<'_, PyAny>>,
+        #[allow(unused)] stream: Option<&Bound<'_, PyAny>>,
+        request: Option<Request>,
+        #[allow(unused)] extensions: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        // Parse headers
+        let response_headers = if let Some(h) = headers {
+            if let Ok(headers_obj) = h.extract::<Headers>() {
+                headers_obj
+            } else if h.is_instance_of::<PyDict>() {
+                let dict = h.downcast::<PyDict>()?;
+                let mut header_map = HashMap::new();
+                for (key, value) in dict.iter() {
+                    let key_str: String = key.extract()?;
+                    let key_lower = key_str.to_lowercase();
+                    let value_str: String = value.extract()?;
+                    header_map.entry(key_lower).or_insert_with(Vec::new).push(value_str);
+                }
+                Headers { inner: header_map }
+            } else if let Ok(list) = h.downcast::<PyList>() {
+                let mut header_map = HashMap::new();
+                for item in list.iter() {
+                    let tuple: (String, String) = item.extract()?;
+                    let key_lower = tuple.0.to_lowercase();
+                    header_map.entry(key_lower).or_insert_with(Vec::new).push(tuple.1);
+                }
+                Headers { inner: header_map }
+            } else {
+                Headers::default()
+            }
+        } else {
+            Headers::default()
+        };
+
+        // Determine content bytes
+        let content_bytes: Vec<u8> = if let Some(c) = content {
+            if let Ok(bytes) = c.extract::<Vec<u8>>() {
+                bytes
+            } else if let Ok(s) = c.extract::<String>() {
+                s.into_bytes()
+            } else {
+                Vec::new()
+            }
+        } else if let Some(t) = text {
+            t.as_bytes().to_vec()
+        } else if let Some(h) = html {
+            h.as_bytes().to_vec()
+        } else if let Some(j) = json {
+            // Serialize JSON
+            let json_mod = py.import("json")?;
+            let json_str: String = json_mod.call_method1("dumps", (j,))?.extract()?;
+            json_str.into_bytes()
+        } else {
+            Vec::new()
+        };
+
+        // Get reason phrase
+        let reason = get_reason_phrase(status_code);
+
+        Ok(Self {
+            status_code,
+            headers: response_headers,
+            content: content_bytes,
+            url_str: String::new(),
+            http_version: "HTTP/1.1".to_string(),
+            cookies: Cookies::default(),
+            elapsed: 0.0,
+            request_method: "GET".to_string(),
+            history: Vec::new(),
+            encoding: None,
+            reason_phrase: reason,
+            request,
+            is_closed: true,
+            is_stream_consumed: true,
+        })
+    }
+
     /// Get response headers
     #[getter]
     pub fn headers(&self) -> Headers {
@@ -445,4 +542,73 @@ fn json_to_py<'py>(py: Python<'py>, value: &sonic_rs::Value) -> PyResult<Bound<'
         // null or unknown type
         Ok(py.None().into_bound(py))
     }
+}
+
+/// Get reason phrase for a status code
+fn get_reason_phrase(status_code: u16) -> String {
+    match status_code {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        102 => "Processing",
+        103 => "Early Hints",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        203 => "Non-Authoritative Information",
+        204 => "No Content",
+        205 => "Reset Content",
+        206 => "Partial Content",
+        207 => "Multi-Status",
+        208 => "Already Reported",
+        226 => "IM Used",
+        300 => "Multiple Choices",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        305 => "Use Proxy",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        402 => "Payment Required",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        407 => "Proxy Authentication Required",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        411 => "Length Required",
+        412 => "Precondition Failed",
+        413 => "Request Entity Too Large",
+        414 => "Request-URI Too Long",
+        415 => "Unsupported Media Type",
+        416 => "Requested Range Not Satisfiable",
+        417 => "Expectation Failed",
+        418 => "I'm a teapot",
+        421 => "Misdirected Request",
+        422 => "Unprocessable Entity",
+        423 => "Locked",
+        424 => "Failed Dependency",
+        425 => "Too Early",
+        426 => "Upgrade Required",
+        428 => "Precondition Required",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        451 => "Unavailable For Legal Reasons",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        505 => "HTTP Version Not Supported",
+        506 => "Variant Also Negotiates",
+        507 => "Insufficient Storage",
+        508 => "Loop Detected",
+        510 => "Not Extended",
+        511 => "Network Authentication Required",
+        _ => "",
+    }.to_string()
 }

@@ -277,7 +277,11 @@ impl CookiesIterator {
     }
 }
 
-/// Timeout configuration
+/// Timeout configuration (HTTPX-compatible)
+///
+/// When `timeout` is provided as a float, it sets the default for connect, read, write, and pool.
+/// When `timeout` is provided as a tuple (connect, read, write, pool), each value is set individually.
+/// Individual keyword values override the default or tuple values.
 #[pyclass(name = "Timeout")]
 #[derive(Debug, Clone)]
 pub struct Timeout {
@@ -288,18 +292,65 @@ pub struct Timeout {
     pub total: Option<Duration>,
 }
 
+impl Timeout {
+    /// Internal constructor from durations
+    pub fn from_durations(
+        total: Option<Duration>,
+        connect: Option<Duration>,
+        read: Option<Duration>,
+        write: Option<Duration>,
+        pool: Option<Duration>,
+    ) -> Self {
+        Self { total, connect, read, write, pool }
+    }
+}
+
 #[pymethods]
 impl Timeout {
     #[new]
     #[pyo3(signature = (timeout=None, connect=None, read=None, write=None, pool=None))]
-    pub fn new(timeout: Option<f64>, connect: Option<f64>, read: Option<f64>, write: Option<f64>, pool: Option<f64>) -> Self {
-        Self {
-            total: timeout.map(Duration::from_secs_f64),
-            connect: connect.map(Duration::from_secs_f64),
-            read: read.map(Duration::from_secs_f64),
-            write: write.map(Duration::from_secs_f64),
-            pool: pool.map(Duration::from_secs_f64),
-        }
+    pub fn new(
+        timeout: Option<&Bound<'_, PyAny>>,
+        connect: Option<f64>,
+        read: Option<f64>,
+        write: Option<f64>,
+        pool: Option<f64>,
+    ) -> PyResult<Self> {
+        // Parse timeout which can be float, tuple, Timeout object, or None
+        let (default_timeout, tuple_connect, tuple_read, tuple_write, tuple_pool) = if let Some(t) = timeout {
+            if t.is_none() {
+                (None, None, None, None, None)
+            } else if let Ok(existing) = t.extract::<Timeout>() {
+                // Timeout object - copy its values
+                (existing.total, existing.connect, existing.read, existing.write, existing.pool)
+            } else if let Ok(f) = t.extract::<f64>() {
+                // Single float - use as default for all
+                let d = Some(Duration::from_secs_f64(f));
+                (d, d, d, d, d)
+            } else if let Ok((c, r, w, p)) = t.extract::<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)>() {
+                // Tuple of (connect, read, write, pool)
+                (
+                    None,
+                    c.map(Duration::from_secs_f64),
+                    r.map(Duration::from_secs_f64),
+                    w.map(Duration::from_secs_f64),
+                    p.map(Duration::from_secs_f64),
+                )
+            } else {
+                return Err(PyValueError::new_err("timeout must be a float, tuple of (connect, read, write, pool), Timeout object, or None"));
+            }
+        } else {
+            (None, None, None, None, None)
+        };
+
+        // Individual keyword arguments override tuple/default values
+        Ok(Self {
+            total: default_timeout,
+            connect: connect.map(Duration::from_secs_f64).or(tuple_connect),
+            read: read.map(Duration::from_secs_f64).or(tuple_read),
+            write: write.map(Duration::from_secs_f64).or(tuple_write),
+            pool: pool.map(Duration::from_secs_f64).or(tuple_pool),
+        })
     }
 
     #[getter]
@@ -354,7 +405,11 @@ impl Timeout {
 
     pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_timeout) = other.extract::<Timeout>() {
-            Ok(self.total == other_timeout.total && self.connect == other_timeout.connect && self.read == other_timeout.read && self.write == other_timeout.write && self.pool == other_timeout.pool)
+            // Compare all timeout values
+            Ok(self.connect == other_timeout.connect
+                && self.read == other_timeout.read
+                && self.write == other_timeout.write
+                && self.pool == other_timeout.pool)
         } else {
             Ok(false)
         }
@@ -365,9 +420,31 @@ impl Timeout {
     }
 
     pub fn __repr__(&self) -> String {
+        fn format_duration(d: Duration) -> String {
+            let secs = d.as_secs_f64();
+            if secs.fract() == 0.0 {
+                format!("{:.1}", secs)
+            } else {
+                format!("{}", secs)
+            }
+        }
+
+        // If all timeouts are the same, show as Timeout(timeout=X)
+        if self.connect == self.read && self.read == self.write && self.write == self.pool {
+            if let Some(t) = self.connect {
+                return format!("Timeout(timeout={})", format_duration(t));
+            }
+        }
+
+        // Otherwise show individual values
+        let connect_str = self.connect.map_or("None".to_string(), format_duration);
+        let read_str = self.read.map_or("None".to_string(), format_duration);
+        let write_str = self.write.map_or("None".to_string(), format_duration);
+        let pool_str = self.pool.map_or("None".to_string(), format_duration);
+
         format!(
-            "Timeout(total={:?}, connect={:?}, read={:?}, write={:?}, pool={:?})",
-            self.total, self.connect, self.read, self.write, self.pool
+            "Timeout(connect={}, read={}, write={}, pool={})",
+            connect_str, read_str, write_str, pool_str
         )
     }
 }
@@ -384,29 +461,109 @@ impl Default for Timeout {
     }
 }
 
-/// Proxy configuration
+/// Proxy configuration (HTTPX-compatible)
 #[pyclass(name = "Proxy")]
 #[derive(Debug, Clone)]
 pub struct Proxy {
+    /// The proxy URL (without auth credentials)
+    proxy_url: String,
+    /// Original URL with auth for internal use
     pub http: Option<String>,
     pub https: Option<String>,
     pub all: Option<String>,
     pub no_proxy: Option<String>,
+    /// Auth credentials extracted from URL
+    username: Option<String>,
+    password: Option<String>,
 }
 
 #[pymethods]
 impl Proxy {
     #[new]
-    #[pyo3(signature = (url=None, http=None, https=None, all=None, no_proxy=None))]
-    pub fn new(url: Option<String>, http: Option<String>, https: Option<String>, all: Option<String>, no_proxy: Option<String>) -> Self {
-        // If a single url is provided, use it for all protocols
-        let all_proxy = all.or(url);
-        Self {
-            http: http.or_else(|| all_proxy.clone()),
-            https: https.or_else(|| all_proxy.clone()),
-            all: all_proxy,
-            no_proxy,
+    #[pyo3(signature = (url=None, http=None, https=None, all=None, no_proxy=None, headers=None))]
+    pub fn new(
+        url: Option<String>,
+        http: Option<String>,
+        https: Option<String>,
+        all: Option<String>,
+        no_proxy: Option<String>,
+        #[allow(unused)] headers: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        // If a single url is provided, use it as the main proxy URL
+        let proxy_url_str = url.clone().or_else(|| all.clone()).or_else(|| http.clone()).or_else(|| https.clone());
+
+        if let Some(ref url_str) = proxy_url_str {
+            // Validate and parse the URL
+            let parsed = url::Url::parse(url_str).map_err(|e| PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
+
+            // Validate scheme
+            let scheme = parsed.scheme();
+            if !["http", "https", "socks5", "socks5h"].contains(&scheme) {
+                return Err(PyValueError::new_err(format!("Invalid proxy scheme '{}'. Must be http, https, or socks5.", scheme)));
+            }
+
+            // Extract auth
+            let username = if parsed.username().is_empty() {
+                None
+            } else {
+                Some(parsed.username().to_string())
+            };
+            let password = parsed.password().map(|p| p.to_string());
+
+            // Build URL without auth
+            let mut clean_url = parsed.clone();
+            clean_url.set_username("").ok();
+            clean_url.set_password(None).ok();
+            let clean_url_str = clean_url.to_string().trim_end_matches('/').to_string();
+
+            let all_proxy = all.or(url);
+            Ok(Self {
+                proxy_url: clean_url_str,
+                http: http.or_else(|| all_proxy.clone()),
+                https: https.or_else(|| all_proxy.clone()),
+                all: all_proxy,
+                no_proxy,
+                username,
+                password,
+            })
+        } else {
+            // No URL provided - legacy mode with http/https
+            let all_proxy = all.clone();
+            Ok(Self {
+                proxy_url: String::new(),
+                http: http.or_else(|| all_proxy.clone()),
+                https: https.or_else(|| all_proxy.clone()),
+                all: all_proxy,
+                no_proxy,
+                username: None,
+                password: None,
+            })
         }
+    }
+
+    /// The proxy URL (without credentials)
+    #[getter]
+    pub fn url(&self) -> PyResult<URL> {
+        if self.proxy_url.is_empty() {
+            return Err(PyValueError::new_err("No proxy URL set"));
+        }
+        URL::new(&self.proxy_url)
+    }
+
+    /// Auth credentials as tuple (username, password) or None
+    #[getter]
+    pub fn auth(&self) -> Option<(String, String)> {
+        match (&self.username, &self.password) {
+            (Some(u), Some(p)) => Some((u.clone(), p.clone())),
+            (Some(u), None) => Some((u.clone(), String::new())),
+            _ => None,
+        }
+    }
+
+    /// Headers dict (always empty for now)
+    #[getter]
+    pub fn headers(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        Ok(PyDict::new(py).into())
     }
 
     #[getter]
@@ -420,13 +577,21 @@ impl Proxy {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("Proxy(http={:?}, https={:?}, no_proxy={:?})", self.http, self.https, self.no_proxy)
+        if !self.proxy_url.is_empty() {
+            if let Some((u, _)) = self.auth() {
+                format!("Proxy('{}', auth=('{}', '********'))", self.proxy_url, u)
+            } else {
+                format!("Proxy('{}')", self.proxy_url)
+            }
+        } else {
+            format!("Proxy(http={:?}, https={:?}, no_proxy={:?})", self.http, self.https, self.no_proxy)
+        }
     }
 }
 
-/// Resource limits configuration (like HTTPX Limits)
+/// Resource limits configuration (HTTPX-compatible)
 #[pyclass(name = "Limits")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Limits {
     pub max_connections: Option<usize>,
     pub max_keepalive_connections: Option<usize>,
@@ -436,7 +601,7 @@ pub struct Limits {
 #[pymethods]
 impl Limits {
     #[new]
-    #[pyo3(signature = (max_connections=None, max_keepalive_connections=None, keepalive_expiry=None))]
+    #[pyo3(signature = (max_connections=None, max_keepalive_connections=None, keepalive_expiry=5.0))]
     pub fn new(max_connections: Option<usize>, max_keepalive_connections: Option<usize>, keepalive_expiry: Option<f64>) -> Self {
         Self {
             max_connections,
@@ -460,10 +625,36 @@ impl Limits {
         self.keepalive_expiry.map(|d| d.as_secs_f64())
     }
 
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(other_limits) = other.extract::<Limits>() {
+            Ok(self.max_connections == other_limits.max_connections
+                && self.max_keepalive_connections == other_limits.max_keepalive_connections
+                && self.keepalive_expiry == other_limits.keepalive_expiry)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn __ne__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(!self.__eq__(other)?)
+    }
+
     pub fn __repr__(&self) -> String {
+        let max_conn_str = self.max_connections.map_or("None".to_string(), |v| v.to_string());
+        let max_keepalive_str = self.max_keepalive_connections.map_or("None".to_string(), |v| v.to_string());
+        let keepalive_expiry_str = self.keepalive_expiry.map_or("None".to_string(), |d| {
+            let secs = d.as_secs_f64();
+            // Always show at least one decimal place for floats
+            if secs.fract() == 0.0 {
+                format!("{:.1}", secs)
+            } else {
+                format!("{}", secs)
+            }
+        });
+
         format!(
-            "Limits(max_connections={:?}, max_keepalive_connections={:?}, keepalive_expiry={:?})",
-            self.max_connections, self.max_keepalive_connections, self.keepalive_expiry
+            "Limits(max_connections={}, max_keepalive_connections={}, keepalive_expiry={})",
+            max_conn_str, max_keepalive_str, keepalive_expiry_str
         )
     }
 }
@@ -637,9 +828,26 @@ pub fn extract_timeout(timeout: &Bound<'_, PyAny>) -> PyResult<Timeout> {
     if let Ok(timeout_obj) = timeout.extract::<Timeout>() {
         Ok(timeout_obj)
     } else if let Ok(secs) = timeout.extract::<f64>() {
-        Ok(Timeout::new(Some(secs), None, None, None, None))
+        let d = Some(Duration::from_secs_f64(secs));
+        Ok(Timeout::from_durations(d, d, d, d, d))
     } else if let Ok(tuple) = timeout.extract::<(f64, f64)>() {
-        Ok(Timeout::new(None, Some(tuple.0), Some(tuple.1), None, None))
+        // (connect, read) tuple
+        Ok(Timeout::from_durations(
+            None,
+            Some(Duration::from_secs_f64(tuple.0)),
+            Some(Duration::from_secs_f64(tuple.1)),
+            None,
+            None,
+        ))
+    } else if let Ok((c, r, w, p)) = timeout.extract::<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)>() {
+        // (connect, read, write, pool) tuple
+        Ok(Timeout::from_durations(
+            None,
+            c.map(Duration::from_secs_f64),
+            r.map(Duration::from_secs_f64),
+            w.map(Duration::from_secs_f64),
+            p.map(Duration::from_secs_f64),
+        ))
     } else {
         Err(PyValueError::new_err("timeout must be a float, tuple, or Timeout object"))
     }
@@ -694,6 +902,62 @@ pub fn extract_limits(limits: &Bound<'_, PyAny>) -> PyResult<Limits> {
     }
 }
 
+/// Extract auth from Auth object, tuple, or None
+pub fn extract_auth(auth: &Bound<'_, PyAny>) -> PyResult<Option<Auth>> {
+    // Check for None
+    if auth.is_none() {
+        return Ok(None);
+    }
+
+    // Check for Auth object
+    if let Ok(auth_obj) = auth.extract::<Auth>() {
+        return Ok(Some(auth_obj));
+    }
+
+    // Check for tuple (username, password) - basic auth
+    if let Ok((username, password)) = auth.extract::<(String, String)>() {
+        return Ok(Some(Auth::basic(username, password)));
+    }
+
+    // Check for callable (returns a generator) - not supported, return None
+    if auth.is_callable() {
+        // Custom auth flows are not supported in the Rust implementation
+        return Err(PyValueError::new_err("Custom auth flows are not supported. Use Auth.basic() or Auth.bearer() instead."));
+    }
+
+    Err(PyValueError::new_err("auth must be an Auth object, tuple of (username, password), or None"))
+}
+
+/// Extract proxy from Proxy object, string, dict, or None
+pub fn extract_proxy(proxy: &Bound<'_, PyAny>) -> PyResult<Option<Proxy>> {
+    // Check for None
+    if proxy.is_none() {
+        return Ok(None);
+    }
+
+    // Check for Proxy object
+    if let Ok(proxy_obj) = proxy.extract::<Proxy>() {
+        return Ok(Some(proxy_obj));
+    }
+
+    // Check for string (single proxy URL for all protocols)
+    if let Ok(url) = proxy.extract::<String>() {
+        return Ok(Some(Proxy::new(Some(url), None, None, None, None, None)?));
+    }
+
+    // Check for dict (protocol -> url mapping)
+    if proxy.is_instance_of::<PyDict>() {
+        let dict = proxy.cast::<PyDict>().unwrap();
+        let http = dict.get_item("http")?.and_then(|v| v.extract().ok());
+        let https = dict.get_item("https")?.and_then(|v| v.extract().ok());
+        let all = dict.get_item("all")?.and_then(|v| v.extract().ok());
+        let no_proxy = dict.get_item("no_proxy")?.and_then(|v| v.extract().ok());
+        return Ok(Some(Proxy::new(all, http, https, None, no_proxy, None)?));
+    }
+
+    Err(PyValueError::new_err("proxy must be a Proxy object, string URL, dict, or None"))
+}
+
 /// Get proxy from environment variables
 pub fn get_env_proxy() -> Option<Proxy> {
     let http_proxy = std::env::var("HTTP_PROXY")
@@ -710,11 +974,35 @@ pub fn get_env_proxy() -> Option<Proxy> {
         .ok();
 
     if http_proxy.is_some() || https_proxy.is_some() || all_proxy.is_some() {
+        // Determine proxy URL for parsing auth
+        let proxy_url_str = all_proxy.clone().or_else(|| http_proxy.clone()).or_else(|| https_proxy.clone());
+        let (proxy_url, username, password) = if let Some(ref url_str) = proxy_url_str {
+            if let Ok(parsed) = url::Url::parse(url_str) {
+                let username = if parsed.username().is_empty() {
+                    None
+                } else {
+                    Some(parsed.username().to_string())
+                };
+                let password = parsed.password().map(|p| p.to_string());
+                let mut clean_url = parsed.clone();
+                clean_url.set_username("").ok();
+                clean_url.set_password(None).ok();
+                (clean_url.to_string().trim_end_matches('/').to_string(), username, password)
+            } else {
+                (String::new(), None, None)
+            }
+        } else {
+            (String::new(), None, None)
+        };
+
         Some(Proxy {
+            proxy_url,
             http: http_proxy.or_else(|| all_proxy.clone()),
             https: https_proxy.or_else(|| all_proxy.clone()),
             all: all_proxy,
             no_proxy,
+            username,
+            password,
         })
     } else {
         None
