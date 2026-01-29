@@ -18,7 +18,7 @@ from uvicorn.config import Config
 from uvicorn.server import Server
 
 import httpx
-from tests.concurrency import sleep
+from tests_requestx.concurrency import sleep
 
 ENVIRONMENT_VARIABLES = {
     "SSL_CERT_FILE",
