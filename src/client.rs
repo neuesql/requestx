@@ -17,6 +17,23 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
+/// Extract URL string from either a string or URL object
+fn extract_url_str(url: &Bound<'_, PyAny>) -> PyResult<String> {
+    // First try to extract as URL object
+    if let Ok(url_obj) = url.extract::<URL>() {
+        return Ok(url_obj.as_str().to_string());
+    }
+    // Then try as string
+    if let Ok(url_str) = url.extract::<String>() {
+        return Ok(url_str);
+    }
+    // Finally try calling str() on the object
+    if let Ok(s) = url.str() {
+        return Ok(s.to_string());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"))
+}
+
 /// Shared client configuration
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -538,7 +555,7 @@ impl Client {
     pub fn request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -550,7 +567,8 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        let url_str = extract_url_str(url)?;
+        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let start = Instant::now();
 
         // Build request
@@ -761,7 +779,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn get(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -776,7 +794,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn post(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -795,7 +813,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn put(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -814,7 +832,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn patch(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -833,7 +851,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn delete(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -848,7 +866,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn head(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -863,7 +881,7 @@ impl Client {
     #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
     pub fn options(
         &self,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -897,7 +915,7 @@ impl Client {
     pub fn stream(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -909,7 +927,8 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<StreamingResponse> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
+        let url_str = extract_url_str(url)?;
+        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
         let start = Instant::now();
 
         // Build request
@@ -1480,7 +1499,7 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         method: String,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1492,6 +1511,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let url = extract_url_str(url)?;
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
         let cookies_obj = cookies
@@ -1629,7 +1649,7 @@ impl AsyncClient {
     pub fn get<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1645,7 +1665,7 @@ impl AsyncClient {
     pub fn post<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1665,7 +1685,7 @@ impl AsyncClient {
     pub fn put<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1685,7 +1705,7 @@ impl AsyncClient {
     pub fn patch<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1705,7 +1725,7 @@ impl AsyncClient {
     pub fn delete<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1721,7 +1741,7 @@ impl AsyncClient {
     pub fn head<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1737,7 +1757,7 @@ impl AsyncClient {
     pub fn options<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1776,7 +1796,7 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         method: String,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -1788,6 +1808,7 @@ impl AsyncClient {
         timeout: Option<f64>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let url = extract_url_str(url)?;
         let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
         let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
         let cookies_obj = cookies

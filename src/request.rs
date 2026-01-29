@@ -58,8 +58,6 @@ pub fn request(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Response> {
-    let url_str = extract_url_str(url)?;
-
     // Create a one-shot client
     let client = Client::new(
         None, // base_url
@@ -78,7 +76,7 @@ pub fn request(
         true,  // trust_env
     )?;
 
-    client.request(method, &url_str, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
+    client.request(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
 }
 
 /// Perform a GET request (sync)
@@ -328,8 +326,6 @@ pub fn stream(
     verify: Option<&Bound<'_, PyAny>>,
     proxy: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<StreamingResponse> {
-    let url_str = extract_url_str(url)?;
-
     // Create a one-shot client
     let client = Client::new(
         None, // base_url
@@ -348,5 +344,5 @@ pub fn stream(
         true,  // trust_env
     )?;
 
-    client.stream(method, &url_str, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
+    client.stream(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
 }
