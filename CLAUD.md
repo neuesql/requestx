@@ -16,7 +16,28 @@ Build a high-performance Python HTTP client that is fully API-compatible with ht
 ### Technology Stack
 - **HTTP Engine**: Rust `reqwest` crate
 - **Python Bindings**: PyO3 (use `Python::attach()` API, not deprecated `with_gil()`)
+- **Async Runtime**: `pyo3-async-runtimes` with tokio feature
 - **Target API**: httpx-compatible (excluding `httpx.__main__` and CLI features)
+
+### Core Dependencies (Cargo.toml)
+```toml
+[dependencies]
+# Python bindings
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+# Async runtime bridge (Python asyncio <-> Rust tokio)
+pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# JSON processing (SIMD-accelerated)
+sonic-rs = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+```
 
 ## Reference Materials
 
@@ -285,17 +306,36 @@ fn bad_panic(value: i64) -> i64 {
 
 ### 6. Async Programming Rules
 
+**Use `pyo3-async-runtimes` for Python asyncio integration:**
+
 ```rust
-// ✅ Async HTTP request pattern
+use pyo3::prelude::*;
+use pyo3_async_runtimes::tokio::future_into_py;
+
+// ✅ Async HTTP request pattern with pyo3-async-runtimes
 #[pyfunction]
-fn async_fetch(py: Python, url: String) -> PyResult<Bound<'_, PyAny>> {
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+fn async_fetch<'py>(py: Python<'py>, url: String) -> PyResult<Bound<'py, PyAny>> {
+    future_into_py(py, async move {
         let response = reqwest::get(&url).await
-            .map_err(|e| PyException::new_err(format!("{}", e)))?;
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{}", e)))?;
         let text = response.text().await
-            .map_err(|e| PyException::new_err(format!("{}", e)))?;
-        Ok(Python::with_gil(|py| text.into_py(py)))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{}", e)))?;
+        Ok(text)
     })
+}
+
+// ✅ Async client method pattern
+#[pymethods]
+impl AsyncClient {
+    fn get<'py>(&self, py: Python<'py>, url: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let response = client.get(&url).send().await
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{}", e)))?;
+            // Convert to Response object
+            Ok(Response::from_reqwest(response).await?)
+        })
+    }
 }
 ```
 
