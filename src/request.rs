@@ -131,12 +131,33 @@ impl Request {
             }
         }
 
-        // Handle multipart (files provided)
+        // Handle multipart (files provided and non-empty)
+        let files_is_empty = files.as_ref().map_or(true, |f| {
+            if let Ok(dict) = f.downcast::<PyDict>() {
+                dict.is_empty()
+            } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
+                list.is_empty()
+            } else {
+                false
+            }
+        });
+        let data_is_empty = data.as_ref().map_or(true, |d| {
+            if let Ok(dict) = d.downcast::<PyDict>() {
+                dict.is_empty()
+            } else {
+                false
+            }
+        });
+
         if let Some(f) = files {
-            // Check if boundary was already set in headers BEFORE reading files
-            let existing_ct = request.headers.get("content-type", None);
-            // Get data dict if provided
-            let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.downcast::<PyDict>().ok());
+            // Skip multipart if both files and data are empty, but set Content-Length: 0
+            if files_is_empty && data_is_empty {
+                request.content = Some(Vec::new());
+            } else {
+                // Check if boundary was already set in headers BEFORE reading files
+                let existing_ct = request.headers.get("content-type", None);
+                // Get data dict if provided
+                let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.downcast::<PyDict>().ok());
 
             let (body, content_type) = if let Some(ref ct) = existing_ct {
                 if ct.contains("boundary=") {
@@ -162,8 +183,9 @@ impl Request {
                 (body, format!("multipart/form-data; boundary={}", boundary))
             };
 
-            request.content = Some(body);
-            request.headers.set("Content-Type".to_string(), content_type);
+                request.content = Some(body);
+                request.headers.set("Content-Type".to_string(), content_type);
+            }
         } else if let Some(d) = data {
             // Handle form data (no files) or bytes with deprecation warning
             if let Ok(bytes) = d.extract::<Vec<u8>>() {

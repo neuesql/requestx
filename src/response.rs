@@ -243,13 +243,27 @@ impl Response {
 
     #[getter]
     fn text(&self) -> PyResult<String> {
-        // Try to get encoding from content-type header
+        // Get encoding from content-type header
         let encoding = self.get_encoding();
+        let encoding_lower = encoding.to_lowercase();
 
-        // For now, just use UTF-8 (proper encoding detection would need more work)
-        String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })
+        // Normalize encoding name (handle common aliases)
+        let normalized_encoding = match encoding_lower.as_str() {
+            "latin-1" | "latin1" => "iso-8859-1",
+            "cp1252" | "cp-1252" => "windows-1252",
+            other => other,
+        };
+
+        // Try to decode using the specified encoding
+        if let Some(enc) = encoding_rs::Encoding::for_label(normalized_encoding.as_bytes()) {
+            let (decoded, _, _had_errors) = enc.decode(&self.content);
+            Ok(decoded.into_owned())
+        } else {
+            // Unknown encoding, try UTF-8
+            String::from_utf8(self.content.clone()).map_err(|e| {
+                crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+            })
+        }
     }
 
     fn json(&self, py: Python<'_>) -> PyResult<PyObject> {
