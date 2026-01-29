@@ -339,7 +339,7 @@ impl From<Error> for PyErr {
             ErrorKind::PoolTimeout => PoolTimeout::new_err(err.message),
 
             // HTTP errors
-            ErrorKind::Status(code) => HTTPStatusError::new_err(format!("{} (status code: {})", err.message, code)),
+            ErrorKind::Status(_code) => HTTPStatusError::new_err(err.message),
             ErrorKind::Redirect => TooManyRedirects::new_err(err.message),
 
             // Data errors

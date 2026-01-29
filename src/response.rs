@@ -114,7 +114,9 @@ impl Response {
             Headers::default()
         };
 
-        // Determine content bytes
+        // Determine content bytes and whether to add Content-Type
+        // HTTPX behavior: Content-Type is added for text/html/json params but NOT for content param
+        let mut add_content_type: Option<&str> = None;
         let content_bytes: Vec<u8> = if let Some(c) = content {
             if let Ok(bytes) = c.extract::<Vec<u8>>() {
                 bytes
@@ -124,24 +126,43 @@ impl Response {
                 Vec::new()
             }
         } else if let Some(t) = text {
+            add_content_type = Some("text/plain; charset=utf-8");
             t.as_bytes().to_vec()
         } else if let Some(h) = html {
+            add_content_type = Some("text/html; charset=utf-8");
             h.as_bytes().to_vec()
         } else if let Some(j) = json {
-            // Serialize JSON
+            add_content_type = Some("application/json");
+            // Serialize JSON with compact separators (HTTPX compatibility)
             let json_mod = py.import("json")?;
-            let json_str: String = json_mod.call_method1("dumps", (j,))?.extract()?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("separators", (",", ":"))?;
+            let json_str: String = json_mod.call_method("dumps", (j,), Some(&kwargs))?.extract()?;
             json_str.into_bytes()
         } else {
             Vec::new()
         };
+
+        // Add Content-Length header if content is present (HTTPX compatibility)
+        let mut final_headers = response_headers;
+        if !content_bytes.is_empty() {
+            final_headers.inner.entry("content-length".to_string())
+                .or_insert_with(Vec::new)
+                .push(content_bytes.len().to_string());
+        }
+        // Add Content-Type header only for text/html/json params (HTTPX compatibility)
+        if let Some(ct) = add_content_type {
+            final_headers.inner.entry("content-type".to_string())
+                .or_insert_with(Vec::new)
+                .push(ct.to_string());
+        }
 
         // Get reason phrase
         let reason = get_reason_phrase(status_code);
 
         Ok(Self {
             status_code,
-            headers: response_headers,
+            headers: final_headers,
             content: content_bytes,
             url_str: String::new(),
             http_version: "HTTP/1.1".to_string(),
@@ -240,6 +261,12 @@ impl Response {
         self.is_stream_consumed
     }
 
+    /// Check if response is informational (1xx status)
+    #[getter]
+    pub fn is_informational(&self) -> bool {
+        (100..200).contains(&self.status_code)
+    }
+
     /// Check if request was successful (2xx status)
     #[getter]
     pub fn is_success(&self) -> bool {
@@ -297,12 +324,49 @@ impl Response {
     }
 
     /// Raise an exception if the response indicates an error
+    /// HTTPX behavior: raises for 1xx (informational), 3xx (redirect), 4xx (client error), 5xx (server error)
     pub fn raise_for_status(&self) -> PyResult<()> {
-        if self.is_error() {
-            Err(Error::status(self.status_code, format!("{} {} for url {}", self.status_code, self.reason_phrase, self.url_str)).into())
-        } else {
-            Ok(())
+        // HTTPX requires a request to be set
+        let request_url = match &self.request {
+            Some(req) => req.url_str(),
+            None => return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot call `raise_for_status` as the request instance has not been set on this response."
+            )),
+        };
+
+        // 2xx responses are success - don't raise
+        if self.is_success() {
+            return Ok(());
         }
+
+        let (error_type, redirect_location) = if self.is_informational() {
+            ("Informational response", None)
+        } else if self.is_redirect() {
+            ("Redirect response", self.headers.get_value("location"))
+        } else if self.is_client_error() {
+            ("Client error", None)
+        } else if self.is_server_error() {
+            ("Server error", None)
+        } else {
+            // Unknown status range
+            ("Error", None)
+        };
+
+        let mut message = format!(
+            "{} '{} {}' for url '{}'\n",
+            error_type, self.status_code, self.reason_phrase, request_url
+        );
+
+        if let Some(location) = redirect_location {
+            message.push_str(&format!("Redirect location: '{}'\n", location));
+        }
+
+        message.push_str(&format!(
+            "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
+            self.status_code
+        ));
+
+        Err(Error::status(self.status_code, message).into())
     }
 
     /// Read response content (compatibility method)
@@ -433,6 +497,19 @@ impl Response {
         self.request = Some(request);
     }
 
+    /// Check if encoding is valid
+    fn is_valid_encoding(encoding: &str) -> bool {
+        // List of common valid encodings
+        matches!(encoding.to_lowercase().as_str(),
+            "utf-8" | "utf8" | "utf-16" | "utf-16-be" | "utf-16-le" |
+            "utf-32" | "utf-32-be" | "utf-32-le" |
+            "ascii" | "us-ascii" | "iso-8859-1" | "latin-1" | "latin1" |
+            "iso-8859-2" | "iso-8859-15" | "windows-1252" | "cp1252" |
+            "shift_jis" | "shift-jis" | "euc-jp" | "euc-kr" | "gb2312" | "gbk" | "gb18030" |
+            "big5" | "koi8-r" | "koi8-u"
+        )
+    }
+
     /// Detect encoding from Content-Type header or content
     fn detect_encoding(&self) -> String {
         // First, check Content-Type header for charset
@@ -444,7 +521,12 @@ impl Response {
                     .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
                     .collect();
                 if !charset.is_empty() {
-                    return charset.to_lowercase();
+                    let charset_lower = charset.to_lowercase();
+                    // Only return the charset if it's a valid encoding
+                    if Self::is_valid_encoding(&charset_lower) {
+                        return charset_lower;
+                    }
+                    // Invalid charset, fall through to other detection methods
                 }
             }
         }

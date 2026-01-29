@@ -1849,6 +1849,9 @@ pub struct Request {
     /// Request URL
     url: URL,
 
+    /// Original URL string (preserved without normalization)
+    original_url: String,
+
     /// Request headers
     headers: Headers,
 
@@ -1865,10 +1868,12 @@ impl Request {
     #[new]
     #[pyo3(signature = (method, url, headers=None, content=None, stream=false))]
     pub fn new(method: &str, url: &Bound<'_, PyAny>, headers: Option<&Bound<'_, PyAny>>, content: Option<&Bound<'_, pyo3::types::PyBytes>>, stream: bool) -> PyResult<Self> {
-        let url = if let Ok(url_obj) = url.extract::<URL>() {
-            url_obj
+        let (url_obj, original_url) = if let Ok(url_obj) = url.extract::<URL>() {
+            let original = url_obj.as_str().to_string();
+            (url_obj, original)
         } else if let Ok(url_str) = url.extract::<String>() {
-            URL::new(&url_str)?
+            let url_obj = URL::new(&url_str)?;
+            (url_obj, url_str)
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err("url must be a string or URL object"));
         };
@@ -1883,7 +1888,8 @@ impl Request {
 
         Ok(Self {
             method: method.to_uppercase(),
-            url,
+            url: url_obj,
+            original_url,
             headers,
             content,
             stream,
@@ -1922,18 +1928,20 @@ impl Request {
 impl Request {
     /// Create a new Request with all fields
     pub fn new_internal(method: String, url: URL, headers: Headers, content: Option<Vec<u8>>, stream: bool) -> Self {
+        let original_url = url.as_str().to_string();
         Self {
             method,
             url,
+            original_url,
             headers,
             content,
             stream,
         }
     }
 
-    /// Get the URL as a string
+    /// Get the URL as a string (original URL without normalization)
     pub fn url_str(&self) -> &str {
-        self.url.as_str()
+        &self.original_url
     }
 
     /// Get the headers reference
