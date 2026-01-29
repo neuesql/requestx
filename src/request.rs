@@ -224,9 +224,11 @@ impl Request {
             request.headers.set("Content-Length".to_string(), content.len().to_string());
         }
 
-        // Set Host header
-        if let Some(host) = request.url.get_host() {
-            request.headers.set("Host".to_string(), host);
+        // Set Host header if not already provided
+        if !request.headers.contains("host") {
+            if let Some(host) = request.url.get_host() {
+                request.headers.set("Host".to_string(), host);
+            }
         }
 
         Ok(request)
