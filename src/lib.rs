@@ -32,6 +32,13 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::QueryParams>()?;
     m.add_class::<types::QueryParamsIterator>()?;
 
+    // Transport types (HTTPX compatibility)
+    m.add_class::<types::HTTPTransport>()?;
+    m.add_class::<types::AsyncHTTPTransport>()?;
+    m.add_class::<types::WSGITransport>()?;
+    m.add_class::<types::ASGITransport>()?;
+    m.add_class::<types::MockTransport>()?;
+
     // Streaming response types
     m.add_class::<streaming::StreamingResponse>()?;
     m.add_class::<streaming::AsyncStreamingResponse>()?;

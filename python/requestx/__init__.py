@@ -79,6 +79,9 @@ from requestx._core import (
     URL,
     Request,
     QueryParams,
+    # Transport types (Rust stubs for compatibility)
+    HTTPTransport,
+    AsyncHTTPTransport,
     # Exception classes - Base
     RequestError,
     # Transport errors
@@ -915,6 +918,9 @@ __all__ = [
     # Transport protocol classes (HTTPX compatibility)
     "BaseTransport",
     "AsyncBaseTransport",
+    # HTTP transports (from Rust)
+    "HTTPTransport",
+    "AsyncHTTPTransport",
     # Mock transports for testing
     "MockTransport",
     "AsyncMockTransport",

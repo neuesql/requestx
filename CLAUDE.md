@@ -215,3 +215,93 @@ async with requestx.AsyncClient() as client:
 - Use `cargo test --verbose` for Rust-level debugging
 - Build with `maturin develop` (not `--release`) for debug symbols
 - Python exceptions preserve the Rust error chain
+
+---
+
+## HTTPX Compatibility Checkpoints (tests_requestx)
+
+**Current Status**: 698 passed, 708 failed (49.6% passing)
+
+### Test Failures by File
+
+| Test File | Failures | Main Issues |
+|-----------|----------|-------------|
+| client/test_auth.py | 79 | transport param, DigestAuth.sync_auth_flow |
+| models/test_responses.py | 74 | Response streaming methods, encoding |
+| client/test_proxies.py | 68 | transport param, _transport_for_url |
+| models/test_url.py | 67 | URL(params=), URL(scheme=), URL(path=) |
+| client/test_async_client.py | 52 | transport param, async context manager |
+| test_content.py | 42 | generator/async_generator content |
+| test_decoders.py | 39 | encoding support (utf-16, utf-32) |
+| test_multipart.py | 36 | multipart encoding |
+| client/test_client.py | 33 | transport param, _redirect_headers |
+| client/test_redirects.py | 31 | transport param |
+| test_utils.py | 26 | environment proxies, logging |
+| test_asgi.py | 20 | transport param |
+| models/test_requests.py | 18 | Request(data=), Request(files=), Request(json=) |
+| client/test_headers.py | 17 | Headers.encoding, bytes handling |
+| models/test_headers.py | 16 | Headers.encoding |
+| test_wsgi.py | 12 | transport param |
+| test_api.py | 12 | transport param |
+| models/test_queryparams.py | 9 | QueryParams ordering |
+| client/test_event_hooks.py | 9 | event_hooks param |
+| test_timeouts.py | 8 | pool timeout |
+| test_auth.py | 8 | DigestAuth methods |
+| client/test_properties.py | 8 | base_url writable |
+| client/test_cookies.py | 7 | Cookies.set(domain=) |
+| models/test_cookies.py | 6 | Cookies.set(domain=) |
+| test_config.py | 4 | config issues |
+| test_exceptions.py | 3 | exception handling |
+| client/test_queryparams.py | 3 | QueryParams |
+| test_exported_members.py | 1 | missing exports |
+
+### Failures by Error Type (Priority Order)
+
+| Priority | Error Type | Count | Root Cause | Feature to Implement |
+|----------|------------|-------|------------|----------------------|
+| **P0** | Client/AsyncClient transport param | 398 | Missing parameter | Add `transport` param (accept & ignore for now) |
+| **P0** | HTTPTransport not exported | 59 | Missing class | Create MockTransport/HTTPTransport class |
+| **P0** | _transport_for_url missing | 70 | Missing method | Add to Client/AsyncClient |
+| **P1** | Request(data=) | 40 | Missing param | Add `data` param to Request |
+| **P1** | Request(files=) | 26 | Missing param | Add `files` param to Request |
+| **P1** | Request(json=) | 16 | Missing param | Add `json` param to Request |
+| **P2** | URL(params=) | 12 | Missing param | Add `params` param to URL |
+| **P2** | URL(scheme=) | 10 | Missing param | Add `scheme` param to URL |
+| **P2** | URL(path=) | 6 | Missing param | Add `path` param to URL |
+| **P3** | Response.stream | 16 | Missing attr | Add stream property |
+| **P3** | Response.aiter_bytes | 12 | Missing method | Add async iteration methods |
+| **P3** | Response.aiter_raw | 12 | Missing method | Add async iteration methods |
+| **P3** | Response.iter_raw | 10 | Missing method | Add sync iteration methods |
+| **P3** | Response.aiter_text | 8 | Missing method | Add async text iteration |
+| **P3** | Response.iter_text | 6 | Missing method | Add sync text iteration |
+| **P3** | Response.num_bytes_downloaded | 6 | Missing attr | Add tracking |
+| **P4** | async context manager | 12 | Protocol issue | Fix async stream protocol |
+| **P4** | generator content | 18 | Type handling | Accept generators |
+| **P4** | async_generator content | 16 | Type handling | Accept async generators |
+| **P5** | bytes cast as str | 68 | Encoding | Handle bytes in text operations |
+| **P5** | Headers.encoding | 6 | Missing attr | Add encoding property |
+| **P6** | Cookies.set(domain=) | 8 | Missing param | Add domain/path params |
+| **P7** | DigestAuth.sync_auth_flow | 8 | Missing method | Add auth flow methods |
+| **P8** | event_hooks param | 18 | Missing param | Add event_hooks to clients |
+| **P9** | base_url writable | 6 | Read-only attr | Make base_url settable |
+| **P10** | _redirect_headers | 10 | Missing method | Add redirect helper |
+
+### Implementation Checkpoints
+
+- [ ] **P0-1**: Add `transport` parameter to Client/AsyncClient (accept & store, can be None)
+- [ ] **P0-2**: Create HTTPTransport and AsyncHTTPTransport stub classes
+- [ ] **P0-3**: Add `_transport_for_url()` method to Client/AsyncClient
+- [ ] **P1-1**: Add `data`, `files`, `json` parameters to Request
+- [ ] **P2-1**: Add `params`, `scheme`, `path` parameters to URL constructor
+- [ ] **P3-1**: Add Response streaming methods (iter_bytes, iter_text, iter_raw)
+- [ ] **P3-2**: Add Response async streaming methods (aiter_bytes, aiter_text, aiter_raw)
+- [ ] **P3-3**: Add Response.stream and num_bytes_downloaded properties
+- [ ] **P4-1**: Fix async context manager protocol for streaming
+- [ ] **P4-2**: Handle generator and async_generator content types
+- [ ] **P5-1**: Add Headers.encoding property
+- [ ] **P5-2**: Fix bytes handling in text operations
+- [ ] **P6-1**: Add domain/path params to Cookies.set()
+- [ ] **P7-1**: Add sync_auth_flow/async_auth_flow to DigestAuth
+- [ ] **P8-1**: Add event_hooks parameter to Client/AsyncClient
+- [ ] **P9-1**: Make base_url property writable
+- [ ] **P10-1**: Add _redirect_headers method

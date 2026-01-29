@@ -328,6 +328,8 @@ pub struct Client {
     config: ClientConfig,
     /// Whether the client is closed
     closed: bool,
+    /// Transport (for HTTPX compatibility)
+    transport: Option<PyObject>,
 }
 
 #[pymethods]
@@ -347,8 +349,13 @@ impl Client {
         http2=false,
         limits=None,
         default_encoding=None,
-        trust_env=true
+        trust_env=true,
+        transport=None,
+        app=None,
+        event_hooks=None,
+        mounts=None
     ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_url: Option<String>,
         headers: Option<&Bound<'_, PyAny>>,
@@ -364,6 +371,10 @@ impl Client {
         limits: Option<&Bound<'_, PyAny>>,
         default_encoding: Option<String>,
         trust_env: bool,
+        transport: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] app: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] event_hooks: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] mounts: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let mut config = ClientConfig {
             base_url,
@@ -407,13 +418,21 @@ impl Client {
 
         let client = build_blocking_client(&config)?;
 
-        Ok(Self { client, config, closed: false })
+        let transport_obj = transport.map(|t| t.clone().unbind());
+
+        Ok(Self { client, config, closed: false, transport: transport_obj })
     }
 
     /// Whether the client is closed
     #[getter]
     pub fn is_closed(&self) -> bool {
         self.closed
+    }
+
+    /// Get the transport (HTTPX compatibility)
+    #[getter]
+    pub fn _transport(&self, py: Python<'_>) -> Option<PyObject> {
+        self.transport.as_ref().map(|t| t.clone_ref(py))
     }
 
     /// Get the client timeout configuration
@@ -1064,6 +1083,13 @@ impl Client {
     pub fn __repr__(&self) -> String {
         format!("<Client base_url={:?}>", self.config.base_url)
     }
+
+    /// Get the transport for a given URL (HTTPX compatibility)
+    /// Returns None since we use reqwest internally
+    #[pyo3(signature = (url))]
+    pub fn _transport_for_url(&self, #[allow(unused_variables)] url: &Bound<'_, PyAny>) -> Option<PyObject> {
+        None
+    }
 }
 
 impl Client {
@@ -1213,6 +1239,8 @@ pub struct AsyncClient {
     runtime: Arc<Runtime>,
     /// Whether the client is closed
     closed: Arc<std::sync::Mutex<bool>>,
+    /// Transport (for HTTPX compatibility)
+    transport: Option<PyObject>,
 }
 
 #[pymethods]
@@ -1232,8 +1260,13 @@ impl AsyncClient {
         http2=false,
         limits=None,
         default_encoding=None,
-        trust_env=true
+        trust_env=true,
+        transport=None,
+        app=None,
+        event_hooks=None,
+        mounts=None
     ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_url: Option<String>,
         headers: Option<&Bound<'_, PyAny>>,
@@ -1243,19 +1276,21 @@ impl AsyncClient {
         max_redirects: usize,
         verify: Option<&Bound<'_, PyAny>>,
         cert: Option<&Bound<'_, PyAny>>,
-        proxy: Option<Proxy>,
-        auth: Option<Auth>,
+        proxy: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
         http2: bool,
         limits: Option<&Bound<'_, PyAny>>,
         default_encoding: Option<String>,
         trust_env: bool,
+        transport: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] app: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] event_hooks: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] mounts: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let mut config = ClientConfig {
             base_url,
             follow_redirects,
             max_redirects,
-            proxy,
-            auth,
             http2,
             default_encoding,
             trust_env,
@@ -1285,15 +1320,23 @@ impl AsyncClient {
         if let Some(l) = limits {
             config.limits = extract_limits(l)?;
         }
+        if let Some(p) = proxy {
+            config.proxy = extract_proxy(p)?;
+        }
+        if let Some(a) = auth {
+            config.auth = extract_auth(a)?;
+        }
 
         let client = build_reqwest_client(&config)?;
         let runtime = Runtime::new().map_err(|e| Error::request(e.to_string()))?;
+        let transport_obj = transport.map(|t| t.clone().unbind());
 
         Ok(Self {
             client: Arc::new(client),
             config,
             runtime: Arc::new(runtime),
             closed: Arc::new(std::sync::Mutex::new(false)),
+            transport: transport_obj,
         })
     }
 
@@ -1301,6 +1344,12 @@ impl AsyncClient {
     #[getter]
     pub fn is_closed(&self) -> bool {
         *self.closed.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Get the transport (HTTPX compatibility)
+    #[getter]
+    pub fn _transport(&self, py: Python<'_>) -> Option<PyObject> {
+        self.transport.as_ref().map(|t| t.clone_ref(py))
     }
 
     /// Get the client timeout configuration
@@ -1943,6 +1992,13 @@ impl AsyncClient {
 
     pub fn __repr__(&self) -> String {
         format!("<AsyncClient base_url={:?}>", self.config.base_url)
+    }
+
+    /// Get the transport for a given URL (HTTPX compatibility)
+    /// Returns None since we use reqwest internally
+    #[pyo3(signature = (url))]
+    pub fn _transport_for_url(&self, #[allow(unused_variables)] url: &Bound<'_, PyAny>) -> Option<PyObject> {
+        None
     }
 }
 

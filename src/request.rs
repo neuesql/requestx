@@ -74,6 +74,10 @@ pub fn request(
         None,  // limits
         None,  // default_encoding
         true,  // trust_env
+        None,  // transport
+        None,  // app
+        None,  // event_hooks
+        None,  // mounts
     )?;
 
     client.request(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
@@ -342,6 +346,10 @@ pub fn stream(
         None,  // limits
         None,  // default_encoding
         true,  // trust_env
+        None,  // transport
+        None,  // app
+        None,  // event_hooks
+        None,  // mounts
     )?;
 
     client.stream(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
