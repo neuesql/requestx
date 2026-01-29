@@ -126,6 +126,29 @@ impl BasicAuth {
         }
     }
 
+    /// Get the Authorization header value for Basic auth
+    fn build_auth_header(&self) -> String {
+        let credentials = format!("{}:{}", self.username, self.password);
+        let encoded = base64_encode(credentials.as_bytes());
+        format!("Basic {}", encoded)
+    }
+
+    /// Sync auth flow - returns a generator that yields the authenticated request
+    fn sync_auth_flow(&self, request: crate::request::Request) -> BasicAuthFlow {
+        BasicAuthFlow {
+            auth_header: self.build_auth_header(),
+            request: Some(request),
+        }
+    }
+
+    /// Async auth flow - same as sync for Basic auth
+    fn async_auth_flow(&self, request: crate::request::Request) -> BasicAuthFlow {
+        BasicAuthFlow {
+            auth_header: self.build_auth_header(),
+            request: Some(request),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("BasicAuth(username={:?}, password=***)", self.username)
     }
@@ -133,6 +156,67 @@ impl BasicAuth {
     fn __eq__(&self, other: &BasicAuth) -> bool {
         self.username == other.username && self.password == other.password
     }
+}
+
+/// Generator for Basic auth flow
+#[pyclass]
+pub struct BasicAuthFlow {
+    auth_header: String,
+    request: Option<crate::request::Request>,
+}
+
+#[pymethods]
+impl BasicAuthFlow {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<crate::request::Request> {
+        if let Some(mut request) = self.request.take() {
+            request.headers_mut().set("Authorization".to_string(), self.auth_header.clone());
+            Some(request)
+        } else {
+            None
+        }
+    }
+
+    fn send(&mut self, _response: &Bound<'_, PyAny>) -> PyResult<crate::request::Request> {
+        // For Basic auth, we don't need to handle responses
+        // The request is already done - raise StopIteration
+        Err(pyo3::exceptions::PyStopIteration::new_err(()))
+    }
+}
+
+/// Simple base64 encoding for auth
+fn base64_encode(input: &[u8]) -> String {
+    use std::fmt::Write;
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut result = String::new();
+    let mut i = 0;
+    while i < input.len() {
+        let b0 = input[i];
+        let b1 = if i + 1 < input.len() { input[i + 1] } else { 0 };
+        let b2 = if i + 2 < input.len() { input[i + 2] } else { 0 };
+
+        result.push(ALPHABET[(b0 >> 2) as usize] as char);
+        result.push(ALPHABET[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+
+        if i + 1 < input.len() {
+            result.push(ALPHABET[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        if i + 2 < input.len() {
+            result.push(ALPHABET[(b2 & 0x3f) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        i += 3;
+    }
+    result
 }
 
 /// Digest authentication (placeholder)

@@ -41,6 +41,10 @@ impl Request {
         &self.headers
     }
 
+    pub fn headers_mut(&mut self) -> &mut Headers {
+        &mut self.headers
+    }
+
     pub fn content_bytes(&self) -> Option<&[u8]> {
         self.content.as_deref()
     }

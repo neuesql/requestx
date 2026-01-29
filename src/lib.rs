@@ -65,6 +65,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Auth types
     m.add_class::<BasicAuth>()?;
+    m.add_class::<BasicAuthFlow>()?;
     m.add_class::<DigestAuth>()?;
     m.add_class::<NetRCAuth>()?;
     m.add_class::<Auth>()?;
