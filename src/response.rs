@@ -316,7 +316,22 @@ impl Response {
 
     #[getter]
     fn encoding(&self) -> String {
-        self.get_encoding()
+        let encoding = self.get_encoding();
+        let encoding_lower = encoding.to_lowercase();
+
+        // Normalize encoding name (handle common aliases)
+        let normalized_encoding = match encoding_lower.as_str() {
+            "latin-1" | "latin1" => "iso-8859-1",
+            "cp1252" | "cp-1252" => "windows-1252",
+            other => other,
+        };
+
+        // Check if encoding is valid, return utf-8 as fallback for invalid encodings
+        if encoding_rs::Encoding::for_label(normalized_encoding.as_bytes()).is_some() {
+            encoding
+        } else {
+            "utf-8".to_string()
+        }
     }
 
     #[getter]
