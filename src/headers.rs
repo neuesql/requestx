@@ -79,14 +79,19 @@ impl Headers {
         self.inner.iter().any(|(k, _)| k.to_lowercase() == key_lower)
     }
 
-    /// Get a header value
+    /// Get a header value (concatenates multiple values with ", ")
     pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
         let key_lower = key.to_lowercase();
-        self.inner
+        let values: Vec<&str> = self.inner
             .iter()
-            .find(|(k, _)| k.to_lowercase() == key_lower)
-            .map(|(_, v)| v.clone())
-            .or_else(|| default.map(|s| s.to_string()))
+            .filter(|(k, _)| k.to_lowercase() == key_lower)
+            .map(|(_, v)| v.as_str())
+            .collect();
+        if values.is_empty() {
+            default.map(|s| s.to_string())
+        } else {
+            Some(values.join(", "))
+        }
     }
 }
 
@@ -149,11 +154,19 @@ impl Headers {
     }
 
     fn values(&self) -> Vec<String> {
-        self.inner.iter().map(|(_, v)| v.clone()).collect()
+        // Return concatenated values for unique keys
+        self.keys()
+            .iter()
+            .map(|k| self.get(k, None).unwrap_or_default())
+            .collect()
     }
 
     fn items(&self) -> Vec<(String, String)> {
-        self.inner.clone()
+        // Return unique keys with concatenated values
+        self.keys()
+            .iter()
+            .map(|k| (k.clone(), self.get(k, None).unwrap_or_default()))
+            .collect()
     }
 
     fn multi_items(&self) -> Vec<(String, String)> {
@@ -169,11 +182,7 @@ impl Headers {
     }
 
     fn __getitem__(&self, key: &str) -> PyResult<String> {
-        let key_lower = key.to_lowercase();
-        self.inner
-            .iter()
-            .find(|(k, _)| k.to_lowercase() == key_lower)
-            .map(|(_, v)| v.clone())
+        self.get(key, None)
             .ok_or_else(|| PyKeyError::new_err(key.to_string()))
     }
 
@@ -213,43 +222,83 @@ impl Headers {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_headers) = other.extract::<Headers>() {
-            // Compare as case-insensitive
-            let self_map: HashMap<String, String> = self
+            // Compare as case-insensitive multimap (sorted)
+            let mut self_items: Vec<(String, String)> = self
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            let other_map: HashMap<String, String> = other_headers
+            self_items.sort();
+            let mut other_items: Vec<(String, String)> = other_headers
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            Ok(self_map == other_map)
+            other_items.sort();
+            Ok(self_items == other_items)
+        } else if let Ok(list) = other.downcast::<PyList>() {
+            // Compare with list of tuples
+            let mut self_items: Vec<(String, String)> = self
+                .inner
+                .iter()
+                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                .collect();
+            self_items.sort();
+            let mut other_items: Vec<(String, String)> = Vec::new();
+            for item in list.iter() {
+                let tuple = item.downcast::<PyTuple>()?;
+                let k: String = tuple.get_item(0)?.extract()?;
+                let v: String = tuple.get_item(1)?.extract()?;
+                other_items.push((k.to_lowercase(), v));
+            }
+            other_items.sort();
+            Ok(self_items == other_items)
         } else if let Ok(dict) = other.downcast::<PyDict>() {
-            let self_map: HashMap<String, String> = self
+            // Compare with dict (unique keys, first value)
+            let mut self_items: Vec<(String, String)> = self
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            let mut other_map = HashMap::new();
+            self_items.sort();
+            let mut other_items: Vec<(String, String)> = Vec::new();
             for (k, v) in dict.iter() {
                 let key: String = k.extract()?;
                 let value: String = v.extract()?;
-                other_map.insert(key.to_lowercase(), value);
+                other_items.push((key.to_lowercase(), value));
             }
-            Ok(self_map == other_map)
+            other_items.sort();
+            Ok(self_items == other_items)
         } else {
             Ok(false)
         }
     }
 
     fn __repr__(&self) -> String {
-        let items: Vec<String> = self
+        // Check if there are duplicate keys
+        let unique_keys: std::collections::HashSet<String> = self
             .inner
             .iter()
-            .map(|(k, v)| format!("('{}', '{}')", k, v))
+            .map(|(k, _)| k.to_lowercase())
             .collect();
-        format!("Headers([{}])", items.join(", "))
+
+        if unique_keys.len() == self.inner.len() {
+            // No duplicates - use dict format
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .map(|(k, v)| format!("'{}': '{}'", k, v))
+                .collect();
+            format!("Headers({{{}}})", items.join(", "))
+        } else {
+            // Has duplicates - use list format
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .map(|(k, v)| format!("('{}', '{}')", k, v))
+                .collect();
+            format!("Headers([{}])", items.join(", "))
+        }
     }
 
     fn copy(&self) -> Self {
