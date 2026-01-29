@@ -17,12 +17,19 @@ const MAX_URL_LENGTH: usize = 65536;
 pub struct URL {
     inner: Url,
     fragment: String,
+    // Store original URL string to preserve exact format (e.g., no trailing slash normalization)
+    original: Option<String>,
 }
 
 impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment }
+        Self { inner: url, fragment, original: None }
+    }
+
+    pub fn from_url_with_original(url: Url, original: String) -> Self {
+        let fragment = url.fragment().unwrap_or("").to_string();
+        Self { inner: url, fragment, original: Some(original) }
     }
 
     pub fn inner(&self) -> &Url {
@@ -49,9 +56,13 @@ impl URL {
         }
     }
 
-    /// Convert to string
+    /// Convert to string - preserves original format if available
     pub fn to_string(&self) -> String {
-        self.inner.to_string()
+        if let Some(ref orig) = self.original {
+            orig.clone()
+        } else {
+            self.inner.to_string()
+        }
     }
 
     /// Get the host (public Rust API)
@@ -113,15 +124,21 @@ impl URL {
             match parsed {
                 Ok(mut parsed_url) => {
                     // Apply params if provided
-                    if let Some(params_obj) = params {
+                    let original_str = if let Some(params_obj) = params {
                         let query_params = QueryParams::from_py(params_obj)?;
                         parsed_url.set_query(Some(&query_params.to_query_string()));
-                    }
+                        // If params were added, use the normalized URL
+                        None
+                    } else {
+                        // Preserve original URL string
+                        Some(url_str.to_string())
+                    };
 
                     let frag = parsed_url.fragment().unwrap_or("").to_string();
                     return Ok(Self {
                         inner: parsed_url,
                         fragment: frag,
+                        original: original_str,
                     });
                 }
                 Err(e) => {
@@ -200,6 +217,7 @@ impl URL {
                 Ok(u) => Ok(Self {
                     inner: u,
                     fragment: frag,
+                    original: None,
                 }),
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
                     "Invalid URL: {}",
@@ -211,6 +229,7 @@ impl URL {
                 Ok(u) => Ok(Self {
                     inner: u,
                     fragment: frag,
+                    original: None,
                 }),
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
                     "Invalid URL: {}",
@@ -374,6 +393,8 @@ impl URL {
     #[pyo3(signature = (**kwargs))]
     fn copy_with(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let mut new_url = self.clone();
+        // Clear original since we're modifying the URL
+        new_url.original = None;
 
         if let Some(kw) = kwargs {
             for (key, value) in kw.iter() {
@@ -539,7 +560,13 @@ impl URL {
         if let Ok(other_url) = other.extract::<URL>() {
             Ok(self.inner.as_str() == other_url.inner.as_str())
         } else if let Ok(other_str) = other.extract::<String>() {
-            Ok(self.inner.as_str() == other_str)
+            // First try parsing the string as a URL to compare normalized forms
+            if let Ok(other_parsed) = Url::parse(&other_str) {
+                Ok(self.inner.as_str() == other_parsed.as_str())
+            } else {
+                // Fall back to direct string comparison
+                Ok(self.inner.as_str() == other_str)
+            }
         } else {
             Ok(false)
         }

@@ -4,16 +4,18 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 /// Synchronous byte stream base class
+/// Implements both sync (__iter__/__next__) and async (__aiter__/__anext__) iteration
 #[pyclass(name = "SyncByteStream", subclass)]
 #[derive(Clone, Debug, Default)]
 pub struct SyncByteStream {
     data: Vec<u8>,
+    position: usize,
 }
 
 impl SyncByteStream {
     /// Create a new SyncByteStream with the given data
     pub fn from_data(data: Vec<u8>) -> Self {
-        Self { data }
+        Self { data, position: 0 }
     }
 }
 
@@ -21,20 +23,47 @@ impl SyncByteStream {
 impl SyncByteStream {
     #[new]
     fn new() -> Self {
-        Self { data: Vec::new() }
+        Self { data: Vec::new(), position: 0 }
     }
 
+    // Sync iteration
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
     fn __next__(&mut self) -> Option<Vec<u8>> {
-        if self.data.is_empty() {
+        if self.position >= self.data.len() {
             None
         } else {
-            let data = std::mem::take(&mut self.data);
-            Some(data)
+            let chunk = self.data[self.position..].to_vec();
+            self.position = self.data.len();
+            Some(chunk)
         }
+    }
+
+    // Async iteration - uses coroutine to return awaitable
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Import asyncio and create a completed Future with the result
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+
+        if self.position >= self.data.len() {
+            // Signal StopAsyncIteration by setting exception on the future
+            let stop_async_iter = py.import("builtins")?.getattr("StopAsyncIteration")?.call0()?;
+            future.call_method1("set_exception", (stop_async_iter,))?;
+        } else {
+            let chunk = PyBytes::new(py, &self.data[self.position..]);
+            self.position = self.data.len();
+            future.call_method1("set_result", (chunk,))?;
+        }
+
+        Ok(future)
     }
 
     fn read(&self) -> Vec<u8> {
@@ -43,34 +72,7 @@ impl SyncByteStream {
 
     fn close(&mut self) {
         self.data.clear();
-    }
-}
-
-/// Asynchronous byte stream base class
-#[pyclass(name = "AsyncByteStream", subclass)]
-#[derive(Clone, Debug, Default)]
-pub struct AsyncByteStream {
-    data: Vec<u8>,
-}
-
-#[pymethods]
-impl AsyncByteStream {
-    #[new]
-    fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        if self.data.is_empty() {
-            Ok(None)
-        } else {
-            let data = std::mem::take(&mut self.data);
-            Ok(Some(PyBytes::new(py, &data)))
-        }
+        self.position = 0;
     }
 
     fn aread<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
@@ -79,6 +81,27 @@ impl AsyncByteStream {
 
     fn aclose(&mut self) {
         self.data.clear();
+        self.position = 0;
+    }
+}
+
+/// Asynchronous byte stream base class - subclass of SyncByteStream
+#[pyclass(name = "AsyncByteStream", extends = SyncByteStream, subclass)]
+#[derive(Clone, Debug, Default)]
+pub struct AsyncByteStream;
+
+impl AsyncByteStream {
+    /// Create an AsyncByteStream with data
+    pub fn from_data(data: Vec<u8>) -> (Self, SyncByteStream) {
+        (AsyncByteStream, SyncByteStream::from_data(data))
+    }
+}
+
+#[pymethods]
+impl AsyncByteStream {
+    #[new]
+    fn new() -> (Self, SyncByteStream) {
+        (AsyncByteStream, SyncByteStream::new())
     }
 }
 

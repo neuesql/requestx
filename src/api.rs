@@ -5,13 +5,26 @@ use pyo3::types::PyDict;
 
 use crate::client::Client;
 use crate::response::Response;
+use crate::url::URL;
+
+/// Convert URL parameter to string
+fn url_to_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = url.extract::<String>() {
+        return Ok(s);
+    }
+    if let Ok(url_obj) = url.extract::<URL>() {
+        return Ok(url_obj.to_string());
+    }
+    let s = url.str()?.to_string();
+    Ok(s)
+}
 
 /// Perform a GET request
 #[pyfunction]
 #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn get(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyAny>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
@@ -22,8 +35,9 @@ pub fn get(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "GET", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "GET", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a POST request
@@ -31,7 +45,7 @@ pub fn get(
 #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn post(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     content: Option<Vec<u8>>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
@@ -46,8 +60,9 @@ pub fn post(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "POST", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "POST", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a PUT request
@@ -55,7 +70,7 @@ pub fn post(
 #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn put(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     content: Option<Vec<u8>>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
@@ -70,8 +85,9 @@ pub fn put(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "PUT", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "PUT", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a PATCH request
@@ -79,7 +95,7 @@ pub fn put(
 #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn patch(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     content: Option<Vec<u8>>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
@@ -94,8 +110,9 @@ pub fn patch(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "PATCH", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "PATCH", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a DELETE request
@@ -103,7 +120,7 @@ pub fn patch(
 #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn delete(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyAny>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
@@ -114,8 +131,9 @@ pub fn delete(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "DELETE", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "DELETE", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a HEAD request
@@ -123,7 +141,7 @@ pub fn delete(
 #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn head(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyAny>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
@@ -134,8 +152,9 @@ pub fn head(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "HEAD", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "HEAD", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform an OPTIONS request
@@ -143,7 +162,7 @@ pub fn head(
 #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None, verify=None, cert=None, trust_env=None))]
 pub fn options(
     py: Python<'_>,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     params: Option<&Bound<'_, PyAny>>,
     headers: Option<&Bound<'_, PyAny>>,
     cookies: Option<&Bound<'_, PyAny>>,
@@ -154,8 +173,9 @@ pub fn options(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, "OPTIONS", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "OPTIONS", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform an HTTP request
@@ -164,7 +184,7 @@ pub fn options(
 pub fn request(
     py: Python<'_>,
     method: &str,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     content: Option<Vec<u8>>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
@@ -179,8 +199,9 @@ pub fn request(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, method, url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a streaming HTTP request
@@ -189,7 +210,7 @@ pub fn request(
 pub fn stream(
     py: Python<'_>,
     method: &str,
-    url: &str,
+    url: &Bound<'_, PyAny>,
     content: Option<Vec<u8>>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
@@ -204,6 +225,7 @@ pub fn stream(
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
+    let url_str = url_to_string(url)?;
     let client = Client::default();
-    client.execute_request(py, method, url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }

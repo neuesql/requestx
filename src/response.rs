@@ -361,17 +361,73 @@ impl Response {
     }
 
     fn raise_for_status(&self) -> PyResult<()> {
-        if self.is_error() {
+        // Require request to be set
+        if self.request.is_none() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot call raise_for_status without a request instance.",
+            ));
+        }
+
+        let url_str = self.request.as_ref()
+            .map(|r| r.url_ref().to_string())
+            .unwrap_or_default();
+
+        // 2xx Success - no error
+        if (200..300).contains(&self.status_code) {
+            return Ok(());
+        }
+
+        // 1xx Informational responses
+        if (100..200).contains(&self.status_code) {
             let message = format!(
-                "{} {} for url {}",
+                "Informational response '{} {}' for url '{}'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
                 self.status_code,
                 self.reason_phrase(),
-                self.url.as_ref().map(|u| u.to_string()).unwrap_or_default()
+                url_str,
+                self.status_code
             );
-            Err(crate::exceptions::HTTPStatusError::new_err(message))
-        } else {
-            Ok(())
+            return Err(crate::exceptions::HTTPStatusError::new_err(message));
         }
+
+        // 3xx Redirect responses
+        if (300..400).contains(&self.status_code) {
+            let location = self.headers.get("location", None).unwrap_or_default();
+            let message = format!(
+                "Redirect response '{} {}' for url '{}'\nRedirect location: '{}'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
+                self.status_code,
+                self.reason_phrase(),
+                url_str,
+                location,
+                self.status_code
+            );
+            return Err(crate::exceptions::HTTPStatusError::new_err(message));
+        }
+
+        // 4xx Client error
+        if (400..500).contains(&self.status_code) {
+            let message = format!(
+                "Client error '{} {}' for url '{}'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
+                self.status_code,
+                self.reason_phrase(),
+                url_str,
+                self.status_code
+            );
+            return Err(crate::exceptions::HTTPStatusError::new_err(message));
+        }
+
+        // 5xx Server error
+        if (500..600).contains(&self.status_code) {
+            let message = format!(
+                "Server error '{} {}' for url '{}'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
+                self.status_code,
+                self.reason_phrase(),
+                url_str,
+                self.status_code
+            );
+            return Err(crate::exceptions::HTTPStatusError::new_err(message));
+        }
+
+        Ok(())
     }
 
     fn read(&mut self) -> Vec<u8> {

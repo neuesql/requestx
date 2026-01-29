@@ -165,13 +165,23 @@ impl Request {
             request.content = Some(body);
             request.headers.set("Content-Type".to_string(), content_type);
         } else if let Some(d) = data {
-            // Handle form data (no files)
-            if let Ok(dict) = d.downcast::<PyDict>() {
+            // Handle form data (no files) or bytes with deprecation warning
+            if let Ok(bytes) = d.extract::<Vec<u8>>() {
+                // Emit deprecation warning for using data= with bytes
+                let warnings = _py.import("warnings")?;
+                warnings.call_method1(
+                    "warn",
+                    (
+                        "Use 'content=<...>' to upload raw bytes/text content.",
+                        _py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                    ),
+                )?;
+                request.content = Some(bytes);
+            } else if let Ok(dict) = d.downcast::<PyDict>() {
                 let mut form_data = Vec::new();
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
-                    let v: String = value.extract()?;
-                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                    encode_form_value(&mut form_data, &k, &value)?;
                 }
                 request.content = Some(form_data.join("&").into_bytes());
                 if !request.headers.contains("content-type") {
@@ -183,7 +193,7 @@ impl Request {
             }
         }
 
-        // Set Content-Length header
+        // Set Content-Length header only when content is provided
         if let Some(ref content) = request.content {
             request.headers.set("Content-Length".to_string(), content.len().to_string());
         }
@@ -220,11 +230,11 @@ impl Request {
     }
 
     #[getter]
-    fn stream(&self) -> SyncByteStream {
-        match &self.content {
-            Some(data) => SyncByteStream::from_data(data.clone()),
-            None => SyncByteStream::from_data(Vec::new()),
-        }
+    fn stream(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let data = self.content.clone().unwrap_or_default();
+        let (async_stream, sync_stream) = crate::types::AsyncByteStream::from_data(data);
+        let obj = Py::new(py, (async_stream, sync_stream))?;
+        Ok(obj.into_any())
     }
 
     #[getter]
@@ -237,7 +247,7 @@ impl Request {
     }
 
     fn __repr__(&self) -> String {
-        format!("<Request({:?}, {:?})>", self.method, self.url.to_string())
+        format!("<Request('{}', '{}')>", self.method, self.url.to_string())
     }
 
     fn __eq__(&self, other: &Request) -> bool {
@@ -301,4 +311,64 @@ fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
     Err(pyo3::exceptions::PyTypeError::new_err(
         "Unsupported type for JSON serialization",
     ))
+}
+
+/// Encode a form value (handles bool, None, list, string, int)
+fn encode_form_value(form_data: &mut Vec<String>, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString, PyTuple};
+
+    // Handle None
+    if value.is_none() {
+        form_data.push(format!("{}=", urlencoding::encode(key)));
+        return Ok(());
+    }
+
+    // Handle bool (must check before int since bool is a subclass of int)
+    if let Ok(b) = value.downcast::<PyBool>() {
+        let val_str = if b.is_true() { "true" } else { "false" };
+        form_data.push(format!("{}={}", urlencoding::encode(key), val_str));
+        return Ok(());
+    }
+
+    // Handle int
+    if let Ok(i) = value.downcast::<PyInt>() {
+        let val: i64 = i.extract()?;
+        form_data.push(format!("{}={}", urlencoding::encode(key), val));
+        return Ok(());
+    }
+
+    // Handle float
+    if let Ok(f) = value.downcast::<PyFloat>() {
+        let val: f64 = f.extract()?;
+        form_data.push(format!("{}={}", urlencoding::encode(key), val));
+        return Ok(());
+    }
+
+    // Handle string
+    if let Ok(s) = value.downcast::<PyString>() {
+        let val: String = s.extract()?;
+        form_data.push(format!("{}={}", urlencoding::encode(key), urlencoding::encode(&val)));
+        return Ok(());
+    }
+
+    // Handle list (each item becomes a separate key=value pair)
+    if let Ok(list) = value.downcast::<PyList>() {
+        for item in list.iter() {
+            encode_form_value(form_data, key, &item)?;
+        }
+        return Ok(());
+    }
+
+    // Handle tuple
+    if let Ok(tuple) = value.downcast::<PyTuple>() {
+        for item in tuple.iter() {
+            encode_form_value(form_data, key, &item)?;
+        }
+        return Ok(());
+    }
+
+    // Fallback: try to convert to string
+    let s = value.str()?.to_string();
+    form_data.push(format!("{}={}", urlencoding::encode(key), urlencoding::encode(&s)));
+    Ok(())
 }
