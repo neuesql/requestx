@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 /// HTTP Response wrapper
 #[pyclass(name = "Response")]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Response {
     /// HTTP status code
     #[pyo3(get)]
@@ -44,6 +44,9 @@ pub struct Response {
     /// Encoding (detected or specified)
     encoding: Option<String>,
 
+    /// Default encoding (used when charset not in Content-Type)
+    default_encoding: Option<String>,
+
     /// Reason phrase
     #[pyo3(get)]
     pub reason_phrase: String,
@@ -56,6 +59,34 @@ pub struct Response {
 
     /// Whether the stream has been consumed
     is_stream_consumed: bool,
+
+    /// Whether text has been accessed (locks encoding)
+    text_accessed: std::sync::atomic::AtomicBool,
+}
+
+impl Clone for Response {
+    fn clone(&self) -> Self {
+        Self {
+            status_code: self.status_code,
+            headers: self.headers.clone(),
+            content: self.content.clone(),
+            url_str: self.url_str.clone(),
+            http_version: self.http_version.clone(),
+            cookies: self.cookies.clone(),
+            elapsed: self.elapsed,
+            request_method: self.request_method.clone(),
+            history: self.history.clone(),
+            encoding: self.encoding.clone(),
+            default_encoding: self.default_encoding.clone(),
+            reason_phrase: self.reason_phrase.clone(),
+            request: self.request.clone(),
+            is_closed: self.is_closed,
+            is_stream_consumed: self.is_stream_consumed,
+            text_accessed: std::sync::atomic::AtomicBool::new(
+                self.text_accessed.load(std::sync::atomic::Ordering::Relaxed)
+            ),
+        }
+    }
 }
 
 #[pymethods]
@@ -71,7 +102,8 @@ impl Response {
         json=None,
         stream=None,
         request=None,
-        extensions=None
+        extensions=None,
+        default_encoding=None
     ))]
     pub fn py_new(
         py: Python<'_>,
@@ -84,6 +116,7 @@ impl Response {
         #[allow(unused)] stream: Option<&Bound<'_, PyAny>>,
         request: Option<Request>,
         #[allow(unused)] extensions: Option<&Bound<'_, PyDict>>,
+        default_encoding: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         // Parse headers
         let response_headers = if let Some(h) = headers {
@@ -160,6 +193,25 @@ impl Response {
         // Get reason phrase
         let reason = get_reason_phrase(status_code);
 
+        // Process default_encoding - can be a string or callable
+        let default_enc = if let Some(de) = default_encoding {
+            if let Ok(s) = de.extract::<String>() {
+                Some(s)
+            } else if de.is_callable() {
+                // Call the function with content bytes
+                let content_bytes_py = pyo3::types::PyBytes::new(py, &content_bytes);
+                if let Ok(result) = de.call1((content_bytes_py,)) {
+                    result.extract::<Option<String>>().ok().flatten()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             status_code,
             headers: final_headers,
@@ -171,10 +223,12 @@ impl Response {
             request_method: "GET".to_string(),
             history: Vec::new(),
             encoding: None,
+            default_encoding: default_enc,
             reason_phrase: reason,
             request,
             is_closed: true,
             is_stream_consumed: true,
+            text_accessed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -199,7 +253,10 @@ impl Response {
     /// Get response text (decoded content)
     #[getter]
     pub fn text(&self) -> PyResult<String> {
-        let encoding = self.detect_encoding();
+        // Mark text as accessed (locks encoding changes)
+        self.text_accessed.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Use explicit encoding if set, otherwise detect
+        let encoding = self.encoding.clone().unwrap_or_else(|| self.detect_encoding());
         self.decode_content(&encoding)
             .map_err(|e| Error::decode(e.to_string()).into())
     }
@@ -212,10 +269,22 @@ impl Response {
             .or_else(|| Some(self.detect_encoding()))
     }
 
+    /// Get charset encoding from Content-Type header (without validation)
+    #[getter]
+    pub fn charset_encoding(&self) -> Option<String> {
+        self.extract_charset_from_content_type()
+    }
+
     /// Set encoding
     #[setter]
-    pub fn set_encoding(&mut self, encoding: Option<String>) {
+    pub fn set_encoding(&mut self, encoding: Option<String>) -> PyResult<()> {
+        if self.text_accessed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot set encoding after accessing text"
+            ));
+        }
         self.encoding = encoding;
+        Ok(())
     }
 
     /// Parse response as JSON
@@ -465,10 +534,12 @@ impl Response {
             request_method,
             history: Vec::new(),
             encoding: None,
+            default_encoding: None,
             reason_phrase,
             request: None,
             is_closed: true,          // For non-streaming responses, body is already read
             is_stream_consumed: true, // Body is already consumed
+            text_accessed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -510,9 +581,8 @@ impl Response {
         )
     }
 
-    /// Detect encoding from Content-Type header or content
-    fn detect_encoding(&self) -> String {
-        // First, check Content-Type header for charset
+    /// Extract charset from Content-Type header without validation
+    fn extract_charset_from_content_type(&self) -> Option<String> {
         if let Some(content_type) = self.headers.get_value("content-type") {
             if let Some(charset_pos) = content_type.to_lowercase().find("charset=") {
                 let charset_start = charset_pos + 8;
@@ -521,14 +591,27 @@ impl Response {
                     .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
                     .collect();
                 if !charset.is_empty() {
-                    let charset_lower = charset.to_lowercase();
-                    // Only return the charset if it's a valid encoding
-                    if Self::is_valid_encoding(&charset_lower) {
-                        return charset_lower;
-                    }
-                    // Invalid charset, fall through to other detection methods
+                    return Some(charset.to_lowercase());
                 }
             }
+        }
+        None
+    }
+
+    /// Detect encoding from Content-Type header or content
+    fn detect_encoding(&self) -> String {
+        // First, check Content-Type header for charset
+        if let Some(charset) = self.extract_charset_from_content_type() {
+            // Only return the charset if it's a valid encoding
+            if Self::is_valid_encoding(&charset) {
+                return charset;
+            }
+            // Invalid charset, fall through to other detection methods
+        }
+
+        // Use default_encoding if provided
+        if let Some(ref default_enc) = self.default_encoding {
+            return default_enc.clone();
         }
 
         // Check for BOM
@@ -552,11 +635,31 @@ impl Response {
             "utf-8" | "utf8" => String::from_utf8(self.content.clone()).or_else(|_| Ok(String::from_utf8_lossy(&self.content).to_string())),
             "ascii" | "us-ascii" => Ok(self.content.iter().map(|&b| b as char).collect()),
             "iso-8859-1" | "latin-1" | "latin1" => Ok(self.content.iter().map(|&b| b as char).collect()),
+            "windows-1252" | "cp1252" => Ok(self.decode_cp1252()),
             _ => {
                 // Fall back to UTF-8 with lossy conversion
                 Ok(String::from_utf8_lossy(&self.content).to_string())
             }
         }
+    }
+
+    /// Decode Windows-1252 (cp1252) content
+    fn decode_cp1252(&self) -> String {
+        // Windows-1252 to Unicode mapping for 0x80-0x9F range
+        const CP1252_MAP: [char; 32] = [
+            '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}',
+            '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}', '\u{017D}', '\u{008F}',
+            '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}',
+            '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
+        ];
+
+        self.content.iter().map(|&b| {
+            if b >= 0x80 && b <= 0x9F {
+                CP1252_MAP[(b - 0x80) as usize]
+            } else {
+                b as char
+            }
+        }).collect()
     }
 
     /// Create response from reqwest response (async)
