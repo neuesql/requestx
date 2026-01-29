@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 
 mod api;
 mod async_client;
+mod auth;
 mod client;
 mod cookies;
 mod exceptions;
@@ -14,18 +15,21 @@ mod queryparams;
 mod request;
 mod response;
 mod timeout;
+mod transport;
 mod types;
 mod url;
 
 use async_client::AsyncClient;
+use auth::{Auth, FunctionAuth};
 use client::Client;
 use cookies::Cookies;
 use exceptions::*;
 use headers::Headers;
 use queryparams::QueryParams;
 use request::Request;
-use response::Response;
+use response::{Response, BytesIterator, TextIterator, LinesIterator};
 use timeout::{Limits, Timeout};
+use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport};
 use types::*;
 use url::URL;
 
@@ -53,10 +57,23 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SyncByteStream>()?;
     m.add_class::<AsyncByteStream>()?;
 
+    // Iterator types
+    m.add_class::<BytesIterator>()?;
+    m.add_class::<TextIterator>()?;
+    m.add_class::<LinesIterator>()?;
+
     // Auth types
     m.add_class::<BasicAuth>()?;
     m.add_class::<DigestAuth>()?;
     m.add_class::<NetRCAuth>()?;
+    m.add_class::<Auth>()?;
+    m.add_class::<FunctionAuth>()?;
+
+    // Transport types
+    m.add_class::<MockTransport>()?;
+    m.add_class::<AsyncMockTransport>()?;
+    m.add_class::<HTTPTransport>()?;
+    m.add_class::<AsyncHTTPTransport>()?;
 
     // Top-level functions
     m.add_function(wrap_pyfunction!(api::get, m)?)?;

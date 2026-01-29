@@ -26,6 +26,13 @@ from ._core import (
     BasicAuth,
     DigestAuth,
     NetRCAuth,
+    Auth,
+    FunctionAuth,
+    # Transport types
+    MockTransport,
+    AsyncMockTransport,
+    HTTPTransport,
+    AsyncHTTPTransport,
     # Top-level functions
     get,
     post,
@@ -68,6 +75,9 @@ from ._core import (
     codes,
 )
 
+# Import _utils module for utility functions
+from . import _utils
+
 __all__ = [
     # Version info
     "__description__",
@@ -76,6 +86,9 @@ __all__ = [
     # Core types
     "AsyncByteStream",
     "AsyncClient",
+    "AsyncHTTPTransport",
+    "AsyncMockTransport",
+    "Auth",
     "BasicAuth",
     "Client",
     "CloseError",
@@ -86,14 +99,17 @@ __all__ = [
     "DecodingError",
     "delete",
     "DigestAuth",
+    "FunctionAuth",
     "get",
     "head",
     "Headers",
     "HTTPError",
     "HTTPStatusError",
+    "HTTPTransport",
     "InvalidURL",
     "Limits",
     "LocalProtocolError",
+    "MockTransport",
     "NetRCAuth",
     "NetworkError",
     "options",
@@ -126,4 +142,5 @@ __all__ = [
     "URL",
     "WriteError",
     "WriteTimeout",
+    "_utils",
 ]

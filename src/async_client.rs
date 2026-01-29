@@ -1,8 +1,9 @@
 //! Asynchronous HTTP Client implementation
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 use pyo3_async_runtimes::tokio::future_into_py;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cookies::Cookies;
@@ -14,6 +15,13 @@ use crate::timeout::Timeout;
 use crate::types::BasicAuth;
 use crate::url::URL;
 
+/// Event hooks storage
+#[derive(Default)]
+struct EventHooks {
+    request: Vec<Py<PyAny>>,
+    response: Vec<Py<PyAny>>,
+}
+
 /// Asynchronous HTTP Client
 #[pyclass(name = "AsyncClient")]
 pub struct AsyncClient {
@@ -24,6 +32,9 @@ pub struct AsyncClient {
     timeout: Timeout,
     follow_redirects: bool,
     max_redirects: usize,
+    event_hooks: EventHooks,
+    trust_env: bool,
+    mounts: HashMap<String, Py<PyAny>>,
 }
 
 impl Default for AsyncClient {
@@ -73,6 +84,9 @@ impl AsyncClient {
             timeout,
             follow_redirects,
             max_redirects,
+            event_hooks: EventHooks::default(),
+            trust_env: true,
+            mounts: HashMap::new(),
         })
     }
 
@@ -89,7 +103,7 @@ impl AsyncClient {
 #[pymethods]
 impl AsyncClient {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, **_kwargs))]
     fn new(
         auth: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -98,6 +112,8 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<&str>,
+        event_hooks: Option<&Bound<'_, PyDict>>,
+        trust_env: Option<bool>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -154,7 +170,7 @@ impl AsyncClient {
             None
         };
 
-        Self::new_impl(
+        let mut client = Self::new_impl(
             auth_tuple,
             headers_obj,
             cookies_obj,
@@ -162,7 +178,32 @@ impl AsyncClient {
             follow_redirects,
             max_redirects,
             base_url_obj,
-        )
+        )?;
+
+        // Set trust_env
+        if let Some(trust) = trust_env {
+            client.trust_env = trust;
+        }
+
+        // Parse event_hooks dict if provided
+        if let Some(hooks_dict) = event_hooks {
+            if let Some(request_hooks) = hooks_dict.get_item("request")? {
+                if let Ok(list) = request_hooks.downcast::<PyList>() {
+                    for item in list.iter() {
+                        client.event_hooks.request.push(item.unbind());
+                    }
+                }
+            }
+            if let Some(response_hooks) = hooks_dict.get_item("response")? {
+                if let Ok(list) = response_hooks.downcast::<PyList>() {
+                    for item in list.iter() {
+                        client.event_hooks.response.push(item.unbind());
+                    }
+                }
+            }
+        }
+
+        Ok(client)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
@@ -326,6 +367,58 @@ impl AsyncClient {
         future_into_py(py, async move {
             Ok(false)
         })
+    }
+
+    /// Get event_hooks as a dict
+    #[getter]
+    fn event_hooks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+
+        let request_list = PyList::new(py, self.event_hooks.request.iter().map(|h| h.bind(py)))?;
+        let response_list = PyList::new(py, self.event_hooks.response.iter().map(|h| h.bind(py)))?;
+
+        dict.set_item("request", request_list)?;
+        dict.set_item("response", response_list)?;
+
+        Ok(dict)
+    }
+
+    /// Set event_hooks from a dict
+    #[setter]
+    fn set_event_hooks(&mut self, hooks: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.event_hooks = EventHooks::default();
+
+        if let Some(request_hooks) = hooks.get_item("request")? {
+            if let Ok(list) = request_hooks.downcast::<PyList>() {
+                for item in list.iter() {
+                    self.event_hooks.request.push(item.unbind());
+                }
+            }
+        }
+        if let Some(response_hooks) = hooks.get_item("response")? {
+            if let Ok(list) = response_hooks.downcast::<PyList>() {
+                for item in list.iter() {
+                    self.event_hooks.response.push(item.unbind());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[getter]
+    fn trust_env(&self) -> bool {
+        self.trust_env
+    }
+
+    #[setter]
+    fn set_trust_env(&mut self, value: bool) {
+        self.trust_env = value;
+    }
+
+    /// Mount a transport for a given URL pattern
+    fn mount(&mut self, pattern: &str, transport: Py<PyAny>) {
+        self.mounts.insert(pattern.to_string(), transport);
     }
 
     fn __repr__(&self) -> String {
