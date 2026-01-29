@@ -86,29 +86,268 @@ Implement in Rust (`src/lib.rs` or modular structure):
 - [ ] Top-level functions: `get()`, `post()`, `put()`, `patch()`, `delete()`, `head()`, `options()`, `request()`
 - [ ] Exception hierarchy matching httpx
 
-### Phase 3: PyO3 Performance Considerations
-```rust
-// Use these patterns for performance:
+### Phase 3: PyO3 Performance Rules
 
-// 1. Release GIL during blocking I/O
-fn sync_request(py: Python<'_>, ...) -> PyResult<Response> {
-    py.allow_threads(|| {
-        // reqwest blocking call here
-    })
-}
+> **Golden Rule**: The fastest Python code is code that doesn't call Python
 
-// 2. For async, use pyo3-asyncio or manual future handling
-#[pyo3(signature = (...))]
-fn async_request<'py>(py: Python<'py>, ...) -> PyResult<Bound<'py, PyAny>> {
-    pyo3_asyncio::tokio::future_into_py(py, async move {
-        // reqwest async call here
-    })
-}
-
-// 3. Efficient type conversions - avoid unnecessary copies
-// 4. Use Cow<str> where possible
-// 5. Implement __repr__, __str__, __eq__ for Python compatibility
+#### Performance Hierarchy (Slow to Fast)
 ```
+Python interpreted execution
+    ↓ 10-100x faster
+PyO3 calling Python code
+    ↓ 5-10x faster
+PyO3 + frequent Python ↔ Rust conversion
+    ↓ 2-3x faster
+PyO3 + one-time conversion + Rust processing
+    ↓ 1.5-2x faster
+Pure Rust + zero-copy optimization
+```
+
+#### Priority Rules (Must Follow)
+
+| Priority | Rule | Impact |
+|----------|------|--------|
+| ⭐⭐⭐⭐⭐ | Use Rust native libraries (serde_json, not Python json) | 10-50x |
+| ⭐⭐⭐⭐⭐ | Minimize Python ↔ Rust boundary crossings | 5-10x |
+| ⭐⭐⭐⭐ | Convert data ONCE at function boundaries | 2-5x |
+| ⭐⭐⭐⭐ | Release GIL for I/O and CPU-intensive operations | 2-10x |
+| ⭐⭐⭐ | Pre-allocate containers with `Vec::with_capacity()` | 10-30% |
+| ⭐⭐⭐ | Return references (`&str`) instead of clones (`String`) | 5-15% |
+| ⭐⭐ | Use batch operations instead of individual ones | 5-10% |
+
+---
+
+## PyO3 Best Practices
+
+### 1. Type Conversion Rules
+
+**ALWAYS use strong type signatures:**
+```rust
+// ✅ Good: Compile-time type checking
+#[pyfunction]
+fn process(url: &str, data: Vec<i64>) -> PyResult<String> { ... }
+
+// ❌ Bad: Runtime type checking overhead
+#[pyfunction]
+fn process(url: &Bound<'_, PyAny>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> { ... }
+```
+
+**ALWAYS convert at boundaries, not in loops:**
+```rust
+// ✅ Good: Convert once at function boundary
+#[pyfunction]
+fn analyze_data(data: Vec<f64>) -> Vec<f64> {
+    data.iter().map(|x| x * 2.0).filter(|x| *x > 0.0).collect()
+}
+
+// ❌ Bad: Convert every iteration
+#[pyfunction]
+fn analyze_data_bad(py: Python, data: &PyList) -> PyResult<Py<PyList>> {
+    let result = PyList::empty_bound(py);
+    for item in data.iter() {
+        let val: f64 = item.extract()?;  // ❌ Convert every iteration
+        result.append((val * 2.0).into_py(py))?;  // ❌ Convert back
+    }
+    Ok(result.unbind())
+}
+```
+
+### 2. GIL Management Rules
+
+**Release GIL for:**
+- File I/O operations
+- Network requests (reqwest calls)
+- CPU-intensive computation (>1ms)
+- Database queries
+
+**Do NOT release GIL for:**
+- Simple operations (<1ms)
+- Operations requiring Python object access
+
+```rust
+// ✅ Correct pattern: Extract first, then release GIL
+#[pyfunction]
+fn process(py: Python, data: &PyList) -> PyResult<Vec<i64>> {
+    // Step 1: Extract data while holding GIL
+    let rust_data: Vec<i64> = data.extract()?;
+
+    // Step 2: Release GIL for computation
+    let result = py.allow_threads(|| {
+        rust_data.iter().map(|x| x * 2).collect()
+    });
+
+    Ok(result)
+}
+```
+
+**GIL Decision Tree:**
+```
+Should I release GIL?
+├─ Operation < 1ms? → No (overhead > benefit)
+├─ Need Python objects? → No (requires GIL)
+├─ I/O operation? → Yes ✓
+├─ CPU-intensive? → Yes ✓
+└─ Parallel processing? → Yes ✓
+```
+
+### 3. Memory Management Rules
+
+**Use zero-copy returns:**
+```rust
+// ✅ Good: Zero-copy with PyBytes
+#[getter]
+fn content(&self, py: Python) -> Bound<'_, PyBytes> {
+    PyBytes::new_bound(py, &self.content)
+}
+
+// ❌ Bad: Unnecessary copy
+#[getter]
+fn content(&self) -> Vec<u8> {
+    self.content.clone()
+}
+```
+
+**Return references instead of clones:**
+```rust
+// ✅ Good: Return reference
+#[getter]
+fn url(&self) -> &str { &self.url }
+
+// ❌ Bad: Clone every access
+#[getter]
+fn url(&self) -> String { self.url.clone() }
+```
+
+**Pre-allocate when capacity is known:**
+```rust
+// ✅ Good
+let mut headers = Vec::with_capacity(response.headers().len());
+
+// ❌ Bad: Multiple reallocations
+let mut headers = Vec::new();
+```
+
+### 4. JSON Processing Rules
+
+**ALWAYS use serde_json, NEVER Python json module:**
+```rust
+// ✅ Good: 10-50x faster
+let json_str = serde_json::to_string(&value)?;
+
+// ❌ Bad: Calls Python
+let json_mod = PyModule::import(py, "json")?;
+json_mod.getattr("dumps")?.call1((data,))?;
+```
+
+| JSON Size | Python json | serde_json | Speedup |
+|-----------|-------------|------------|---------|
+| < 1KB | 0.05ms | 0.005ms | **10x** |
+| 10KB | 0.5ms | 0.03ms | **16x** |
+| 100KB | 5ms | 0.1ms | **50x** |
+
+### 5. Error Handling Rules
+
+**Use `?` operator with proper error types:**
+```rust
+// ✅ Good: Clean and informative
+#[pyfunction]
+fn read_file(path: &str) -> PyResult<String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| PyIOError::new_err(format!("Cannot read {}: {}", path, e)))
+}
+
+// ❌ Bad: Silent failure
+fn bad(path: &str) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+// ❌ Bad: Crashes Python
+fn bad_panic(value: i64) -> i64 {
+    if value < 0 { panic!("Negative!"); }
+    value
+}
+```
+
+### 6. Async Programming Rules
+
+```rust
+// ✅ Async HTTP request pattern
+#[pyfunction]
+fn async_fetch(py: Python, url: String) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_asyncio::tokio::future_into_py(py, async move {
+        let response = reqwest::get(&url).await
+            .map_err(|e| PyException::new_err(format!("{}", e)))?;
+        let text = response.text().await
+            .map_err(|e| PyException::new_err(format!("{}", e)))?;
+        Ok(Python::with_gil(|py| text.into_py(py)))
+    })
+}
+```
+
+| Scenario | Use | Reason |
+|----------|-----|--------|
+| I/O intensive | Async ✓ | High concurrency, low overhead |
+| CPU intensive | Threading + GIL release | True parallelism |
+| Mixed | Async + spawn_blocking | Flexible |
+| Simple tasks | Sync | Avoid complexity |
+
+### 7. Python Protocol Implementation
+
+**Implement these for Python compatibility:**
+- `__repr__` - Developer string representation
+- `__str__` - User-friendly string
+- `__eq__` - Equality comparison
+- `__hash__` - For use in sets/dicts
+- `__len__` - For sized objects
+- `__iter__` / `__next__` - For iterables
+- `__enter__` / `__exit__` - For context managers
+
+### 8. Free-Threaded Python (PyO3 0.28+)
+
+For Python 3.14+ without GIL:
+```rust
+// Use Python::attach() instead of with_gil()
+#[pyfunction]
+fn operation(path: &str) -> PyResult<String> {
+    Python::attach(|py| {
+        // Thread is now attached to Python runtime
+        std::fs::read_to_string(path)
+            .map_err(|e| PyIOError::new_err(format!("{}", e)))
+    })
+}
+
+// Use Mutex for thread-safe shared state (replaces GILProtected)
+static COUNTER: Mutex<usize> = Mutex::new(0);
+```
+
+---
+
+## Type Conversion Quick Reference
+
+| Rust Type | Python Type | Notes |
+|-----------|-------------|-------|
+| `i64`, `u64` | `int` | Integer |
+| `f64` | `float` | Float |
+| `bool` | `bool` | Boolean |
+| `String`, `&str` | `str` | String |
+| `Vec<T>` | `list` | List |
+| `HashMap<K, V>` | `dict` | Dictionary |
+| `Option<T>` | `T` or `None` | Optional |
+| `PyResult<T>` | `T` or raises | May fail |
+| `Vec<u8>`, `&[u8]` | `bytes` | Binary data |
+
+---
+
+## Anti-Patterns to Avoid
+
+1. **Overusing `PyAny`** - Loses type safety, high runtime overhead
+2. **Converting in loops** - Extract once, process in Rust
+3. **Calling Python libraries from Rust** - Use Rust equivalents
+4. **Swallowing errors** - Always return `PyResult`
+5. **Using `panic!`** - Crashes Python process
+6. **Nested `with_gil`** - May cause deadlock
+7. **Cloning when references work** - Wasteful memory usage
+8. **Forgetting to release GIL** - Blocks other Python threads
 
 ## Testing Strategy
 
