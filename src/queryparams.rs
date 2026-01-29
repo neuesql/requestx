@@ -93,6 +93,8 @@ impl QueryParams {
 
     pub fn merge(&mut self, other: &QueryParams) {
         for (k, v) in &other.inner {
+            // Remove existing keys first, then add
+            self.inner.retain(|(existing_k, _)| existing_k != k);
             self.inner.push((k.clone(), v.clone()));
         }
     }
@@ -228,6 +230,39 @@ impl QueryParams {
             v.hash(&mut hasher);
         }
         hasher.finish()
+    }
+
+    /// Return a new QueryParams with the key set to value (replacing any existing)
+    #[pyo3(name = "set")]
+    fn py_set(&self, key: &str, value: &str) -> Self {
+        let mut new_qp = self.clone();
+        new_qp.set(key, value);
+        new_qp
+    }
+
+    /// Return a new QueryParams with an additional key-value pair (allowing duplicates)
+    #[pyo3(name = "add")]
+    fn py_add(&self, key: &str, value: &str) -> Self {
+        let mut new_qp = self.clone();
+        new_qp.add(key, value);
+        new_qp
+    }
+
+    /// Return a new QueryParams with all values for the given key removed
+    #[pyo3(name = "remove")]
+    fn py_remove(&self, key: &str) -> Self {
+        let mut new_qp = self.clone();
+        new_qp.remove(key);
+        new_qp
+    }
+
+    /// Return a new QueryParams with additional params merged
+    #[pyo3(name = "merge")]
+    fn py_merge(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let mut new_qp = self.clone();
+        let other_qp = Self::from_py(other)?;
+        new_qp.merge(&other_qp);
+        Ok(new_qp)
     }
 }
 
