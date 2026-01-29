@@ -6,6 +6,7 @@ use pyo3::types::{PyBytes, PyDict};
 use crate::cookies::Cookies;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
+use crate::types::SyncByteStream;
 use crate::url::URL;
 
 /// HTTP Request object
@@ -219,8 +220,11 @@ impl Request {
     }
 
     #[getter]
-    fn stream(&self, py: Python<'_>) -> PyObject {
-        py.None()
+    fn stream(&self) -> SyncByteStream {
+        match &self.content {
+            Some(data) => SyncByteStream::from_data(data.clone()),
+            None => SyncByteStream::from_data(Vec::new()),
+        }
     }
 
     #[getter]

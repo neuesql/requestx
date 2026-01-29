@@ -10,6 +10,13 @@ pub struct SyncByteStream {
     data: Vec<u8>,
 }
 
+impl SyncByteStream {
+    /// Create a new SyncByteStream with the given data
+    pub fn from_data(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+}
+
 #[pymethods]
 impl SyncByteStream {
     #[new]
