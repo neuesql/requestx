@@ -356,7 +356,7 @@ impl WSGITransport {
         environ.set_item("wsgi.multiprocess", true)?;
         environ.set_item("wsgi.run_once", false)?;
 
-        // Add headers to environ (using the Rust headers_ref method)
+        // Add headers to environ
         for (key, value) in headers.iter_pairs() {
             // Convert header name to WSGI format
             let key_upper = key.to_uppercase().replace('-', "_");

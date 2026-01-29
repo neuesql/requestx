@@ -2,6 +2,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use std::time::Duration;
 
 use crate::cookies::Cookies;
 use crate::headers::Headers;
@@ -22,6 +23,7 @@ pub struct Response {
     is_closed: bool,
     is_stream_consumed: bool,
     default_encoding: String,
+    elapsed: Duration,
 }
 
 impl Response {
@@ -37,7 +39,13 @@ impl Response {
             is_closed: false,
             is_stream_consumed: false,
             default_encoding: "utf-8".to_string(),
+            elapsed: Duration::ZERO,
         }
+    }
+
+    /// Set the elapsed time (public Rust API)
+    pub fn set_elapsed(&mut self, elapsed: Duration) {
+        self.elapsed = elapsed;
     }
 
     /// Set the request that generated this response (public Rust API)
@@ -69,6 +77,7 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            elapsed: Duration::ZERO,
         })
     }
 
@@ -96,6 +105,7 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            elapsed: Duration::ZERO,
         })
     }
 }
@@ -360,48 +370,172 @@ impl Response {
         std::collections::HashMap::new()
     }
 
-    fn raise_for_status(&self) -> PyResult<()> {
-        if self.is_error() {
-            let message = format!(
-                "{} {} for url {}",
-                self.status_code,
-                self.reason_phrase(),
-                self.url.as_ref().map(|u| u.to_string()).unwrap_or_default()
-            );
-            Err(crate::exceptions::HTTPStatusError::new_err(message))
-        } else {
-            Ok(())
-        }
+    #[getter]
+    fn elapsed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Import datetime.timedelta and create an instance
+        let datetime = py.import("datetime")?;
+        let timedelta = datetime.getattr("timedelta")?;
+
+        // Convert Duration to seconds as float
+        let total_secs = self.elapsed.as_secs_f64();
+
+        // Create timedelta(seconds=total_secs)
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("seconds", total_secs)?;
+        timedelta.call((), Some(&kwargs))
     }
 
-    fn read(&mut self) -> Vec<u8> {
+    fn raise_for_status(&self) -> PyResult<()> {
+        // Must have a request associated
+        if self.request.is_none() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot call `raise_for_status` as the request instance has not been set on this response."
+            ));
+        }
+
+        // Only 2xx status codes are considered successful
+        if self.is_success() {
+            return Ok(());
+        }
+
+        // Get URL from response or from request if available
+        let url_str = self.url.as_ref()
+            .map(|u| u.to_string())
+            .or_else(|| self.request.as_ref().map(|r| r.url_ref().to_string()))
+            .unwrap_or_default();
+
+        let message_prefix = if self.is_informational() {
+            "Informational response"
+        } else if self.is_redirect() {
+            "Redirect response"
+        } else if self.is_client_error() {
+            "Client error"
+        } else if self.is_server_error() {
+            "Server error"
+        } else {
+            "Error"
+        };
+
+        // Build the error message
+        let mut message = format!(
+            "{} '{} {}' for url '{}'",
+            message_prefix,
+            self.status_code,
+            self.reason_phrase(),
+            url_str
+        );
+
+        // Add redirect location for redirect responses
+        if self.is_redirect() {
+            if let Some(location) = self.headers.get("location", None) {
+                message.push_str(&format!("\nRedirect location: '{}'", location));
+            }
+        }
+
+        message.push_str(&format!(
+            "\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
+            self.status_code
+        ));
+
+        Err(crate::exceptions::HTTPStatusError::new_err(message))
+    }
+
+    fn read(&mut self) -> PyResult<Vec<u8>> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            // Already consumed but still have content - return it
+        }
         self.is_stream_consumed = true;
-        self.content.clone()
+        Ok(self.content.clone())
     }
 
     fn close(&mut self) {
         self.is_closed = true;
     }
 
-    fn iter_bytes(&self) -> BytesIterator {
-        BytesIterator {
+    #[pyo3(signature = (chunk_size=None))]
+    fn iter_raw(&mut self, chunk_size: Option<usize>) -> PyResult<RawIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        self.is_stream_consumed = true;
+        Ok(RawIterator {
             content: self.content.clone(),
             position: 0,
-            chunk_size: 4096,
-        }
-    }
-
-    fn iter_text(&self) -> PyResult<TextIterator> {
-        let text = self.text()?;
-        Ok(TextIterator {
-            text,
-            position: 0,
-            chunk_size: 4096,
+            chunk_size: chunk_size.unwrap_or(65536),
         })
     }
 
-    fn iter_lines(&self) -> PyResult<LinesIterator> {
-        let text = self.text()?;
+    #[pyo3(signature = (chunk_size=None))]
+    fn iter_bytes(&mut self, chunk_size: Option<usize>) -> PyResult<BytesIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        self.is_stream_consumed = true;
+        Ok(BytesIterator {
+            content: self.content.clone(),
+            position: 0,
+            chunk_size: chunk_size.unwrap_or(65536),
+        })
+    }
+
+    #[pyo3(signature = (chunk_size=None))]
+    fn iter_text(&mut self, chunk_size: Option<usize>) -> PyResult<TextIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        let text = String::from_utf8(self.content.clone()).map_err(|e| {
+            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+        })?;
+        self.is_stream_consumed = true;
+        Ok(TextIterator {
+            text,
+            position: 0,
+            chunk_size: chunk_size.unwrap_or(65536),
+        })
+    }
+
+    fn iter_lines(&mut self) -> PyResult<LinesIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        let text = String::from_utf8(self.content.clone()).map_err(|e| {
+            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+        })?;
+        self.is_stream_consumed = true;
+
         // Handle all line endings: \r\n, \n, or \r
         let mut lines = Vec::new();
         let mut current_line = String::new();
@@ -432,6 +566,132 @@ impl Response {
             lines,
             position: 0,
         })
+    }
+
+    // Async methods
+    fn aread<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        self.is_stream_consumed = true;
+        let content = self.content.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(content) })
+    }
+
+    #[pyo3(signature = (chunk_size=None))]
+    fn aiter_raw(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncRawIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        self.is_stream_consumed = true;
+        Ok(AsyncRawIterator {
+            content: self.content.clone(),
+            position: 0,
+            chunk_size: chunk_size.unwrap_or(65536),
+        })
+    }
+
+    #[pyo3(signature = (chunk_size=None))]
+    fn aiter_bytes(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncBytesIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        self.is_stream_consumed = true;
+        Ok(AsyncBytesIterator {
+            content: self.content.clone(),
+            position: 0,
+            chunk_size: chunk_size.unwrap_or(65536),
+        })
+    }
+
+    #[pyo3(signature = (chunk_size=None))]
+    fn aiter_text(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncTextIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        let text = String::from_utf8(self.content.clone()).map_err(|e| {
+            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+        })?;
+        self.is_stream_consumed = true;
+        Ok(AsyncTextIterator {
+            text,
+            position: 0,
+            chunk_size: chunk_size.unwrap_or(65536),
+        })
+    }
+
+    fn aiter_lines(&mut self) -> PyResult<AsyncLinesIterator> {
+        if self.is_closed {
+            return Err(crate::exceptions::StreamClosed::new_err(
+                "Attempted to read from a closed response.",
+            ));
+        }
+        if self.is_stream_consumed {
+            return Err(crate::exceptions::StreamConsumed::new_err(
+                "Attempted to read from an already consumed stream.",
+            ));
+        }
+        let text = String::from_utf8(self.content.clone()).map_err(|e| {
+            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+        })?;
+        self.is_stream_consumed = true;
+
+        // Handle all line endings: \r\n, \n, or \r
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\r' {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                lines.push(current_line);
+                current_line = String::new();
+            } else if c == '\n' {
+                lines.push(current_line);
+                current_line = String::new();
+            } else {
+                current_line.push(c);
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        Ok(AsyncLinesIterator {
+            lines,
+            position: 0,
+        })
+    }
+
+    fn aclose<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.is_closed = true;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
 
     fn __repr__(&self) -> String {

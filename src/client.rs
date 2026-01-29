@@ -35,6 +35,7 @@ pub struct Client {
     trust_env: bool,
     mounts: HashMap<String, Py<PyAny>>,
     transport: Option<Py<PyAny>>,
+    is_closed: bool,
 }
 
 impl Default for Client {
@@ -88,6 +89,7 @@ impl Client {
             trust_env: true,
             mounts: HashMap::new(),
             transport: None,
+            is_closed: false,
         })
     }
 
@@ -131,6 +133,13 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
+        // Check if client is closed
+        if self.is_closed {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot send a request, as the client has been closed.",
+            ));
+        }
+
         let resolved_url = self.resolve_url(url)?;
 
         // Build URL with params
@@ -335,12 +344,16 @@ impl Client {
         // Create request object for response
         let request = Request::new(method.as_str(), URL::parse(&final_url)?);
 
-        // Execute request (release GIL during I/O)
+        // Execute request (release GIL during I/O) and measure elapsed time
+        let start = std::time::Instant::now();
         let response = py.allow_threads(|| {
             builder.send()
         }).map_err(convert_reqwest_error)?;
+        let elapsed = start.elapsed();
 
-        Response::from_reqwest(response, Some(request))
+        let mut resp = Response::from_reqwest(response, Some(request))?;
+        resp.set_elapsed(elapsed);
+        Ok(resp)
     }
 }
 
@@ -623,28 +636,81 @@ impl Client {
     }
 
     fn send(&self, py: Python<'_>, request: &Request) -> PyResult<Response> {
-        self.execute_request(
-            py,
-            request.method(),
-            &request.url_ref().to_string(),
-            request.content_bytes().map(|b| b.to_vec()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        // Check if client is closed
+        if self.is_closed {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot send a request, as the client has been closed.",
+            ));
+        }
+
+        let url_str = request.url_ref().to_string();
+
+        // If a custom transport is set, use it
+        if let Some(ref transport) = self.transport {
+            let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
+            let mut response = response.extract::<Response>(py)?;
+            response.set_request_attr(Some(request.clone()));
+            return Ok(response);
+        }
+
+        // Standard HTTP request path
+        let method = reqwest::Method::from_bytes(request.method().as_bytes()).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", request.method()))
+        })?;
+
+        let mut builder = self.inner.request(method.clone(), &url_str);
+
+        // Add default client headers first
+        for (k, v) in self.headers.inner() {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+
+        // Add request-specific headers (these override client headers)
+        let request_headers = request.headers_ref();
+        for (k, v) in request_headers.inner() {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+
+        // Add cookies from client
+        let cookie_header = self.cookies.to_header_value();
+        if !cookie_header.is_empty() {
+            builder = builder.header("cookie", cookie_header);
+        }
+
+        // Add body
+        if let Some(content) = request.content_bytes() {
+            builder = builder.body(content.to_vec());
+        } else {
+            // For methods that can have a body (POST, PUT, PATCH), set Content-Length: 0
+            // if no body is provided and Content-Length is not already set
+            let method_upper = request.method().to_uppercase();
+            if (method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH")
+                && !request_headers.contains("content-length")
+            {
+                builder = builder.header("content-length", "0");
+            }
+        }
+
+        // Create request object for response
+        let request_for_response = request.clone();
+
+        // Execute request (release GIL during I/O) and measure elapsed time
+        let start = std::time::Instant::now();
+        let response = py.allow_threads(|| {
+            builder.send()
+        }).map_err(convert_reqwest_error)?;
+        let elapsed = start.elapsed();
+
+        let mut resp = Response::from_reqwest(response, Some(request_for_response))?;
+        resp.set_elapsed(elapsed);
+        Ok(resp)
     }
 
     #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None))]
     fn build_request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -653,7 +719,8 @@ impl Client {
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Request> {
-        let resolved_url = self.resolve_url(url)?;
+        let url_str = Self::url_to_string(url)?;
+        let resolved_url = self.resolve_url(&url_str)?;
         let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
         let mut request = Request::new(method, parsed_url);
 
@@ -676,8 +743,13 @@ impl Client {
         Ok(request)
     }
 
-    fn close(&self) {
-        // Client doesn't need explicit close in reqwest
+    fn close(&mut self) {
+        self.is_closed = true;
+    }
+
+    #[getter]
+    fn is_closed(&self) -> bool {
+        self.is_closed
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -685,7 +757,7 @@ impl Client {
     }
 
     fn __exit__(
-        &self,
+        &mut self,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_val: Option<&Bound<'_, PyAny>>,
         _exc_tb: Option<&Bound<'_, PyAny>>,
@@ -744,6 +816,84 @@ impl Client {
     /// Mount a transport for a given URL pattern
     fn mount(&mut self, pattern: &str, transport: Py<PyAny>) {
         self.mounts.insert(pattern.to_string(), transport);
+    }
+
+    #[getter]
+    fn base_url(&self) -> Option<URL> {
+        self.base_url.clone()
+    }
+
+    #[setter]
+    fn set_base_url(&mut self, url: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.base_url = if let Some(u) = url {
+            if let Ok(url_str) = u.extract::<String>() {
+                Some(URL::parse(&url_str)?)
+            } else if let Ok(url_obj) = u.extract::<URL>() {
+                Some(url_obj)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(())
+    }
+
+    #[getter]
+    fn headers(&self) -> Headers {
+        self.headers.clone()
+    }
+
+    #[setter]
+    fn set_headers(&mut self, headers: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(headers_obj) = headers.extract::<Headers>() {
+            self.headers = headers_obj;
+        } else if let Ok(dict) = headers.downcast::<PyDict>() {
+            let mut hdr = Headers::new();
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                hdr.set(k, v);
+            }
+            self.headers = hdr;
+        }
+        Ok(())
+    }
+
+    #[getter]
+    fn cookies(&self) -> Cookies {
+        self.cookies.clone()
+    }
+
+    #[setter]
+    fn set_cookies(&mut self, cookies: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(cookies_obj) = cookies.extract::<Cookies>() {
+            self.cookies = cookies_obj;
+        } else if let Ok(dict) = cookies.downcast::<PyDict>() {
+            let mut c = Cookies::new();
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                c.set(&k, &v);
+            }
+            self.cookies = c;
+        }
+        Ok(())
+    }
+
+    #[getter]
+    fn timeout(&self) -> Timeout {
+        self.timeout.clone()
+    }
+
+    #[setter]
+    fn set_timeout(&mut self, timeout: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(timeout_obj) = timeout.extract::<Timeout>() {
+            self.timeout = timeout_obj;
+        } else if let Ok(secs) = timeout.extract::<f64>() {
+            self.timeout = Timeout::new(Some(secs), None, None, None, None);
+        }
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

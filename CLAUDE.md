@@ -1,8 +1,13 @@
-# RequestX
+# CLAUDE.md
 
-High-performance Python HTTP client, API-compatible with httpx, powered by Rust's reqwest via PyO3.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+RequestX is a high-performance Python HTTP client, API-compatible with httpx, powered by Rust's reqwest via PyO3.
 
 ## Quick Commands
+
 ```bash
 # Build (always use release for accurate perf testing)
 maturin develop --release
@@ -22,6 +27,7 @@ ruff check python/ && ruff format python/
 ```
 
 ## Project Structure
+
 ```
 src/                      # Rust implementation (ALL business logic here)
 python/requestx/
@@ -32,6 +38,7 @@ tests_requestx/           # Target tests (must all pass)
 ```
 
 ## Core Dependencies (Cargo.toml)
+
 ```toml
 [dependencies]
 pyo3 = { version = "0.27", features = ["extension-module"] }
@@ -135,6 +142,7 @@ Must implement all public APIs from [httpx](https://github.com/encode/httpx/tree
 Check `httpx/__init__.py` for the complete public API surface. Goal: `import requestx as httpx` works as drop-in replacement.
 
 ## Success Criteria
+
 ```bash
 pytest tests_requestx/ -v  # ALL PASSED
 ```

@@ -41,6 +41,10 @@ impl Request {
         &self.headers
     }
 
+    pub fn headers_mut(&mut self) -> &mut Headers {
+        &mut self.headers
+    }
+
     pub fn content_bytes(&self) -> Option<&[u8]> {
         self.content.as_deref()
     }
@@ -59,7 +63,7 @@ impl Request {
     #[new]
     #[pyo3(signature = (method, url, *, params=None, headers=None, cookies=None, content=None, data=None, files=None, json=None, stream=None, extensions=None))]
     fn py_new(
-        _py: Python<'_>,
+        py: Python<'_>,
         method: &str,
         url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
@@ -143,22 +147,22 @@ impl Request {
                     // Extract boundary from existing header and use it
                     let boundary_str = extract_boundary_from_content_type(ct);
                     if let Some(b) = boundary_str {
-                        let (body, _) = build_multipart_body_with_boundary(_py, data_dict, Some(f), &b)?;
+                        let (body, _) = build_multipart_body_with_boundary(py, data_dict, Some(f), &b)?;
                         (body, ct.clone())
                     } else {
                         // Invalid boundary format, use auto-generated
-                        let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                        let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                         (body, format!("multipart/form-data; boundary={}", boundary))
                     }
                 } else {
                     // Content-Type set but no boundary
-                    let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                    let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                     // Keep the existing content-type
                     (body, ct.clone())
                 }
             } else {
                 // No Content-Type set, use auto-generated boundary
-                let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                 (body, format!("multipart/form-data; boundary={}", boundary))
             };
 
@@ -209,6 +213,22 @@ impl Request {
     #[getter]
     fn headers(&self) -> Headers {
         self.headers.clone()
+    }
+
+    #[setter(headers)]
+    fn set_py_headers(&mut self, headers: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(headers_obj) = headers.extract::<Headers>() {
+            self.headers = headers_obj;
+        } else if let Ok(dict) = headers.downcast::<PyDict>() {
+            let mut hdr = Headers::new();
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                hdr.set(k, v);
+            }
+            self.headers = hdr;
+        }
+        Ok(())
     }
 
     #[getter]

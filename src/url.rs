@@ -51,7 +51,15 @@ impl URL {
 
     /// Convert to string
     pub fn to_string(&self) -> String {
-        self.inner.to_string()
+        let s = self.inner.to_string();
+        // Strip trailing slash when the path is just "/" and there's no query or fragment
+        // This normalizes "https://example.org/" to "https://example.org"
+        if self.inner.path() == "/" && self.inner.query().is_none() && self.inner.fragment().is_none() {
+            if let Some(stripped) = s.strip_suffix('/') {
+                return stripped.to_string();
+            }
+        }
+        s
     }
 
     /// Get the host (public Rust API)
@@ -532,14 +540,15 @@ impl URL {
     }
 
     fn __repr__(&self) -> String {
-        format!("URL('{}')", self.inner)
+        format!("URL('{}')", self.to_string())
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let self_str = self.to_string();
         if let Ok(other_url) = other.extract::<URL>() {
-            Ok(self.inner.as_str() == other_url.inner.as_str())
+            Ok(self_str == other_url.to_string())
         } else if let Ok(other_str) = other.extract::<String>() {
-            Ok(self.inner.as_str() == other_str)
+            Ok(self_str == other_str)
         } else {
             Ok(false)
         }
@@ -549,7 +558,7 @@ impl URL {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        self.inner.as_str().hash(&mut hasher);
+        self.to_string().hash(&mut hasher);
         hasher.finish()
     }
 }

@@ -66,11 +66,21 @@ impl Headers {
         self.inner.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
-    /// Set a header value (removes existing headers with same key)
+    /// Set a header value (removes existing headers with same key, retains position)
     pub fn set(&mut self, key: String, value: String) {
         let key_lower = key.to_lowercase();
+        // Find the position of the first existing header with the same key
+        let first_pos = self.inner.iter().position(|(k, _)| k.to_lowercase() == key_lower);
+
+        // Remove all existing headers with same key
         self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
-        self.inner.push((key, value));
+
+        // Insert at original position if existed, otherwise append
+        if let Some(pos) = first_pos {
+            self.inner.insert(pos, (key, value));
+        } else {
+            self.inner.push((key, value));
+        }
     }
 
     /// Check if a header exists
@@ -121,7 +131,17 @@ impl Headers {
 
     #[pyo3(name = "get", signature = (key, default=None))]
     fn py_get(&self, key: &str, default: Option<&str>) -> Option<String> {
-        self.get(key, default)
+        let key_lower = key.to_lowercase();
+        let values: Vec<&str> = self.inner
+            .iter()
+            .filter(|(k, _)| k.to_lowercase() == key_lower)
+            .map(|(_, v)| v.as_str())
+            .collect();
+        if values.is_empty() {
+            default.map(|s| s.to_string())
+        } else {
+            Some(values.join(", "))
+        }
     }
 
     fn get_list(&self, key: &str) -> Vec<String> {
@@ -149,11 +169,41 @@ impl Headers {
     }
 
     fn values(&self) -> Vec<String> {
-        self.inner.iter().map(|(_, v)| v.clone()).collect()
+        // Return comma-joined values for duplicate keys, in order of first appearance
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for (k, _) in &self.inner {
+            let lower = k.to_lowercase();
+            if seen.insert(lower.clone()) {
+                // First time seeing this key, collect all values
+                let values: Vec<&str> = self.inner
+                    .iter()
+                    .filter(|(k2, _)| k2.to_lowercase() == lower)
+                    .map(|(_, v)| v.as_str())
+                    .collect();
+                result.push(values.join(", "));
+            }
+        }
+        result
     }
 
     fn items(&self) -> Vec<(String, String)> {
-        self.inner.clone()
+        // Return items with comma-joined values for duplicate keys
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for (k, _) in &self.inner {
+            let lower = k.to_lowercase();
+            if seen.insert(lower.clone()) {
+                // First time seeing this key, collect all values
+                let values: Vec<&str> = self.inner
+                    .iter()
+                    .filter(|(k2, _)| k2.to_lowercase() == lower)
+                    .map(|(_, v)| v.as_str())
+                    .collect();
+                result.push((k.clone(), values.join(", ")));
+            }
+        }
+        result
     }
 
     fn multi_items(&self) -> Vec<(String, String)> {
@@ -170,18 +220,32 @@ impl Headers {
 
     fn __getitem__(&self, key: &str) -> PyResult<String> {
         let key_lower = key.to_lowercase();
-        self.inner
+        let values: Vec<&str> = self.inner
             .iter()
-            .find(|(k, _)| k.to_lowercase() == key_lower)
-            .map(|(_, v)| v.clone())
-            .ok_or_else(|| PyKeyError::new_err(key.to_string()))
+            .filter(|(k, _)| k.to_lowercase() == key_lower)
+            .map(|(_, v)| v.as_str())
+            .collect();
+        if values.is_empty() {
+            Err(PyKeyError::new_err(key.to_string()))
+        } else {
+            Ok(values.join(", "))
+        }
     }
 
     fn __setitem__(&mut self, key: String, value: String) {
         let key_lower = key.to_lowercase();
-        // Remove existing headers with same key
+        // Find the position of the first existing header with the same key
+        let first_pos = self.inner.iter().position(|(k, _)| k.to_lowercase() == key_lower);
+
+        // Remove all existing headers with same key
         self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
-        self.inner.push((key, value));
+
+        // Insert at original position if existed, otherwise append
+        if let Some(pos) = first_pos {
+            self.inner.insert(pos, (key, value));
+        } else {
+            self.inner.push((key, value));
+        }
     }
 
     fn __delitem__(&mut self, key: &str) -> PyResult<()> {
@@ -213,43 +277,86 @@ impl Headers {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_headers) = other.extract::<Headers>() {
-            // Compare as case-insensitive
-            let self_map: HashMap<String, String> = self
+            // Compare multi_items with case-insensitive keys
+            let mut self_items: Vec<(String, String)> = self
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            let other_map: HashMap<String, String> = other_headers
+            let mut other_items: Vec<(String, String)> = other_headers
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            Ok(self_map == other_map)
+            self_items.sort();
+            other_items.sort();
+            Ok(self_items == other_items)
+        } else if let Ok(list) = other.downcast::<PyList>() {
+            // Compare with list of tuples (case-insensitive keys)
+            let mut self_items: Vec<(String, String)> = self
+                .inner
+                .iter()
+                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                .collect();
+            let mut other_items: Vec<(String, String)> = Vec::new();
+            for item in list.iter() {
+                let tuple = item.downcast::<PyTuple>()?;
+                let k: String = tuple.get_item(0)?.extract()?;
+                let v: String = tuple.get_item(1)?.extract()?;
+                other_items.push((k.to_lowercase(), v));
+            }
+            self_items.sort();
+            other_items.sort();
+            Ok(self_items == other_items)
         } else if let Ok(dict) = other.downcast::<PyDict>() {
-            let self_map: HashMap<String, String> = self
+            // Compare with dict (case-insensitive keys, combine values)
+            let mut self_items: Vec<(String, String)> = self
                 .inner
                 .iter()
                 .map(|(k, v)| (k.to_lowercase(), v.clone()))
                 .collect();
-            let mut other_map = HashMap::new();
+            let mut other_items: Vec<(String, String)> = Vec::new();
             for (k, v) in dict.iter() {
                 let key: String = k.extract()?;
                 let value: String = v.extract()?;
-                other_map.insert(key.to_lowercase(), value);
+                other_items.push((key.to_lowercase(), value));
             }
-            Ok(self_map == other_map)
+            self_items.sort();
+            other_items.sort();
+            Ok(self_items == other_items)
         } else {
             Ok(false)
         }
     }
 
     fn __repr__(&self) -> String {
-        let items: Vec<String> = self
-            .inner
-            .iter()
-            .map(|(k, v)| format!("('{}', '{}')", k, v))
-            .collect();
-        format!("Headers([{}])", items.join(", "))
+        // Check if there are duplicate keys (case-insensitive)
+        let mut seen = std::collections::HashSet::new();
+        let mut has_duplicates = false;
+        for (k, _) in &self.inner {
+            if !seen.insert(k.to_lowercase()) {
+                has_duplicates = true;
+                break;
+            }
+        }
+
+        if has_duplicates {
+            // Use list format for multi-value headers
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .map(|(k, v)| format!("('{}', '{}')", k, v))
+                .collect();
+            format!("Headers([{}])", items.join(", "))
+        } else {
+            // Use dict format for single-value headers
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .map(|(k, v)| format!("'{}': '{}'", k, v))
+                .collect();
+            format!("Headers({{{}}})", items.join(", "))
+        }
     }
 
     fn copy(&self) -> Self {
@@ -269,6 +376,22 @@ impl Headers {
             }
         }
         Ok(())
+    }
+
+    fn setdefault(&mut self, key: String, default: String) -> String {
+        let key_lower = key.to_lowercase();
+        // Check if key exists
+        if let Some(existing) = self.inner
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == key_lower)
+            .map(|(_, v)| v.clone())
+        {
+            existing
+        } else {
+            // Key doesn't exist, set default value
+            self.inner.push((key, default.clone()));
+            default
+        }
     }
 }
 
