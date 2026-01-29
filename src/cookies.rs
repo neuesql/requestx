@@ -48,6 +48,7 @@ impl Cookies {
     #[new]
     #[pyo3(signature = (cookies=None))]
     fn py_new(cookies: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        use pyo3::types::{PyList, PyTuple};
         let mut c = Self::new();
 
         if let Some(obj) = cookies {
@@ -55,6 +56,14 @@ impl Cookies {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
+                    c.inner.insert(k, v);
+                }
+            } else if let Ok(list) = obj.downcast::<PyList>() {
+                // Handle list of tuples
+                for item in list.iter() {
+                    let tuple = item.downcast::<PyTuple>()?;
+                    let k: String = tuple.get_item(0)?.extract()?;
+                    let v: String = tuple.get_item(1)?.extract()?;
                     c.inner.insert(k, v);
                 }
             } else if let Ok(other_cookies) = obj.extract::<Cookies>() {
@@ -65,17 +74,22 @@ impl Cookies {
         Ok(c)
     }
 
-    fn get(&self, name: &str, default: Option<&str>) -> Option<String> {
+    #[pyo3(signature = (name, default=None, domain=None, path=None))]
+    fn get(&self, name: &str, default: Option<&str>, domain: Option<&str>, path: Option<&str>) -> Option<String> {
+        // For simplicity, we just lookup by name
+        // In a full implementation, we'd filter by domain/path
+        let _ = (domain, path); // TODO: implement domain/path filtering
         self.inner
             .get(name)
             .cloned()
             .or_else(|| default.map(|s| s.to_string()))
     }
 
-    #[pyo3(signature = (name, value, domain=None, path=None))]
-    fn set_cookie(&mut self, name: &str, value: &str, domain: Option<&str>, path: Option<&str>) {
+    #[pyo3(name = "set", signature = (name, value, domain=None, path=None))]
+    fn set_py(&mut self, name: &str, value: &str, domain: Option<&str>, path: Option<&str>) {
         // For simplicity, we just store name=value
         // In a full implementation, we'd handle domain/path
+        let _ = (domain, path); // TODO: implement domain/path support
         self.inner.insert(name.to_string(), value.to_string());
     }
 
@@ -83,7 +97,10 @@ impl Cookies {
         self.inner.remove(name);
     }
 
-    fn clear(&mut self) {
+    #[pyo3(signature = (domain=None, path=None))]
+    fn clear(&mut self, domain: Option<&str>, path: Option<&str>) {
+        // TODO: implement domain/path filtering
+        let _ = (domain, path);
         self.inner.clear();
     }
 

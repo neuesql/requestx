@@ -335,12 +335,16 @@ impl Client {
         // Create request object for response
         let request = Request::new(method.as_str(), URL::parse(&final_url)?);
 
-        // Execute request (release GIL during I/O)
+        // Execute request (release GIL during I/O) and measure elapsed time
+        let start = std::time::Instant::now();
         let response = py.allow_threads(|| {
             builder.send()
         }).map_err(convert_reqwest_error)?;
+        let elapsed = start.elapsed();
 
-        Response::from_reqwest(response, Some(request))
+        let mut result = Response::from_reqwest(response, Some(request))?;
+        result.set_elapsed(elapsed);
+        Ok(result)
     }
 }
 
@@ -356,7 +360,7 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
-        base_url: Option<&str>,
+        base_url: Option<&Bound<'_, PyAny>>,
         event_hooks: Option<&Bound<'_, PyDict>>,
         trust_env: Option<bool>,
         transport: Option<Py<PyAny>>,
@@ -411,7 +415,15 @@ impl Client {
         };
 
         let base_url_obj = if let Some(url) = base_url {
-            Some(URL::parse(url)?)
+            if let Ok(url_obj) = url.extract::<URL>() {
+                Some(url_obj)
+            } else if let Ok(url_str) = url.extract::<String>() {
+                Some(URL::parse(&url_str)?)
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "base_url must be a string or URL object",
+                ));
+            }
         } else {
             None
         };

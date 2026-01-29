@@ -15,6 +15,19 @@ use crate::timeout::Timeout;
 use crate::types::BasicAuth;
 use crate::url::URL;
 
+/// Helper to extract URL string from either String or URL object
+fn extract_url_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = url.extract::<String>() {
+        Ok(s)
+    } else if let Ok(u) = url.extract::<URL>() {
+        Ok(u.to_string())
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "URL must be a string or URL object",
+        ))
+    }
+}
+
 /// Event hooks storage
 #[derive(Default)]
 struct EventHooks {
@@ -111,7 +124,7 @@ impl AsyncClient {
         timeout: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
-        base_url: Option<&str>,
+        base_url: Option<&Bound<'_, PyAny>>,
         event_hooks: Option<&Bound<'_, PyDict>>,
         trust_env: Option<bool>,
         _kwargs: Option<&Bound<'_, PyDict>>,
@@ -165,7 +178,15 @@ impl AsyncClient {
         };
 
         let base_url_obj = if let Some(url) = base_url {
-            Some(URL::parse(url)?)
+            if let Ok(url_obj) = url.extract::<URL>() {
+                Some(url_obj)
+            } else if let Ok(url_str) = url.extract::<String>() {
+                Some(URL::parse(&url_str)?)
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "base_url must be a string or URL object",
+                ));
+            }
         } else {
             None
         };
@@ -210,7 +231,7 @@ impl AsyncClient {
     fn get<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<PyObject>,
         headers: Option<PyObject>,
         cookies: Option<PyObject>,
@@ -218,14 +239,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "GET".to_string(), url, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "GET".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn post<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<PyObject>,
         files: Option<PyObject>,
@@ -237,14 +259,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "POST".to_string(), url, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "POST".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn put<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<PyObject>,
         files: Option<PyObject>,
@@ -256,14 +279,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "PUT".to_string(), url, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "PUT".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn patch<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<PyObject>,
         files: Option<PyObject>,
@@ -275,14 +299,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "PATCH".to_string(), url, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "PATCH".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn delete<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<PyObject>,
         headers: Option<PyObject>,
         cookies: Option<PyObject>,
@@ -290,14 +315,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "DELETE".to_string(), url, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "DELETE".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn head<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<PyObject>,
         headers: Option<PyObject>,
         cookies: Option<PyObject>,
@@ -305,14 +331,15 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "HEAD".to_string(), url, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "HEAD".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn options<'py>(
         &self,
         py: Python<'py>,
-        url: String,
+        url: &Bound<'_, PyAny>,
         params: Option<PyObject>,
         headers: Option<PyObject>,
         cookies: Option<PyObject>,
@@ -320,7 +347,8 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, "OPTIONS".to_string(), url, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, "OPTIONS".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
@@ -328,7 +356,7 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         method: String,
-        url: String,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<PyObject>,
         files: Option<PyObject>,
@@ -340,7 +368,8 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.async_request(py, method, url, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
+        let url_str = extract_url_string(url)?;
+        self.async_request(py, method, url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
     fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -574,10 +603,14 @@ impl AsyncClient {
                 builder = builder.body(b);
             }
 
+            let start = std::time::Instant::now();
             let response = builder.send().await.map_err(convert_reqwest_error)?;
+            let elapsed = start.elapsed();
 
             let request = Request::new(method.as_str(), URL::parse(&url_clone)?);
-            Response::from_reqwest_async(response, Some(request)).await
+            let mut result = Response::from_reqwest_async(response, Some(request)).await?;
+            result.set_elapsed(elapsed);
+            Ok(result)
         })
     }
 }

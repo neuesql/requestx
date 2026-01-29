@@ -49,9 +49,16 @@ impl URL {
         }
     }
 
-    /// Convert to string
+    /// Convert to string with proper normalization (strip trailing slash when appropriate)
     pub fn to_string(&self) -> String {
-        self.inner.to_string()
+        let s = self.inner.to_string();
+        // Strip trailing slash when path is "/" and no query/fragment
+        if self.inner.path() == "/" && self.inner.query().is_none() && self.inner.fragment().is_none() {
+            if let Some(stripped) = s.strip_suffix('/') {
+                return stripped.to_string();
+            }
+        }
+        s
     }
 
     /// Get the host (public Rust API)
@@ -537,9 +544,9 @@ impl URL {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_url) = other.extract::<URL>() {
-            Ok(self.inner.as_str() == other_url.inner.as_str())
+            Ok(self.to_string() == other_url.to_string())
         } else if let Ok(other_str) = other.extract::<String>() {
-            Ok(self.inner.as_str() == other_str)
+            Ok(self.to_string() == other_str)
         } else {
             Ok(false)
         }

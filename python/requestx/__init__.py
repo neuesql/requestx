@@ -72,6 +72,7 @@ from ._core import (
     RequestNotRead,
     InvalidURL,
     HTTPError,
+    CookieConflict,
     # Status codes (import as _codes to wrap)
     codes as _codes,
 )
@@ -105,6 +106,7 @@ __all__ = [
     "codes",
     "ConnectError",
     "ConnectTimeout",
+    "CookieConflict",
     "Cookies",
     "DecodingError",
     "delete",

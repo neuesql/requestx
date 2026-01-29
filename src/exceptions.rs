@@ -37,6 +37,9 @@ create_exception!(requestx, InvalidURL, PyException);
 // HTTP error (alias)
 create_exception!(requestx, HTTPError, PyException);
 
+// Cookie exceptions
+create_exception!(requestx, CookieConflict, PyException);
+
 /// Register all exceptions with the module
 pub fn register_exceptions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("HTTPStatusError", m.py().get_type::<HTTPStatusError>())?;
@@ -66,6 +69,7 @@ pub fn register_exceptions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("RequestNotRead", m.py().get_type::<RequestNotRead>())?;
     m.add("InvalidURL", m.py().get_type::<InvalidURL>())?;
     m.add("HTTPError", m.py().get_type::<HTTPError>())?;
+    m.add("CookieConflict", m.py().get_type::<CookieConflict>())?;
     Ok(())
 }
 
