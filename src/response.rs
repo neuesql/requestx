@@ -820,6 +820,138 @@ impl LinesIterator {
     }
 }
 
+/// Iterator for raw response bytes
+#[pyclass]
+pub struct RawIterator {
+    content: Vec<u8>,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl RawIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> Option<Bound<'py, PyBytes>> {
+        if self.position >= self.content.len() {
+            None
+        } else {
+            let end = std::cmp::min(self.position + self.chunk_size, self.content.len());
+            let chunk = &self.content[self.position..end];
+            self.position = end;
+            Some(PyBytes::new(py, chunk))
+        }
+    }
+}
+
+/// Async iterator for raw response bytes
+#[pyclass]
+pub struct AsyncRawIterator {
+    content: Vec<u8>,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl AsyncRawIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.position >= self.content.len() {
+            Ok(None)
+        } else {
+            let end = std::cmp::min(self.position + self.chunk_size, self.content.len());
+            let chunk = self.content[self.position..end].to_vec();
+            self.position = end;
+            let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(chunk) })?;
+            Ok(Some(fut))
+        }
+    }
+}
+
+/// Async iterator for decoded response bytes
+#[pyclass]
+pub struct AsyncBytesIterator {
+    content: Vec<u8>,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl AsyncBytesIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.position >= self.content.len() {
+            Ok(None)
+        } else {
+            let end = std::cmp::min(self.position + self.chunk_size, self.content.len());
+            let chunk = self.content[self.position..end].to_vec();
+            self.position = end;
+            let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(chunk) })?;
+            Ok(Some(fut))
+        }
+    }
+}
+
+/// Async iterator for response text
+#[pyclass]
+pub struct AsyncTextIterator {
+    text: String,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl AsyncTextIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.position >= self.text.len() {
+            Ok(None)
+        } else {
+            let end = std::cmp::min(self.position + self.chunk_size, self.text.len());
+            let chunk = self.text[self.position..end].to_string();
+            self.position = end;
+            let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(chunk) })?;
+            Ok(Some(fut))
+        }
+    }
+}
+
+/// Async iterator for response lines
+#[pyclass]
+pub struct AsyncLinesIterator {
+    lines: Vec<String>,
+    position: usize,
+}
+
+#[pymethods]
+impl AsyncLinesIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.position >= self.lines.len() {
+            Ok(None)
+        } else {
+            let line = self.lines[self.position].clone();
+            self.position += 1;
+            let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(line) })?;
+            Ok(Some(fut))
+        }
+    }
+}
+
 fn status_code_to_reason(code: u16) -> &'static str {
     match code {
         100 => "Continue",
