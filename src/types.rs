@@ -817,7 +817,7 @@ impl Proxy {
         if self.proxy_url.is_empty() {
             return Err(PyValueError::new_err("No proxy URL set"));
         }
-        URL::new(&self.proxy_url)
+        URL::from_str(&self.proxy_url)
     }
 
     /// Auth credentials as tuple (username, password) or None
@@ -1326,21 +1326,134 @@ pub struct URL {
 #[pymethods]
 impl URL {
     #[new]
-    #[pyo3(signature = (url))]
-    pub fn new(url: &str) -> PyResult<Self> {
-        // Try to parse as absolute URL first
-        match url::Url::parse(url) {
-            Ok(inner) => Ok(Self { inner, is_relative: false }),
-            Err(_) => {
-                // If parsing fails, it might be a relative URL
-                // Use a dummy base to parse it, mark as relative
-                let base = url::Url::parse("http://relative.url.placeholder/").unwrap();
-                let inner = base
-                    .join(url)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
-                Ok(Self { inner, is_relative: true })
+    #[pyo3(signature = (url="", scheme=None, host=None, port=None, path=None, query=None, fragment=None, params=None, raw_path=None, userinfo=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        url: &str,
+        scheme: Option<&str>,
+        host: Option<&str>,
+        port: Option<u16>,
+        path: Option<&str>,
+        query: Option<&Bound<'_, PyAny>>,
+        fragment: Option<&str>,
+        params: Option<&Bound<'_, PyAny>>,
+        raw_path: Option<&Bound<'_, PyAny>>,
+        userinfo: Option<(&str, &str)>,
+    ) -> PyResult<Self> {
+        // If we have a base URL, parse it first
+        let mut parsed = if !url.is_empty() {
+            // Try to parse as absolute URL first
+            match url::Url::parse(url) {
+                Ok(inner) => inner,
+                Err(_) => {
+                    // If parsing fails, it might be a relative URL
+                    // Use a dummy base to parse it
+                    let base = url::Url::parse("http://relative.url.placeholder/").unwrap();
+                    base.join(url)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?
+                }
+            }
+        } else if let Some(s) = scheme {
+            // Build URL from components
+            let h = host.unwrap_or("localhost");
+            let base_url = format!("{}://{}", s, h);
+            url::Url::parse(&base_url)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err("url or scheme must be provided"));
+        };
+
+        // Override components if provided
+        if let Some(s) = scheme {
+            parsed.set_scheme(s).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid scheme"))?;
+        }
+        if let Some(h) = host {
+            parsed.set_host(Some(h)).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid host: {e}")))?;
+        }
+        if let Some(p) = port {
+            parsed.set_port(Some(p)).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid port"))?;
+        }
+        if let Some(p) = path {
+            parsed.set_path(p);
+        }
+        if let Some(f) = fragment {
+            parsed.set_fragment(Some(f));
+        }
+
+        // Handle userinfo
+        if let Some((username, password)) = userinfo {
+            parsed.set_username(username).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid username"))?;
+            parsed.set_password(Some(password)).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid password"))?;
+        }
+
+        // Handle query string or params
+        if let Some(q) = query {
+            if let Ok(query_str) = q.extract::<String>() {
+                parsed.set_query(Some(&query_str));
+            } else if let Ok(query_bytes) = q.extract::<Vec<u8>>() {
+                let query_str = String::from_utf8_lossy(&query_bytes);
+                parsed.set_query(Some(&query_str));
             }
         }
+
+        if let Some(p) = params {
+            // Params override query if provided
+            let query_str = if let Ok(dict) = p.downcast::<PyDict>() {
+                let pairs: Vec<String> = dict.iter()
+                    .map(|(k, v)| {
+                        let k: String = k.extract().unwrap_or_default();
+                        let v: String = v.extract().unwrap_or_default();
+                        format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v))
+                    })
+                    .collect();
+                pairs.join("&")
+            } else if let Ok(list) = p.downcast::<PyList>() {
+                let pairs: Vec<String> = list.iter()
+                    .filter_map(|item| {
+                        if let Ok((k, v)) = item.extract::<(String, String)>() {
+                            Some(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                pairs.join("&")
+            } else if let Ok(qp) = p.extract::<QueryParams>() {
+                qp.inner.iter()
+                    .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                    .collect::<Vec<_>>()
+                    .join("&")
+            } else {
+                String::new()
+            };
+            if !query_str.is_empty() {
+                parsed.set_query(Some(&query_str));
+            }
+        }
+
+        // Handle raw_path (overrides path if provided)
+        if let Some(rp) = raw_path {
+            if let Ok(rp_bytes) = rp.extract::<Vec<u8>>() {
+                let rp_str = String::from_utf8_lossy(&rp_bytes);
+                // raw_path might include query string
+                if let Some(q_pos) = rp_str.find('?') {
+                    parsed.set_path(&rp_str[..q_pos]);
+                    parsed.set_query(Some(&rp_str[q_pos+1..]));
+                } else {
+                    parsed.set_path(&rp_str);
+                }
+            } else if let Ok(rp_str) = rp.extract::<String>() {
+                if let Some(q_pos) = rp_str.find('?') {
+                    parsed.set_path(&rp_str[..q_pos]);
+                    parsed.set_query(Some(&rp_str[q_pos+1..]));
+                } else {
+                    parsed.set_path(&rp_str);
+                }
+            }
+        }
+
+        let is_relative = url.is_empty() || (!url.contains("://"));
+        Ok(Self { inner: parsed, is_relative })
     }
 
     /// Get the scheme (e.g., "http", "https")
@@ -1626,6 +1739,23 @@ impl URL {
 }
 
 impl URL {
+    /// Create from a string (internal use - simpler than Python constructor)
+    pub fn from_str(url: &str) -> PyResult<Self> {
+        // Try to parse as absolute URL first
+        match url::Url::parse(url) {
+            Ok(inner) => Ok(Self { inner, is_relative: false }),
+            Err(_) => {
+                // If parsing fails, it might be a relative URL
+                // Use a dummy base to parse it, mark as relative
+                let base = url::Url::parse("http://relative.url.placeholder/").unwrap();
+                let inner = base
+                    .join(url)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
+                Ok(Self { inner, is_relative: true })
+            }
+        }
+    }
+
     /// Create from url::Url
     pub fn from_url(url: url::Url) -> Self {
         Self { inner: url, is_relative: false }
@@ -2015,7 +2145,7 @@ impl Request {
             let original = url_obj.as_str().to_string();
             (url_obj, original)
         } else if let Ok(url_str) = url.extract::<String>() {
-            let url_obj = URL::new(&url_str)?;
+            let url_obj = URL::from_str(&url_str)?;
             (url_obj, url_str)
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err("url must be a string or URL object"));

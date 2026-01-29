@@ -444,7 +444,7 @@ impl Client {
     /// Get the base URL (HTTPX compatibility)
     #[getter]
     pub fn base_url(&self) -> Option<URL> {
-        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+        self.config.base_url.as_ref().and_then(|s| URL::from_str(s).ok())
     }
 
     /// Build a request without sending it
@@ -480,7 +480,7 @@ impl Client {
             return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
         };
         let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
-        let parsed_url = URL::new(&resolved_url)?;
+        let parsed_url = URL::from_str(&resolved_url)?;
 
         // Merge headers
         let mut final_headers = self.config.headers.clone();
@@ -774,7 +774,7 @@ impl Client {
         );
 
         // Create and attach a Request object for HTTPX compatibility
-        let request_url = URL::new(&final_url).ok();
+        let request_url = URL::from_str(&final_url).ok();
         if let Some(url) = request_url {
             let request = Request::new_internal(
                 method.to_uppercase(),
@@ -1361,7 +1361,7 @@ impl AsyncClient {
     /// Get the base URL (HTTPX compatibility)
     #[getter]
     pub fn base_url(&self) -> Option<URL> {
-        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+        self.config.base_url.as_ref().and_then(|s| URL::from_str(s).ok())
     }
 
     /// Build a request without sending it
@@ -1397,7 +1397,7 @@ impl AsyncClient {
             return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
         };
         let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
-        let parsed_url = URL::new(&resolved_url)?;
+        let parsed_url = URL::from_str(&resolved_url)?;
 
         // Merge headers
         let mut final_headers = self.config.headers.clone();
@@ -1556,7 +1556,7 @@ impl AsyncClient {
         data: Option<&Bound<'_, PyDict>>,
         json: Option<&Bound<'_, PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1567,6 +1567,7 @@ impl AsyncClient {
             .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
             .transpose()?;
         let content_vec = content.map(|c| c.as_bytes().to_vec());
+        let auth_extracted = auth.map(|a| extract_auth(a)).transpose()?.flatten();
         let data_map = data
             .map(|d| {
                 d.iter()
@@ -1648,8 +1649,8 @@ impl AsyncClient {
                 req = req.multipart(form);
             }
 
-            // Authentication
-            let auth_to_use = auth.as_ref().or(config.auth.as_ref());
+            // Authentication - use extracted auth or config auth
+            let auth_to_use = auth_extracted.as_ref().or(config.auth.as_ref());
             if let Some(auth_config) = auth_to_use {
                 match &auth_config.auth_type {
                     AuthType::Basic { username, password } => {
@@ -1679,7 +1680,7 @@ impl AsyncClient {
             let mut resp = Response::from_reqwest(response, start, &method).await?;
 
             // Create and attach a Request object for HTTPX compatibility
-            if let Ok(url) = URL::new(&final_url) {
+            if let Ok(url) = URL::from_str(&final_url) {
                 let request = Request::new_internal(method.to_uppercase(), url, Headers::default(), None, false);
                 resp.set_request(request);
             }
@@ -1702,7 +1703,7 @@ impl AsyncClient {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1722,7 +1723,7 @@ impl AsyncClient {
         data: Option<&Bound<'_, PyDict>>,
         json: Option<&Bound<'_, PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1742,7 +1743,7 @@ impl AsyncClient {
         data: Option<&Bound<'_, PyDict>>,
         json: Option<&Bound<'_, PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1762,7 +1763,7 @@ impl AsyncClient {
         data: Option<&Bound<'_, PyDict>>,
         json: Option<&Bound<'_, PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1778,7 +1779,7 @@ impl AsyncClient {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1794,7 +1795,7 @@ impl AsyncClient {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1810,7 +1811,7 @@ impl AsyncClient {
         params: Option<&Bound<'_, PyDict>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1853,7 +1854,7 @@ impl AsyncClient {
         data: Option<&Bound<'_, PyDict>>,
         json: Option<&Bound<'_, PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
+        auth: Option<&Bound<'_, PyAny>>,
         timeout: Option<f64>,
         #[allow(unused_variables)] follow_redirects: Option<bool>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1864,6 +1865,7 @@ impl AsyncClient {
             .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
             .transpose()?;
         let content_vec = content.map(|c| c.as_bytes().to_vec());
+        let auth_extracted = auth.map(|a| extract_auth(a)).transpose()?.flatten();
         let data_map = data
             .map(|d| {
                 d.iter()
@@ -1945,8 +1947,8 @@ impl AsyncClient {
                 req = req.multipart(form);
             }
 
-            // Authentication
-            let auth_to_use = auth.as_ref().or(config.auth.as_ref());
+            // Authentication - use extracted auth or config auth
+            let auth_to_use = auth_extracted.as_ref().or(config.auth.as_ref());
             if let Some(auth_config) = auth_to_use {
                 match &auth_config.auth_type {
                     AuthType::Basic { username, password } => {
