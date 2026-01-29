@@ -21,22 +21,66 @@ Build a high-performance Python HTTP client that is fully API-compatible with ht
 
 ### Core Dependencies (Cargo.toml)
 ```toml
+[package]
+name = "requestx"
+version = "1.0.8"
+edition = "2021"
+
+[lib]
+name = "requestx"
+crate-type = ["cdylib"]
+
 [dependencies]
-# Python bindings
-pyo3 = { version = "0.23", features = ["extension-module"] }
+# PyO3 for Python bindings
+pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
 
-# Async runtime bridge (Python asyncio <-> Rust tokio)
-pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
-
-# HTTP client
-reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli"] }
+# Reqwest for HTTP
+reqwest = { version = "0.13", features = [
+    "blocking",
+    "json",
+    "query",
+    "form",
+    "cookies",
+    "gzip",
+    "brotli",
+    "deflate",
+    "zstd",
+    "multipart",
+    "stream",
+    "rustls",
+    "socks",
+    "http2",
+] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# JSON processing (SIMD-accelerated)
-sonic-rs = "0.3"
+# Serialization (SIMD-accelerated JSON)
 serde = { version = "1.0", features = ["derive"] }
+sonic-rs = "0.5"
+
+# URL handling
+url = "2"
+urlencoding = "2"
+
+# Bytes
+bytes = "1"
+
+# HTTP types
+http = "1"
+
+# For multipart
+mime = "0.3"
+mime_guess = "2"
+
+# Futures
+futures = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
 ```
 
 ## Reference Materials
@@ -270,7 +314,7 @@ json_mod.getattr("dumps")?.call1((data,))?;
 **Cargo.toml:**
 ```toml
 [dependencies]
-sonic-rs = "0.3"        # Primary: SIMD-accelerated JSON
+sonic-rs = "0.5"        # Primary: SIMD-accelerated JSON
 serde = { version = "1.0", features = ["derive"] }
 ```
 
