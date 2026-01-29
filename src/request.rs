@@ -119,6 +119,10 @@ impl Request {
                 request.content = Some(bytes);
             } else if let Ok(s) = c.extract::<String>() {
                 request.content = Some(s.into_bytes());
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Content must be bytes or str",
+                ));
             }
         }
 

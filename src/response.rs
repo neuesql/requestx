@@ -191,6 +191,10 @@ impl Response {
                     }
                 }
                 response.content = content_bytes;
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Content must be bytes, str, list, or tuple",
+                ));
             }
             if !response.headers.contains("content-length") {
                 response.headers.set(
@@ -302,8 +306,12 @@ impl Response {
     }
 
     #[getter]
-    fn request(&self) -> Option<Request> {
-        self.request.clone()
+    fn request(&self) -> PyResult<Request> {
+        self.request.clone().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "The request instance has not been set on this response.",
+            )
+        })
     }
 
     #[setter]
@@ -765,6 +773,11 @@ fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
 
     if let Ok(f) = obj.downcast::<PyFloat>() {
         let val: f64 = f.extract()?;
+        if val.is_nan() || val.is_infinite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Out of range float values are not JSON compliant",
+            ));
+        }
         return Ok(sonic_rs::json!(val));
     }
 
