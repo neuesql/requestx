@@ -15,7 +15,7 @@ from urllib.request import parse_keqv_list
 import anyio
 import pytest
 
-import httpx
+import requestx as httpx
 
 from ..common import FIXTURES_DIR
 

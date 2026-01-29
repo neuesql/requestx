@@ -1,4 +1,4 @@
-import httpx
+import requestx as httpx
 
 
 def hello_world(request: httpx.Request) -> httpx.Response:

@@ -1,4 +1,4 @@
-import httpx
+import requestx as httpx
 
 
 def test_status_code_as_int():

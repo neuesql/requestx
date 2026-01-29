@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.serialization import (
 from uvicorn.config import Config
 from uvicorn.server import Server
 
-import httpx
+import requestx as httpx
 from tests_requestx.concurrency import sleep
 
 ENVIRONMENT_VARIABLES = {

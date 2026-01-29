@@ -5,7 +5,7 @@ from pathlib import Path
 import certifi
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def test_load_ssl_config():

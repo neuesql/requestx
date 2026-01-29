@@ -2,7 +2,7 @@
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def echo_headers(request: httpx.Request) -> httpx.Response:

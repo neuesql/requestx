@@ -8,7 +8,7 @@ import chardet
 import pytest
 import zstandard as zstd
 
-import httpx
+import requestx as httpx
 
 
 def test_deflate():

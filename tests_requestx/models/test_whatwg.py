@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from httpx._urlparse import urlparse
+from httpx._urlparse import urlparse  # TODO: requestx internal
 
 # URL test cases from...
 # https://github.com/web-platform-tests/wpt/blob/master/url/resources/urltestdata.json

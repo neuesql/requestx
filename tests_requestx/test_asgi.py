@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 async def hello_world(scope, receive, send):

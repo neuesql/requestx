@@ -1,4 +1,4 @@
-import httpx
+import requestx as httpx
 
 
 def test_all_imports_are_exported() -> None:

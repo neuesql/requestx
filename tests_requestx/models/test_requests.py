@@ -3,7 +3,7 @@ import typing
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def test_request_repr():

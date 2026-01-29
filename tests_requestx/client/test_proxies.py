@@ -1,7 +1,7 @@
 import httpcore
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def url_to_origin(url: str) -> httpcore.URL:

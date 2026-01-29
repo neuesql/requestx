@@ -5,7 +5,7 @@ import typing
 import chardet
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 class StreamingBody:

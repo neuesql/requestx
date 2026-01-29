@@ -2,7 +2,7 @@ import typing
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def test_get(server):
@@ -88,15 +88,15 @@ def test_get_invalid_url():
 
 
 # check that httpcore isn't imported until we do a request
+# NOTE: This test is for httpx lazy loading, skipped for requestx
 def test_httpcore_lazy_loading(server):
     import sys
 
     # unload our module if it is already loaded
-    if "httpx" in sys.modules:
-        del sys.modules["httpx"]
-        del sys.modules["httpcore"]
-    import httpx
+    if "requestx" in sys.modules:
+        del sys.modules["requestx"]
+    import requestx
 
-    assert "httpcore" not in sys.modules
-    _response = httpx.get(server.url)
-    assert "httpcore" in sys.modules
+    _response = requestx.get(server.url)
+    # requestx doesn't use httpcore, so just verify it works
+    assert _response.status_code == 200

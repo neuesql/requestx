@@ -6,7 +6,7 @@ from datetime import timedelta
 import chardet
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def autodetect(content):

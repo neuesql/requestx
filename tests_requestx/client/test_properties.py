@@ -1,4 +1,4 @@
-import httpx
+import requestx as httpx
 
 
 def test_client_base_url():

@@ -8,7 +8,7 @@ from urllib.request import parse_keqv_list
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def test_basic_auth():

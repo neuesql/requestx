@@ -6,7 +6,7 @@ import typing
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 def echo_request_content(request: httpx.Request) -> httpx.Response:

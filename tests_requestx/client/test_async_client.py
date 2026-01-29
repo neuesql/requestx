@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-import httpx
+import requestx as httpx
 
 
 @pytest.mark.anyio
