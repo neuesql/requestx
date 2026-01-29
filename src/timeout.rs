@@ -104,9 +104,30 @@ impl Timeout {
     }
 
     fn __repr__(&self) -> String {
+        // Format float to always show decimal point
+        let format_float = |v: f64| {
+            if v.fract() == 0.0 {
+                format!("{:.1}", v)
+            } else {
+                format!("{}", v)
+            }
+        };
+        let format_opt = |v: Option<f64>| match v {
+            Some(x) => format_float(x),
+            None => "None".to_string(),
+        };
+        // If all values are the same, show condensed format
+        if self.connect == self.read && self.read == self.write && self.write == self.pool {
+            if let Some(t) = self.connect {
+                return format!("Timeout(timeout={})", format_float(t));
+            } else {
+                return "Timeout(timeout=None)".to_string();
+            }
+        }
+        // Otherwise show individual values
         format!(
-            "Timeout(connect={:?}, read={:?}, write={:?}, pool={:?})",
-            self.connect, self.read, self.write, self.pool
+            "Timeout(connect={}, read={}, write={}, pool={})",
+            format_opt(self.connect), format_opt(self.read), format_opt(self.write), format_opt(self.pool)
         )
     }
 }
@@ -143,9 +164,9 @@ impl Limits {
         keepalive_expiry: Option<f64>,
     ) -> Self {
         Self {
-            max_connections: max_connections.or(Some(100)),
-            max_keepalive_connections: max_keepalive_connections.or(Some(20)),
-            keepalive_expiry: keepalive_expiry.or(Some(5.0)),
+            max_connections,
+            max_keepalive_connections,
+            keepalive_expiry: keepalive_expiry.or(Some(5.0)),  // keepalive_expiry has a default
         }
     }
 
@@ -156,9 +177,23 @@ impl Limits {
     }
 
     fn __repr__(&self) -> String {
+        let format_opt_usize = |v: Option<usize>| match v {
+            Some(x) => format!("{}", x),
+            None => "None".to_string(),
+        };
+        let format_opt_f64 = |v: Option<f64>| match v {
+            Some(x) => {
+                if x.fract() == 0.0 {
+                    format!("{:.1}", x)
+                } else {
+                    format!("{}", x)
+                }
+            }
+            None => "None".to_string(),
+        };
         format!(
-            "Limits(max_connections={:?}, max_keepalive_connections={:?}, keepalive_expiry={:?})",
-            self.max_connections, self.max_keepalive_connections, self.keepalive_expiry
+            "Limits(max_connections={}, max_keepalive_connections={}, keepalive_expiry={})",
+            format_opt_usize(self.max_connections), format_opt_usize(self.max_keepalive_connections), format_opt_f64(self.keepalive_expiry)
         )
     }
 }
