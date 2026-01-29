@@ -644,7 +644,7 @@ impl Client {
     fn build_request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -653,7 +653,13 @@ impl Client {
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Request> {
-        let resolved_url = self.resolve_url(url)?;
+        // Handle URL as either string or URL object
+        let url_str = if let Ok(url_obj) = url.extract::<URL>() {
+            url_obj.to_string()
+        } else {
+            url.extract::<String>()?
+        };
+        let resolved_url = self.resolve_url(&url_str)?;
         let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
         let mut request = Request::new(method, parsed_url);
 
