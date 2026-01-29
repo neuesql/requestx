@@ -54,6 +54,11 @@ impl URL {
         self.inner.to_string()
     }
 
+    /// Get the host (public Rust API)
+    pub fn get_host(&self) -> Option<String> {
+        self.inner.host_str().map(|s| s.to_lowercase())
+    }
+
     /// Constructor with Python params
     pub fn new_impl(
         url: Option<&str>,

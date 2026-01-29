@@ -5,6 +5,7 @@ use pyo3::types::{PyBytes, PyDict};
 
 use crate::cookies::Cookies;
 use crate::headers::Headers;
+use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
 use crate::url::URL;
 
 /// HTTP Request object
@@ -129,8 +130,41 @@ impl Request {
             }
         }
 
-        // Handle form data
-        if let Some(d) = data {
+        // Handle multipart (files provided)
+        if let Some(f) = files {
+            // Check if boundary was already set in headers BEFORE reading files
+            let existing_ct = request.headers.get("content-type", None);
+            // Get data dict if provided
+            let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.downcast::<PyDict>().ok());
+
+            let (body, content_type) = if let Some(ref ct) = existing_ct {
+                if ct.contains("boundary=") {
+                    // Extract boundary from existing header and use it
+                    let boundary_str = extract_boundary_from_content_type(ct);
+                    if let Some(b) = boundary_str {
+                        let (body, _) = build_multipart_body_with_boundary(_py, data_dict, Some(f), &b)?;
+                        (body, ct.clone())
+                    } else {
+                        // Invalid boundary format, use auto-generated
+                        let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                        (body, format!("multipart/form-data; boundary={}", boundary))
+                    }
+                } else {
+                    // Content-Type set but no boundary
+                    let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                    // Keep the existing content-type
+                    (body, ct.clone())
+                }
+            } else {
+                // No Content-Type set, use auto-generated boundary
+                let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                (body, format!("multipart/form-data; boundary={}", boundary))
+            };
+
+            request.content = Some(body);
+            request.headers.set("Content-Type".to_string(), content_type);
+        } else if let Some(d) = data {
+            // Handle form data (no files)
             if let Ok(dict) = d.downcast::<PyDict>() {
                 let mut form_data = Vec::new();
                 for (key, value) in dict.iter() {
@@ -146,6 +180,16 @@ impl Request {
                     );
                 }
             }
+        }
+
+        // Set Content-Length header
+        if let Some(ref content) = request.content {
+            request.headers.set("Content-Length".to_string(), content.len().to_string());
+        }
+
+        // Set Host header
+        if let Some(host) = request.url.get_host() {
+            request.headers.set("Host".to_string(), host);
         }
 
         Ok(request)

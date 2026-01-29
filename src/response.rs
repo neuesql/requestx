@@ -40,6 +40,11 @@ impl Response {
         }
     }
 
+    /// Set the request that generated this response (public Rust API)
+    pub fn set_request_attr(&mut self, request: Option<Request>) {
+        self.request = request;
+    }
+
     pub fn from_reqwest(
         response: reqwest::blocking::Response,
         request: Option<Request>,
@@ -137,20 +142,36 @@ impl Response {
         if let Some(c) = content {
             if let Ok(bytes) = c.extract::<Vec<u8>>() {
                 response.content = bytes;
-                if !response.headers.contains("content-length") {
-                    response.headers.set(
-                        "Content-Length".to_string(),
-                        response.content.len().to_string(),
-                    );
-                }
             } else if let Ok(s) = c.extract::<String>() {
                 response.content = s.into_bytes();
-                if !response.headers.contains("content-length") {
-                    response.headers.set(
-                        "Content-Length".to_string(),
-                        response.content.len().to_string(),
-                    );
+            } else if let Ok(list) = c.downcast::<pyo3::types::PyList>() {
+                // Handle list of byte chunks
+                let mut content_bytes = Vec::new();
+                for item in list.iter() {
+                    if let Ok(chunk) = item.extract::<Vec<u8>>() {
+                        content_bytes.extend_from_slice(&chunk);
+                    } else if let Ok(s) = item.extract::<String>() {
+                        content_bytes.extend_from_slice(s.as_bytes());
+                    }
                 }
+                response.content = content_bytes;
+            } else if let Ok(tuple) = c.downcast::<pyo3::types::PyTuple>() {
+                // Handle tuple of byte chunks
+                let mut content_bytes = Vec::new();
+                for item in tuple.iter() {
+                    if let Ok(chunk) = item.extract::<Vec<u8>>() {
+                        content_bytes.extend_from_slice(&chunk);
+                    } else if let Ok(s) = item.extract::<String>() {
+                        content_bytes.extend_from_slice(s.as_bytes());
+                    }
+                }
+                response.content = content_bytes;
+            }
+            if !response.headers.contains("content-length") {
+                response.headers.set(
+                    "Content-Length".to_string(),
+                    response.content.len().to_string(),
+                );
             }
         }
 
@@ -244,6 +265,11 @@ impl Response {
     #[getter]
     fn request(&self) -> Option<Request> {
         self.request.clone()
+    }
+
+    #[setter]
+    fn set_request(&mut self, request: Option<Request>) {
+        self.request = request;
     }
 
     #[getter]
@@ -376,8 +402,34 @@ impl Response {
 
     fn iter_lines(&self) -> PyResult<LinesIterator> {
         let text = self.text()?;
+        // Handle all line endings: \r\n, \n, or \r
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\r' {
+                // Check if \r\n
+                if chars.peek() == Some(&'\n') {
+                    chars.next(); // consume the \n
+                }
+                lines.push(current_line);
+                current_line = String::new();
+            } else if c == '\n' {
+                lines.push(current_line);
+                current_line = String::new();
+            } else {
+                current_line.push(c);
+            }
+        }
+
+        // Add any remaining content as the last line
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
         Ok(LinesIterator {
-            lines: text.lines().map(|s| s.to_string()).collect(),
+            lines,
             position: 0,
         })
     }
@@ -417,6 +469,18 @@ impl Response {
             }
         }
         self.default_encoding.clone()
+    }
+
+    /// Set a header on the response
+    pub fn set_header(&mut self, name: &str, value: &str) {
+        self.headers.set(name.to_string(), value.to_string());
+    }
+
+    /// Set the content (body) of the response
+    pub fn set_content(&mut self, content: Vec<u8>) {
+        self.content = content;
+        self.is_stream_consumed = true;
+        self.is_closed = true;
     }
 }
 

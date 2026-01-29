@@ -11,6 +11,7 @@ mod client;
 mod cookies;
 mod exceptions;
 mod headers;
+mod multipart;
 mod queryparams;
 mod request;
 mod response;
@@ -29,7 +30,7 @@ use queryparams::QueryParams;
 use request::Request;
 use response::{Response, BytesIterator, TextIterator, LinesIterator};
 use timeout::{Limits, Timeout};
-use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport};
+use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport, WSGITransport};
 use types::*;
 use url::URL;
 
@@ -74,6 +75,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncMockTransport>()?;
     m.add_class::<HTTPTransport>()?;
     m.add_class::<AsyncHTTPTransport>()?;
+    m.add_class::<WSGITransport>()?;
 
     // Top-level functions
     m.add_function(wrap_pyfunction!(api::get, m)?)?;

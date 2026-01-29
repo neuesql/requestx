@@ -33,6 +33,7 @@ from ._core import (
     AsyncMockTransport,
     HTTPTransport,
     AsyncHTTPTransport,
+    WSGITransport,
     # Top-level functions
     get,
     post,
@@ -71,9 +72,18 @@ from ._core import (
     RequestNotRead,
     InvalidURL,
     HTTPError,
-    # Status codes
-    codes,
+    # Status codes (import as _codes to wrap)
+    codes as _codes,
 )
+
+
+# Wrap codes to support codes(404) returning int
+class codes(_codes):
+    """HTTP status codes with flexible access patterns."""
+
+    def __new__(cls, code):
+        """Allow codes(404) to return 404."""
+        return code
 
 # Import _utils module for utility functions
 from . import _utils
@@ -142,5 +152,5 @@ __all__ = [
     "URL",
     "WriteError",
     "WriteTimeout",
-    "_utils",
+    "WSGITransport",
 ]

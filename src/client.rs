@@ -3,12 +3,11 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
+use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
 use crate::request::Request;
 use crate::response::Response;
 use crate::timeout::Timeout;
@@ -35,6 +34,7 @@ pub struct Client {
     event_hooks: EventHooks,
     trust_env: bool,
     mounts: HashMap<String, Py<PyAny>>,
+    transport: Option<Py<PyAny>>,
 }
 
 impl Default for Client {
@@ -87,6 +87,7 @@ impl Client {
             event_hooks: EventHooks::default(),
             trust_env: true,
             mounts: HashMap::new(),
+            transport: None,
         })
     }
 
@@ -99,6 +100,21 @@ impl Client {
         Ok(url.to_string())
     }
 
+    /// Extract a string URL from a &str or URL object
+    fn url_to_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
+        // Try to extract as string first
+        if let Ok(s) = url.extract::<String>() {
+            return Ok(s);
+        }
+        // Try to extract as URL object
+        if let Ok(url_obj) = url.extract::<URL>() {
+            return Ok(url_obj.to_string());
+        }
+        // Try calling str() on the object
+        let s = url.str()?.to_string();
+        Ok(s)
+    }
+
     pub fn execute_request(
         &self,
         py: Python<'_>,
@@ -106,6 +122,7 @@ impl Client {
         url: &str,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
         json: Option<&Bound<'_, PyAny>>,
         params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
@@ -131,7 +148,122 @@ impl Client {
             resolved_url
         };
 
-        // Create request builder
+        // If a custom transport is set, use it instead of making HTTP requests
+        if let Some(ref transport) = self.transport {
+            // Build the Request object with all the headers and body
+            let mut request_headers = self.headers.clone();
+            if let Some(h) = headers {
+                if let Ok(headers_obj) = h.extract::<Headers>() {
+                    for (k, v) in headers_obj.inner() {
+                        request_headers.set(k.clone(), v.clone());
+                    }
+                } else if let Ok(dict) = h.downcast::<PyDict>() {
+                    for (key, value) in dict.iter() {
+                        let k: String = key.extract()?;
+                        let v: String = value.extract()?;
+                        request_headers.set(k, v);
+                    }
+                }
+            }
+
+            // Add cookies to headers
+            let mut all_cookies = self.cookies.clone();
+            if let Some(c) = cookies {
+                if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                    for (k, v) in cookies_obj.inner() {
+                        all_cookies.set(k, v);
+                    }
+                }
+            }
+            let cookie_header = all_cookies.to_header_value();
+            if !cookie_header.is_empty() {
+                request_headers.set("Cookie".to_string(), cookie_header);
+            }
+
+            // Check if we need multipart encoding (files provided)
+            let (body_content, content_type) = if files.is_some() {
+                // Check if boundary was already set in headers BEFORE reading files
+                let existing_ct = request_headers.get("content-type", None);
+
+                let (body, content_type) = if let Some(ref ct) = existing_ct {
+                    if ct.contains("boundary=") {
+                        // Extract boundary from existing header and use it
+                        let boundary_str = extract_boundary_from_content_type(ct);
+                        if let Some(b) = boundary_str {
+                            let (body, _) = build_multipart_body_with_boundary(py, data, files, &b)?;
+                            (body, ct.clone())
+                        } else {
+                            // Invalid boundary format, use auto-generated
+                            let (body, boundary) = build_multipart_body(py, data, files)?;
+                            (body, format!("multipart/form-data; boundary={}", boundary))
+                        }
+                    } else {
+                        // Content-Type set but no boundary - use content-type as is (will auto-generate boundary in body)
+                        let (body, boundary) = build_multipart_body(py, data, files)?;
+                        // Keep the existing content-type but we generated body with auto boundary
+                        // This case is when user sets content-type without boundary - we keep their content-type
+                        (body, ct.clone())
+                    }
+                } else {
+                    // No Content-Type set, use auto-generated boundary
+                    let (body, boundary) = build_multipart_body(py, data, files)?;
+                    (body, format!("multipart/form-data; boundary={}", boundary))
+                };
+
+                (Some(body), Some(content_type))
+            } else if let Some(c) = content {
+                (Some(c), None)
+            } else if let Some(d) = data {
+                let mut form_data = Vec::new();
+                for (key, value) in d.iter() {
+                    let k: String = key.extract()?;
+                    // Handle both string and bytes values
+                    let v: String = if let Ok(s) = value.extract::<String>() {
+                        s
+                    } else if let Ok(b) = value.extract::<Vec<u8>>() {
+                        String::from_utf8_lossy(&b).to_string()
+                    } else {
+                        value.str()?.to_string()
+                    };
+                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                }
+                let ct = if !request_headers.contains("content-type") {
+                    Some("application/x-www-form-urlencoded".to_string())
+                } else {
+                    None
+                };
+                (Some(form_data.join("&").into_bytes()), ct)
+            } else if let Some(j) = json {
+                let json_str = py_to_json_string(j)?;
+                let ct = if !request_headers.contains("content-type") {
+                    Some("application/json".to_string())
+                } else {
+                    None
+                };
+                (Some(json_str.into_bytes()), ct)
+            } else {
+                (None, None)
+            };
+
+            if let Some(ct) = content_type {
+                request_headers.set("Content-Type".to_string(), ct);
+            }
+
+            let mut request = Request::new(method, URL::parse(&final_url)?);
+            request.set_headers(request_headers);
+            if let Some(body) = body_content {
+                request.set_content(body);
+            }
+
+            // Call the transport's handle_request method
+            let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
+            let mut response = response.extract::<Response>(py)?;
+            // Set the request on the response
+            response.set_request_attr(Some(request));
+            return Ok(response);
+        }
+
+        // Standard HTTP request path
         let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", method))
         })?;
@@ -215,7 +347,7 @@ impl Client {
 #[pymethods]
 impl Client {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
@@ -227,6 +359,7 @@ impl Client {
         base_url: Option<&str>,
         event_hooks: Option<&Bound<'_, PyDict>>,
         trust_env: Option<bool>,
+        transport: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -316,6 +449,9 @@ impl Client {
             }
         }
 
+        // Set transport if provided
+        client.transport = transport;
+
         Ok(client)
     }
 
@@ -323,7 +459,7 @@ impl Client {
     fn get(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -331,14 +467,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "GET", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "GET", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn post(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -350,14 +487,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "POST", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "POST", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn put(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -369,14 +507,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "PUT", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "PUT", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn patch(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -388,14 +527,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "PATCH", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "PATCH", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn delete(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -403,14 +543,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "DELETE", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "DELETE", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn head(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -418,14 +559,15 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "HEAD", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "HEAD", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn options(
         &self,
         py: Python<'_>,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
@@ -433,7 +575,8 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, "OPTIONS", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "OPTIONS", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
@@ -441,7 +584,7 @@ impl Client {
         &self,
         py: Python<'_>,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -453,7 +596,8 @@ impl Client {
         follow_redirects: Option<bool>,
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
-        self.execute_request(py, method, url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
@@ -461,7 +605,7 @@ impl Client {
         &self,
         py: Python<'_>,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -474,7 +618,8 @@ impl Client {
         timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Response> {
         // For now, stream behaves the same as request
-        self.execute_request(py, method, url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
     fn send(&self, py: Python<'_>, request: &Request) -> PyResult<Response> {
@@ -483,6 +628,7 @@ impl Client {
             request.method(),
             &request.url_ref().to_string(),
             request.content_bytes().map(|b| b.to_vec()),
+            None,
             None,
             None,
             None,

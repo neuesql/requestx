@@ -61,6 +61,11 @@ impl Headers {
         &self.inner
     }
 
+    /// Iterate over header (key, value) pairs
+    pub fn iter_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.inner.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
     /// Set a header value (removes existing headers with same key)
     pub fn set(&mut self, key: String, value: String) {
         let key_lower = key.to_lowercase();

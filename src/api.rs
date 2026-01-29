@@ -23,7 +23,7 @@ pub fn get(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "GET", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "GET", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a POST request
@@ -47,7 +47,7 @@ pub fn post(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "POST", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "POST", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a PUT request
@@ -71,7 +71,7 @@ pub fn put(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "PUT", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "PUT", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a PATCH request
@@ -95,7 +95,7 @@ pub fn patch(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "PATCH", url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "PATCH", url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a DELETE request
@@ -115,7 +115,7 @@ pub fn delete(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "DELETE", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "DELETE", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a HEAD request
@@ -135,7 +135,7 @@ pub fn head(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "HEAD", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "HEAD", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform an OPTIONS request
@@ -155,7 +155,7 @@ pub fn options(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, "OPTIONS", url, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, "OPTIONS", url, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform an HTTP request
@@ -180,7 +180,7 @@ pub fn request(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, method, url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, method, url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }
 
 /// Perform a streaming HTTP request
@@ -205,5 +205,5 @@ pub fn stream(
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
     let client = Client::default();
-    client.execute_request(py, method, url, content, data, json, params, headers, cookies, auth, timeout, follow_redirects)
+    client.execute_request(py, method, url, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
 }

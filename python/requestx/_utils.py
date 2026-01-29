@@ -22,6 +22,15 @@ class URLPattern:
 
     def _parse_pattern(self, pattern: str) -> dict:
         """Parse the URL pattern into components."""
+        # Empty pattern matches everything
+        if not pattern:
+            return {
+                "scheme": None,
+                "host": None,
+                "port": None,
+                "path": "",
+            }
+
         # Handle "all://" as matching any scheme
         if pattern.startswith("all://"):
             scheme = None
@@ -32,18 +41,41 @@ class URLPattern:
             scheme = parsed.scheme or None
             rest = pattern[len(scheme) + 3:] if scheme else pattern
 
+        # Empty rest means match any host
+        if not rest:
+            return {
+                "scheme": scheme,
+                "host": None,
+                "port": None,
+                "path": "",
+            }
+
         # Handle wildcards in host
         if rest.startswith("*"):
             host_pattern = rest.split("/")[0] if "/" in rest else rest
             path_pattern = rest[len(host_pattern):] if "/" in rest else ""
+            port = None
         else:
             parts = rest.split("/", 1)
-            host_pattern = parts[0]
+            host_with_port = parts[0]
             path_pattern = "/" + parts[1] if len(parts) > 1 else ""
+
+            # Extract port from host
+            if ":" in host_with_port:
+                host_parts = host_with_port.rsplit(":", 1)
+                host_pattern = host_parts[0]
+                try:
+                    port = int(host_parts[1])
+                except ValueError:
+                    port = None
+            else:
+                host_pattern = host_with_port
+                port = None
 
         return {
             "scheme": scheme,
-            "host": host_pattern,
+            "host": host_pattern if host_pattern else None,
+            "port": port,
             "path": path_pattern,
         }
 
@@ -53,11 +85,13 @@ class URLPattern:
         if hasattr(url, "scheme"):
             url_scheme = url.scheme
             url_host = url.host or ""
+            url_port = url.port
             url_path = url.path or ""
         else:
             parsed = urlparse(str(url))
             url_scheme = parsed.scheme
-            url_host = parsed.netloc
+            url_host = parsed.hostname or ""
+            url_port = parsed.port
             url_path = parsed.path
 
         # Check scheme
@@ -67,7 +101,9 @@ class URLPattern:
 
         # Check host with wildcard support
         host_pattern = self._parsed["host"]
-        if host_pattern == "*":
+        if host_pattern is None:
+            pass  # None means match any host
+        elif host_pattern == "*":
             pass  # Matches any host
         elif host_pattern.startswith("*."):
             # Wildcard subdomain
@@ -76,6 +112,12 @@ class URLPattern:
                 return False
         elif host_pattern != url_host:
             return False
+
+        # Check port if specified in pattern
+        port_pattern = self._parsed.get("port")
+        if port_pattern is not None:
+            if url_port != port_pattern:
+                return False
 
         # Check path with wildcard support
         path_pattern = self._parsed["path"]
@@ -105,12 +147,64 @@ class URLPattern:
     def __hash__(self) -> int:
         return hash(self._pattern)
 
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, URLPattern):
+            return NotImplemented
+        # More specific patterns should come first
+        # Priority: scheme + host + port > scheme + host > scheme > all
+        self_score = self._specificity_score()
+        other_score = other._specificity_score()
+        # Higher score = more specific = should come first, so reverse comparison
+        return self_score > other_score
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, URLPattern):
+            return NotImplemented
+        return self == other or self < other
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, URLPattern):
+            return NotImplemented
+        return other < self
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, URLPattern):
+            return NotImplemented
+        return self == other or self > other
+
+    def _specificity_score(self) -> int:
+        """Calculate a specificity score for sorting patterns."""
+        score = 0
+        if self._parsed["scheme"] is not None:
+            score += 1
+        if self._parsed["host"] is not None:
+            score += 2
+        if self._parsed.get("port") is not None:
+            score += 4
+        if self._parsed.get("path"):
+            score += 8
+        return score
+
+
+def _is_ip_address(host: str) -> bool:
+    """Check if host is an IP address."""
+    import ipaddress
+    try:
+        # Remove brackets for IPv6
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
 
 def get_environment_proxies() -> typing.Dict[str, typing.Optional[str]]:
     """
     Get proxy settings from environment variables.
 
-    Returns a dictionary with 'http', 'https', and 'all' keys.
+    Returns a dictionary mapping URL patterns to proxy URLs.
+    For no_proxy entries, the value is None.
     """
     proxies: typing.Dict[str, typing.Optional[str]] = {}
 
@@ -128,6 +222,34 @@ def get_environment_proxies() -> typing.Dict[str, typing.Optional[str]]:
     all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
     if all_proxy:
         proxies["all://"] = all_proxy
+
+    # Handle NO_PROXY
+    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    if no_proxy:
+        for host in no_proxy.split(","):
+            host = host.strip()
+            if not host:
+                continue
+
+            # Check if it's a URL (has scheme)
+            if "://" in host:
+                proxies[host] = None
+            elif host.startswith("."):
+                # Leading dot means wildcard subdomain
+                proxies[f"all://*{host}"] = None
+            elif _is_ip_address(host) or "/" in host:
+                # IP address or CIDR notation
+                if ":" in host and not host.startswith("["):
+                    # IPv6 without brackets
+                    proxies[f"all://[{host}]"] = None
+                else:
+                    proxies[f"all://{host}"] = None
+            elif host == "localhost" or not "." in host:
+                # localhost or single-label hostname - no wildcard
+                proxies[f"all://{host}"] = None
+            else:
+                # Regular domain hostname - add wildcard prefix for subdomains
+                proxies[f"all://*{host}"] = None
 
     return proxies
 
