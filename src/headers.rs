@@ -223,6 +223,34 @@ impl Headers {
         }
     }
 
+    /// Set a header value only if it doesn't exist
+    #[pyo3(signature = (key, default=""))]
+    fn setdefault(&mut self, key: &str, default: &str) -> String {
+        let key_lower = key.to_lowercase();
+        if let Some((_, v)) = self.inner.iter().find(|(k, _)| k.to_lowercase() == key_lower) {
+            v.clone()
+        } else {
+            self.inner.push((key.to_string(), default.to_string()));
+            default.to_string()
+        }
+    }
+
+    /// Pop a header value
+    #[pyo3(signature = (key, default=None))]
+    fn pop(&mut self, key: &str, default: Option<&str>) -> PyResult<String> {
+        let key_lower = key.to_lowercase();
+        if let Some(pos) = self.inner.iter().position(|(k, _)| k.to_lowercase() == key_lower) {
+            let (_, v) = self.inner.remove(pos);
+            // Also remove any remaining headers with the same key
+            self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
+            Ok(v)
+        } else if let Some(d) = default {
+            Ok(d.to_string())
+        } else {
+            Err(PyKeyError::new_err(key.to_string()))
+        }
+    }
+
     fn __contains__(&self, key: &str) -> bool {
         let key_lower = key.to_lowercase();
         self.inner.iter().any(|(k, _)| k.to_lowercase() == key_lower)
