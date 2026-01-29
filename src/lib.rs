@@ -29,7 +29,7 @@ use headers::Headers;
 use queryparams::QueryParams;
 use request::Request;
 use response::{Response, BytesIterator, TextIterator, LinesIterator};
-use timeout::{Limits, Timeout};
+use timeout::{Limits, Timeout, UnsetType};
 use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport, WSGITransport};
 use types::*;
 use url::URL;
@@ -53,6 +53,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncClient>()?;
     m.add_class::<Timeout>()?;
     m.add_class::<Limits>()?;
+    m.add_class::<UnsetType>()?;
+    m.add("UNSET", UnsetType)?;
 
     // Stream types
     m.add_class::<SyncByteStream>()?;
@@ -66,6 +68,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Auth types
     m.add_class::<BasicAuth>()?;
     m.add_class::<BasicAuthFlow>()?;
+    m.add_class::<types::DigestAuthFlow>()?;
     m.add_class::<DigestAuth>()?;
     m.add_class::<NetRCAuth>()?;
     m.add_class::<Auth>()?;

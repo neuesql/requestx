@@ -98,6 +98,14 @@ impl Cookies {
     fn count_matching(&self, name: &str) -> usize {
         self.cookies.iter().filter(|c| c.name == name).count()
     }
+
+    /// Set the Cookie header on a request from this cookie jar
+    pub fn set_cookie_header(&self, request: &mut crate::request::Request) {
+        if !self.cookies.is_empty() {
+            let header_value = self.to_header_value();
+            request.headers_mut().set("Cookie".to_string(), header_value);
+        }
+    }
 }
 
 #[pymethods]

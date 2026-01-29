@@ -219,14 +219,45 @@ fn base64_encode(input: &[u8]) -> String {
     result
 }
 
-/// Digest authentication (placeholder)
-#[pyclass(name = "DigestAuth")]
+/// Digest auth challenge parsed from WWW-Authenticate header
 #[derive(Clone, Debug)]
+pub struct DigestAuthChallenge {
+    pub realm: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub algorithm: String,
+    pub opaque: Option<Vec<u8>>,
+    pub qop: Option<Vec<u8>>,
+}
+
+/// Digest authentication
+#[pyclass(name = "DigestAuth")]
 pub struct DigestAuth {
     #[pyo3(get)]
     pub username: String,
     #[pyo3(get)]
     pub password: String,
+    last_challenge: Option<DigestAuthChallenge>,
+    nonce_count: u32,
+}
+
+impl Clone for DigestAuth {
+    fn clone(&self) -> Self {
+        Self {
+            username: self.username.clone(),
+            password: self.password.clone(),
+            last_challenge: self.last_challenge.clone(),
+            nonce_count: self.nonce_count,
+        }
+    }
+}
+
+impl std::fmt::Debug for DigestAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DigestAuth")
+            .field("username", &self.username)
+            .field("password", &"***")
+            .finish()
+    }
 }
 
 #[pymethods]
@@ -236,11 +267,422 @@ impl DigestAuth {
         Self {
             username: username.to_string(),
             password: password.to_string(),
+            last_challenge: None,
+            nonce_count: 1,
         }
+    }
+
+    /// Sync auth flow - returns a generator that handles digest auth
+    fn sync_auth_flow(&mut self, request: crate::request::Request) -> DigestAuthFlow {
+        DigestAuthFlow::new(
+            self.username.as_bytes().to_vec(),
+            self.password.as_bytes().to_vec(),
+            self.last_challenge.take(),
+            self.nonce_count,
+            request,
+        )
+    }
+
+    /// Async auth flow - same implementation for DigestAuth
+    fn async_auth_flow(&mut self, request: crate::request::Request) -> DigestAuthFlow {
+        self.sync_auth_flow(request)
+    }
+
+    /// Get client nonce - exposed for testing
+    fn _get_client_nonce(&self, nonce_count: u32, nonce: &[u8]) -> Vec<u8> {
+        DigestAuthFlow::generate_client_nonce(nonce_count, nonce)
     }
 
     fn __repr__(&self) -> String {
         format!("DigestAuth(username={:?}, password=***)", self.username)
+    }
+}
+
+/// Generator for Digest auth flow
+#[pyclass]
+pub struct DigestAuthFlow {
+    username: Vec<u8>,
+    password: Vec<u8>,
+    last_challenge: Option<DigestAuthChallenge>,
+    nonce_count: u32,
+    request: Option<crate::request::Request>,
+    state: DigestFlowState,
+    auth_header: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum DigestFlowState {
+    Initial,
+    WaitingForResponse,
+    SentAuthRequest,
+    Done,
+}
+
+impl DigestAuthFlow {
+    fn new(
+        username: Vec<u8>,
+        password: Vec<u8>,
+        last_challenge: Option<DigestAuthChallenge>,
+        nonce_count: u32,
+        request: crate::request::Request,
+    ) -> Self {
+        Self {
+            username,
+            password,
+            last_challenge,
+            nonce_count,
+            request: Some(request),
+            state: DigestFlowState::Initial,
+            auth_header: None,
+        }
+    }
+
+    fn generate_client_nonce(nonce_count: u32, nonce: &[u8]) -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut data = Vec::new();
+        data.extend_from_slice(nonce_count.to_string().as_bytes());
+        data.extend_from_slice(nonce);
+
+        // Add timestamp
+        if let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            data.extend_from_slice(duration.as_secs().to_string().as_bytes());
+        }
+
+        // Add some random bytes (simplified - use timestamp as seed)
+        let random_bytes: [u8; 8] = [
+            ((nonce_count * 17) % 256) as u8,
+            ((nonce_count * 31) % 256) as u8,
+            ((nonce_count * 47) % 256) as u8,
+            ((nonce_count * 61) % 256) as u8,
+            ((nonce_count * 79) % 256) as u8,
+            ((nonce_count * 97) % 256) as u8,
+            ((nonce_count * 113) % 256) as u8,
+            ((nonce_count * 127) % 256) as u8,
+        ];
+        data.extend_from_slice(&random_bytes);
+
+        // SHA1 hash and take first 16 hex chars
+        let hash = sha1_hash(&data);
+        hash[..16].as_bytes().to_vec()
+    }
+
+    fn parse_challenge(auth_header: &str) -> Option<DigestAuthChallenge> {
+        // Parse "Digest realm="xxx", nonce="yyy", ..."
+        let header = auth_header.strip_prefix("Digest ")
+            .or_else(|| auth_header.strip_prefix("digest "))?;
+
+        let mut realm: Option<Vec<u8>> = None;
+        let mut nonce: Option<Vec<u8>> = None;
+        let mut algorithm = "MD5".to_string();
+        let mut opaque: Option<Vec<u8>> = None;
+        let mut qop: Option<Vec<u8>> = None;
+
+        // Simple parser for key=value pairs
+        for part in parse_http_list(header) {
+            if let Some((key, value)) = part.split_once('=') {
+                let key = key.trim();
+                let value = unquote(value.trim());
+                match key.to_lowercase().as_str() {
+                    "realm" => realm = Some(value.as_bytes().to_vec()),
+                    "nonce" => nonce = Some(value.as_bytes().to_vec()),
+                    "algorithm" => algorithm = value,
+                    "opaque" => opaque = Some(value.as_bytes().to_vec()),
+                    "qop" => qop = Some(value.as_bytes().to_vec()),
+                    _ => {}
+                }
+            }
+        }
+
+        Some(DigestAuthChallenge {
+            realm: realm?,
+            nonce: nonce?,
+            algorithm,
+            opaque,
+            qop,
+        })
+    }
+
+    fn build_auth_header(&mut self, request: &crate::request::Request, challenge: &DigestAuthChallenge) -> String {
+        let hash_func: fn(&[u8]) -> String = match challenge.algorithm.to_uppercase().as_str() {
+            "MD5" | "MD5-SESS" => md5_hash,
+            "SHA" | "SHA-SESS" => sha1_hash,
+            "SHA-256" | "SHA-256-SESS" => sha256_hash,
+            "SHA-512" | "SHA-512-SESS" => sha512_hash,
+            _ => md5_hash,
+        };
+
+        // A1 = username:realm:password
+        let mut a1 = Vec::new();
+        a1.extend_from_slice(&self.username);
+        a1.push(b':');
+        a1.extend_from_slice(&challenge.realm);
+        a1.push(b':');
+        a1.extend_from_slice(&self.password);
+
+        // Get path from request URL
+        let path = request.url_ref().raw_path();
+
+        // A2 = method:uri
+        let mut a2 = Vec::new();
+        a2.extend_from_slice(request.method().as_bytes());
+        a2.push(b':');
+        a2.extend_from_slice(path.as_bytes());
+
+        let ha2 = hash_func(&a2);
+
+        let nc_value = format!("{:08x}", self.nonce_count);
+        let cnonce = Self::generate_client_nonce(self.nonce_count, &challenge.nonce);
+        self.nonce_count += 1;
+
+        let mut ha1 = hash_func(&a1);
+
+        // Handle -SESS algorithms
+        if challenge.algorithm.to_uppercase().ends_with("-SESS") {
+            let mut sess_data = Vec::new();
+            sess_data.extend_from_slice(ha1.as_bytes());
+            sess_data.push(b':');
+            sess_data.extend_from_slice(&challenge.nonce);
+            sess_data.push(b':');
+            sess_data.extend_from_slice(&cnonce);
+            ha1 = hash_func(&sess_data);
+        }
+
+        // Resolve QOP
+        let qop = self.resolve_qop(challenge.qop.as_deref());
+
+        // Build response digest
+        let response = if qop.is_none() {
+            // RFC 2069
+            let mut digest_data = Vec::new();
+            digest_data.extend_from_slice(ha1.as_bytes());
+            digest_data.push(b':');
+            digest_data.extend_from_slice(&challenge.nonce);
+            digest_data.push(b':');
+            digest_data.extend_from_slice(ha2.as_bytes());
+            hash_func(&digest_data)
+        } else {
+            // RFC 2617/7616
+            let mut digest_data = Vec::new();
+            digest_data.extend_from_slice(ha1.as_bytes());
+            digest_data.push(b':');
+            digest_data.extend_from_slice(&challenge.nonce);
+            digest_data.push(b':');
+            digest_data.extend_from_slice(nc_value.as_bytes());
+            digest_data.push(b':');
+            digest_data.extend_from_slice(&cnonce);
+            digest_data.push(b':');
+            digest_data.extend_from_slice(b"auth");
+            digest_data.push(b':');
+            digest_data.extend_from_slice(ha2.as_bytes());
+            hash_func(&digest_data)
+        };
+
+        // Build header value
+        let mut parts = vec![
+            format!("username=\"{}\"", String::from_utf8_lossy(&self.username)),
+            format!("realm=\"{}\"", String::from_utf8_lossy(&challenge.realm)),
+            format!("nonce=\"{}\"", String::from_utf8_lossy(&challenge.nonce)),
+            format!("uri=\"{}\"", path),
+            format!("response=\"{}\"", response),
+            format!("algorithm={}", challenge.algorithm),
+        ];
+
+        if let Some(ref opaque) = challenge.opaque {
+            parts.push(format!("opaque=\"{}\"", String::from_utf8_lossy(opaque)));
+        }
+
+        if qop.is_some() {
+            parts.push("qop=auth".to_string());
+            parts.push(format!("nc={}", nc_value));
+            parts.push(format!("cnonce=\"{}\"", String::from_utf8_lossy(&cnonce)));
+        }
+
+        format!("Digest {}", parts.join(", "))
+    }
+
+    fn resolve_qop(&self, qop: Option<&[u8]>) -> Option<Vec<u8>> {
+        match qop {
+            None => None,
+            Some(q) => {
+                // Split on comma and check for "auth"
+                let qop_str = String::from_utf8_lossy(q);
+                for part in qop_str.split(',') {
+                    if part.trim() == "auth" {
+                        return Some(b"auth".to_vec());
+                    }
+                }
+                // If only auth-int is available, we don't support it yet
+                None
+            }
+        }
+    }
+}
+
+#[pymethods]
+impl DigestAuthFlow {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<crate::request::Request> {
+        match self.state {
+            DigestFlowState::Initial => {
+                if let Some(mut request) = self.request.take() {
+                    // If we have a last challenge, add auth header
+                    if let Some(ref challenge) = self.last_challenge.clone() {
+                        let auth_header = self.build_auth_header(&request, challenge);
+                        request.headers_mut().set("Authorization".to_string(), auth_header);
+                    }
+                    self.state = DigestFlowState::WaitingForResponse;
+                    self.request = Some(request.clone());
+                    Some(request)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn send(&mut self, response: &Bound<'_, PyAny>) -> PyResult<crate::request::Request> {
+        match self.state {
+            DigestFlowState::WaitingForResponse => {
+                // Get status code from response
+                let status_code: u16 = response.getattr("status_code")?.extract()?;
+
+                if status_code != 401 {
+                    // Not a 401, we're done
+                    self.state = DigestFlowState::Done;
+                    return Err(pyo3::exceptions::PyStopIteration::new_err(()));
+                }
+
+                // Check for WWW-Authenticate header
+                let headers = response.getattr("headers")?;
+
+                // Try to get www-authenticate header
+                let auth_header: Option<String> = if let Ok(h) = headers.call_method1("get", ("www-authenticate",)) {
+                    h.extract().ok()
+                } else {
+                    None
+                };
+
+                let auth_header = match auth_header {
+                    Some(h) if h.to_lowercase().starts_with("digest ") => h,
+                    _ => {
+                        // No digest auth header, we're done
+                        self.state = DigestFlowState::Done;
+                        return Err(pyo3::exceptions::PyStopIteration::new_err(()));
+                    }
+                };
+
+                // Parse the challenge
+                let challenge = match Self::parse_challenge(&auth_header) {
+                    Some(c) => c,
+                    None => {
+                        self.state = DigestFlowState::Done;
+                        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                            "Failed to parse Digest WWW-Authenticate header"
+                        ));
+                    }
+                };
+
+                // Reset nonce count for new challenge
+                self.nonce_count = 1;
+                self.last_challenge = Some(challenge.clone());
+
+                // Build authenticated request
+                if let Some(mut request) = self.request.take() {
+                    let auth_header = self.build_auth_header(&request, &challenge);
+                    request.headers_mut().set("Authorization".to_string(), auth_header);
+
+                    // Copy cookies from response if present
+                    if let Ok(cookies) = response.getattr("cookies") {
+                        if let Ok(cookie_jar) = cookies.extract::<crate::cookies::Cookies>() {
+                            cookie_jar.set_cookie_header(&mut request);
+                        }
+                    }
+
+                    self.state = DigestFlowState::SentAuthRequest;
+                    self.request = Some(request.clone());
+                    Ok(request)
+                } else {
+                    self.state = DigestFlowState::Done;
+                    Err(pyo3::exceptions::PyStopIteration::new_err(()))
+                }
+            }
+            DigestFlowState::SentAuthRequest => {
+                self.state = DigestFlowState::Done;
+                Err(pyo3::exceptions::PyStopIteration::new_err(()))
+            }
+            _ => Err(pyo3::exceptions::PyStopIteration::new_err(())),
+        }
+    }
+}
+
+// Hash functions
+fn md5_hash(data: &[u8]) -> String {
+    let digest = md5::compute(data);
+    format!("{:x}", digest)
+}
+
+fn sha1_hash(data: &[u8]) -> String {
+    use sha1::Digest;
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+fn sha256_hash(data: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+fn sha512_hash(data: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha512::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+/// Parse HTTP header list (simplified version)
+fn parse_http_list(header: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in header.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            ',' if !in_quotes => {
+                if !current.trim().is_empty() {
+                    result.push(current.trim().to_string());
+                }
+                current = String::new();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.trim().is_empty() {
+        result.push(current.trim().to_string());
+    }
+
+    result
+}
+
+/// Remove quotes from a string
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s[1..s.len()-1].to_string()
+    } else {
+        s.to_string()
     }
 }
 

@@ -70,6 +70,22 @@ impl URL {
         self.inner.host_str().map(|s| s.to_lowercase())
     }
 
+    /// Get raw path (path + query string) as a Rust String
+    pub fn raw_path(&self) -> String {
+        let path = self.inner.path();
+        let query = self.inner.query();
+
+        if let Some(q) = query {
+            if q.is_empty() {
+                path.to_string()
+            } else {
+                format!("{}?{}", path, q)
+            }
+        } else {
+            path.to_string()
+        }
+    }
+
     /// Constructor with Python params
     pub fn new_impl(
         url: Option<&str>,
@@ -307,7 +323,8 @@ impl URL {
     }
 
     #[getter]
-    fn raw_path<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+    #[pyo3(name = "raw_path")]
+    fn py_raw_path<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         let path = self.inner.path();
         let query = self.inner.query();
 
