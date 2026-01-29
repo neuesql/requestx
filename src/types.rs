@@ -24,16 +24,16 @@ impl Headers {
             // Check for list of tuples
             if let Ok(list) = h.downcast::<PyList>() {
                 for item in list.iter() {
-                    let tuple: (String, String) = item.extract()?;
-                    let key_lower = tuple.0.to_lowercase();
-                    inner.entry(key_lower).or_insert_with(Vec::new).push(tuple.1);
+                    let (key, value) = Self::extract_key_value(&item)?;
+                    let key_lower = key.to_lowercase();
+                    inner.entry(key_lower).or_insert_with(Vec::new).push(value);
                 }
             } else if let Ok(dict) = h.downcast::<PyDict>() {
                 // Check for dict
                 for (key, value) in dict.iter() {
-                    let key: String = key.extract()?;
+                    let key = Self::extract_string(&key)?;
                     let key_lower = key.to_lowercase();
-                    let value: String = value.extract()?;
+                    let value = Self::extract_string(&value)?;
                     inner.entry(key_lower).or_insert_with(Vec::new).push(value);
                 }
             } else if let Ok(headers_obj) = h.extract::<Headers>() {
@@ -47,6 +47,7 @@ impl Headers {
         }
         Ok(Self { inner })
     }
+
 
     #[pyo3(signature = (key, default=None))]
     pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
@@ -172,6 +173,45 @@ impl Headers {
             .or_else(|| default.map(|s| s.to_string()))
     }
 
+    /// Set a header value if not already present
+    #[pyo3(signature = (key, default=None))]
+    pub fn setdefault(&mut self, key: &str, default: Option<&str>) -> String {
+        let lower_key = key.to_lowercase();
+        if !self.inner.contains_key(&lower_key) {
+            if let Some(value) = default {
+                self.inner.insert(lower_key.clone(), vec![value.to_string()]);
+            }
+        }
+        self.inner
+            .get(&lower_key)
+            .and_then(|v| v.first())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Update headers from another dict or iterable
+    pub fn update(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(dict) = other.downcast::<pyo3::types::PyDict>() {
+            for (key, value) in dict.iter() {
+                let key_str: String = key.extract()?;
+                let value_str: String = value.extract()?;
+                self.set(&key_str, &value_str);
+            }
+        } else if let Ok(headers) = other.extract::<Headers>() {
+            for (key, values) in headers.inner {
+                for value in values {
+                    self.inner.entry(key.clone()).or_insert_with(Vec::new).push(value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Copy headers
+    pub fn copy(&self) -> Headers {
+        self.clone()
+    }
+
     pub fn __repr__(&self) -> String {
         // Check if all keys have single values
         let all_single = self.inner.values().all(|v| v.len() <= 1);
@@ -259,6 +299,34 @@ impl Headers {
 }
 
 impl Headers {
+    /// Extract string from str or bytes
+    fn extract_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+        if let Ok(s) = obj.extract::<String>() {
+            return Ok(s);
+        }
+        if let Ok(b) = obj.extract::<Vec<u8>>() {
+            return String::from_utf8(b)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err("expected str or bytes"))
+    }
+
+    /// Extract key-value tuple from item
+    fn extract_key_value(item: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+        if let Ok((k, v)) = item.extract::<(String, String)>() {
+            return Ok((k, v));
+        }
+        // Try with bytes
+        if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+            if tuple.len() == 2 {
+                let key = Self::extract_string(&tuple.get_item(0)?)?;
+                let value = Self::extract_string(&tuple.get_item(1)?)?;
+                return Ok((key, value));
+            }
+        }
+        Err(pyo3::exceptions::PyValueError::new_err("expected tuple of (str/bytes, str/bytes)"))
+    }
+
     /// Internal helper to get a header value without default parameter
     pub fn get_value(&self, key: &str) -> Option<String> {
         self.inner
