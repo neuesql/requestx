@@ -110,6 +110,7 @@ impl QueryParams {
         }
     }
 
+    #[pyo3(signature = (key, default=None))]
     fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
         self.inner
             .iter()
@@ -141,7 +142,18 @@ impl QueryParams {
     }
 
     fn values(&self) -> Vec<String> {
-        self.inner.iter().map(|(_, v)| v.clone()).collect()
+        // Return first value for each unique key
+        let mut seen = std::collections::HashSet::new();
+        self.inner
+            .iter()
+            .filter_map(|(k, v)| {
+                if seen.insert(k.clone()) {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn items(&self) -> Vec<(String, String)> {
@@ -188,7 +200,12 @@ impl QueryParams {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_qp) = other.extract::<QueryParams>() {
-            Ok(self.inner == other_qp.inner)
+            // Sort both for comparison (order-independent equality)
+            let mut self_sorted = self.inner.clone();
+            self_sorted.sort();
+            let mut other_sorted = other_qp.inner.clone();
+            other_sorted.sort();
+            Ok(self_sorted == other_sorted)
         } else {
             Ok(false)
         }
@@ -199,12 +216,7 @@ impl QueryParams {
     }
 
     fn __repr__(&self) -> String {
-        let items: Vec<String> = self
-            .inner
-            .iter()
-            .map(|(k, v)| format!("('{}', '{}')", k, v))
-            .collect();
-        format!("QueryParams([{}])", items.join(", "))
+        format!("QueryParams('{}')", self.to_query_string())
     }
 
     fn __hash__(&self) -> u64 {
