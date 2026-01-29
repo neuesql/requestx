@@ -171,7 +171,7 @@ impl Client {
             if let Some(c) = cookies {
                 if let Ok(cookies_obj) = c.extract::<Cookies>() {
                     for (k, v) in cookies_obj.inner() {
-                        all_cookies.set(k, v);
+                        all_cookies.set(&k, &v);
                     }
                 }
             }
@@ -295,7 +295,7 @@ impl Client {
         if let Some(c) = cookies {
             if let Ok(cookies_obj) = c.extract::<Cookies>() {
                 for (k, v) in cookies_obj.inner() {
-                    all_cookies.set(k, v);
+                    all_cookies.set(&k, &v);
                 }
             }
         }

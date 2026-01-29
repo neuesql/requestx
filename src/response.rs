@@ -8,6 +8,21 @@ use crate::headers::Headers;
 use crate::request::Request;
 use crate::url::URL;
 
+/// Extract a header string from either str or bytes
+fn extract_header_value(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = obj.extract::<String>() {
+        Ok(s)
+    } else if let Ok(bytes) = obj.downcast::<PyBytes>() {
+        let bytes_slice = bytes.as_bytes();
+        String::from_utf8(bytes_slice.to_vec())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid UTF-8: {}", e)))
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Expected str or bytes",
+        ))
+    }
+}
+
 /// HTTP Response object
 #[pyclass(name = "Response")]
 #[derive(Clone)]
@@ -134,6 +149,16 @@ impl Response {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
                     response.headers.set(k, v);
+                }
+            } else if let Ok(list) = h.downcast::<pyo3::types::PyList>() {
+                // Handle list of tuples (with bytes support)
+                for item in list.iter() {
+                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                        let k = extract_header_value(&tuple.get_item(0)?)?;
+                        let v = extract_header_value(&tuple.get_item(1)?)?;
+                        // Use inner to preserve duplicates (e.g., multiple Set-Cookie)
+                        response.headers.inner_mut().push((k, v));
+                    }
                 }
             }
         }

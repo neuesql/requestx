@@ -2,8 +2,23 @@
 
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::collections::HashMap;
+
+/// Extract a string from either a String or bytes Python object
+fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = obj.extract::<String>() {
+        Ok(s)
+    } else if let Ok(bytes) = obj.downcast::<PyBytes>() {
+        let bytes_slice = bytes.as_bytes();
+        String::from_utf8(bytes_slice.to_vec())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid UTF-8: {}", e)))
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Expected str or bytes",
+        ))
+    }
+}
 
 /// HTTP Headers with case-insensitive keys
 #[pyclass(name = "Headers")]
@@ -61,6 +76,10 @@ impl Headers {
         &self.inner
     }
 
+    pub fn inner_mut(&mut self) -> &mut Vec<(String, String)> {
+        &mut self.inner
+    }
+
     /// Iterate over header (key, value) pairs
     pub fn iter_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
         self.inner.iter().map(|(k, v)| (k.as_str(), v.as_str()))
@@ -105,15 +124,15 @@ impl Headers {
         if let Some(obj) = headers {
             if let Ok(dict) = obj.downcast::<PyDict>() {
                 for (key, value) in dict.iter() {
-                    let k: String = key.extract()?;
-                    let v: String = value.extract()?;
+                    let k = extract_string_or_bytes(&key)?;
+                    let v = extract_string_or_bytes(&value)?;
                     h.inner.push((k, v));
                 }
             } else if let Ok(list) = obj.downcast::<PyList>() {
                 for item in list.iter() {
                     let tuple = item.downcast::<PyTuple>()?;
-                    let k: String = tuple.get_item(0)?.extract()?;
-                    let v: String = tuple.get_item(1)?.extract()?;
+                    let k = extract_string_or_bytes(&tuple.get_item(0)?)?;
+                    let v = extract_string_or_bytes(&tuple.get_item(1)?)?;
                     h.inner.push((k, v));
                 }
             } else if let Ok(other_headers) = obj.extract::<Headers>() {
