@@ -1946,13 +1946,20 @@ impl Request {
             return Err(pyo3::exceptions::PyValueError::new_err("url must be a string or URL object"));
         };
 
-        let headers = if let Some(h) = headers {
+        let mut headers = if let Some(h) = headers {
             extract_headers(h)?
         } else {
             Headers::default()
         };
 
         let content = content.map(|c| c.as_bytes().to_vec());
+
+        // Add Content-Length header if content is provided
+        if let Some(ref c) = content {
+            if !c.is_empty() && headers.get_value("content-length").is_none() {
+                headers.set("content-length", &c.len().to_string());
+            }
+        }
 
         Ok(Self {
             method: method.to_uppercase(),
@@ -1985,7 +1992,7 @@ impl Request {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("<Request('{}', '{}')>", self.method, self.url.as_str())
+        format!("<Request('{}', '{}')>", self.method, self.original_url)
     }
 
     pub fn __str__(&self) -> String {
