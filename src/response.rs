@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::types::{Cookies, Headers, Request};
+use indexmap::IndexMap;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::collections::HashMap;
@@ -90,7 +91,7 @@ impl Response {
                 headers_obj
             } else if h.is_instance_of::<PyDict>() {
                 let dict = h.downcast::<PyDict>()?;
-                let mut header_map = HashMap::new();
+                let mut header_map = IndexMap::new();
                 for (key, value) in dict.iter() {
                     let key_str: String = key.extract()?;
                     let key_lower = key_str.to_lowercase();
@@ -99,7 +100,7 @@ impl Response {
                 }
                 Headers { inner: header_map }
             } else if let Ok(list) = h.downcast::<PyList>() {
-                let mut header_map = HashMap::new();
+                let mut header_map = IndexMap::new();
                 for item in list.iter() {
                     let tuple: (String, String) = item.extract()?;
                     let key_lower = tuple.0.to_lowercase();

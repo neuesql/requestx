@@ -355,6 +355,24 @@ class _StatusCodes:
     NOT_EXTENDED = 510
     NETWORK_AUTHENTICATION_REQUIRED = 511
 
+    def __call__(self, status_code: int) -> int:
+        """Allow codes(404) to return 404."""
+        return status_code
+
+    def __getitem__(self, name: str) -> int:
+        """Allow codes['NOT_FOUND'] to return 404."""
+        return getattr(self, name.upper())
+
+    def __getattr__(self, name: str) -> int:
+        """Allow codes.not_found to return 404 (lowercase)."""
+        # Try uppercase version
+        upper_name = name.upper()
+        # Get from class attributes
+        for cls in type(self).__mro__:
+            if upper_name in cls.__dict__:
+                return cls.__dict__[upper_name]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def get_reason_phrase(self, status_code: int) -> str:
         """Get the reason phrase for a status code."""
         phrases = {
@@ -421,7 +439,7 @@ class _StatusCodes:
             510: "Not Extended",
             511: "Network Authentication Required",
         }
-        return phrases.get(status_code, "Unknown")
+        return phrases.get(status_code, "")
 
 
 codes = _StatusCodes()

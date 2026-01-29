@@ -1,30 +1,48 @@
 //! Common types for requestx
 
+use indexmap::IndexMap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// HTTP Headers wrapper
+/// HTTP Headers wrapper (preserves insertion order)
 #[pyclass(name = "Headers")]
 #[derive(Debug, Clone, Default)]
 pub struct Headers {
-    pub inner: HashMap<String, Vec<String>>,
+    pub inner: IndexMap<String, Vec<String>>,
 }
 
 #[pymethods]
 impl Headers {
     #[new]
     #[pyo3(signature = (headers=None))]
-    pub fn new(headers: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        let mut inner = HashMap::new();
-        if let Some(dict) = headers {
-            for (key, value) in dict.iter() {
-                let key: String = key.extract()?;
-                let key_lower = key.to_lowercase();
-                let value: String = value.extract()?;
-                inner.entry(key_lower).or_insert_with(Vec::new).push(value);
+    pub fn new(headers: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let mut inner = IndexMap::new();
+        if let Some(h) = headers {
+            // Check for list of tuples
+            if let Ok(list) = h.downcast::<PyList>() {
+                for item in list.iter() {
+                    let tuple: (String, String) = item.extract()?;
+                    let key_lower = tuple.0.to_lowercase();
+                    inner.entry(key_lower).or_insert_with(Vec::new).push(tuple.1);
+                }
+            } else if let Ok(dict) = h.downcast::<PyDict>() {
+                // Check for dict
+                for (key, value) in dict.iter() {
+                    let key: String = key.extract()?;
+                    let key_lower = key.to_lowercase();
+                    let value: String = value.extract()?;
+                    inner.entry(key_lower).or_insert_with(Vec::new).push(value);
+                }
+            } else if let Ok(headers_obj) = h.extract::<Headers>() {
+                // Check for Headers object
+                inner = headers_obj.inner;
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "headers must be a dict, list of tuples, or Headers object"
+                ));
             }
         }
         Ok(Self { inner })
@@ -32,9 +50,11 @@ impl Headers {
 
     #[pyo3(signature = (key, default=None))]
     pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
+        // HTTPX returns all values joined by ", "
         self.inner
             .get(&key.to_lowercase())
-            .and_then(|v| v.first().cloned())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.join(", "))
             .or_else(|| default.map(|s| s.to_string()))
     }
 
@@ -66,13 +86,40 @@ impl Headers {
     }
 
     pub fn values(&self) -> Vec<String> {
+        // Return joined values per key
         self.inner
             .values()
-            .flat_map(|v| v.iter().cloned())
+            .map(|v| v.join(", "))
             .collect()
     }
 
     pub fn items(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
+        let list = PyList::empty(py);
+        for (key, values) in &self.inner {
+            // Return single item with joined value per key
+            let joined_value = values.join(", ");
+            let tuple = PyTuple::new(py, &[key.clone(), joined_value])?;
+            list.append(tuple)?;
+        }
+        Ok(list.into())
+    }
+
+    /// Get raw headers as list of bytes tuples (HTTPX compatibility)
+    #[getter]
+    pub fn raw<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty(py);
+        for (key, values) in &self.inner {
+            for value in values {
+                let key_bytes = PyBytes::new(py, key.as_bytes());
+                let value_bytes = PyBytes::new(py, value.as_bytes());
+                let tuple = PyTuple::new(py, &[key_bytes.as_any(), value_bytes.as_any()])?;
+                list.append(tuple)?;
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn multi_items(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let list = PyList::empty(py);
         for (key, values) in &self.inner {
             for value in values {
@@ -92,8 +139,12 @@ impl Headers {
     }
 
     pub fn __getitem__(&self, key: &str) -> PyResult<String> {
-        self.get(key, None)
-            .ok_or_else(|| PyValueError::new_err(format!("Header '{key}' not found")))
+        // HTTPX returns all values joined by ", "
+        let values = self.inner.get(&key.to_lowercase());
+        match values {
+            Some(v) if !v.is_empty() => Ok(v.join(", ")),
+            _ => Err(PyValueError::new_err(format!("Header '{key}' not found"))),
+        }
     }
 
     pub fn __setitem__(&mut self, key: &str, value: &str) {
@@ -102,6 +153,13 @@ impl Headers {
 
     pub fn __delitem__(&mut self, key: &str) {
         self.remove(key);
+    }
+
+    pub fn __iter__(&self) -> HeadersIterator {
+        HeadersIterator {
+            keys: self.keys(),
+            index: 0,
+        }
     }
 
     /// Pop a header value (HTTPX compatibility)
@@ -115,11 +173,88 @@ impl Headers {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("Headers({:?})", self.inner)
+        // Check if all keys have single values
+        let all_single = self.inner.values().all(|v| v.len() <= 1);
+        if all_single {
+            // Format as dict: Headers({'a': '123', 'b': '789'})
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .filter_map(|(k, values)| values.first().map(|v| format!("'{}': '{}'", k, v)))
+                .collect();
+            format!("Headers({{{}}})", items.join(", "))
+        } else {
+            // Format as list of tuples: Headers([('a', '123'), ('a', '456')])
+            let items: Vec<String> = self
+                .inner
+                .iter()
+                .flat_map(|(k, values)| values.iter().map(move |v| format!("('{}', '{}')", k, v)))
+                .collect();
+            format!("Headers([{}])", items.join(", "))
+        }
     }
 
     pub fn __str__(&self) -> String {
         self.__repr__()
+    }
+
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        // Check if other is a Headers object
+        if let Ok(other_headers) = other.extract::<Headers>() {
+            return Ok(self.inner == other_headers.inner);
+        }
+        // Check if other is a list of tuples
+        if let Ok(list) = other.downcast::<PyList>() {
+            // Build a set of (key, value) pairs from self
+            let mut self_pairs: Vec<(String, String)> = Vec::new();
+            for (k, values) in &self.inner {
+                for v in values {
+                    self_pairs.push((k.clone(), v.clone()));
+                }
+            }
+            // Build a set of (key, value) pairs from other
+            let mut other_pairs: Vec<(String, String)> = Vec::new();
+            for item in list.iter() {
+                if let Ok((k, v)) = item.extract::<(String, String)>() {
+                    other_pairs.push((k.to_lowercase(), v));
+                }
+            }
+            // Sort both for comparison (since order in the list might differ)
+            self_pairs.sort();
+            other_pairs.sort();
+            return Ok(self_pairs == other_pairs);
+        }
+        // Check if other is a dict
+        if let Ok(dict) = other.downcast::<PyDict>() {
+            // Build multi-value map from dict (case-insensitive)
+            let mut other_map: IndexMap<String, Vec<String>> = IndexMap::new();
+            for (k, v) in dict.iter() {
+                let k_str: String = k.extract()?;
+                let k_lower = k_str.to_lowercase();
+                let v_str: String = v.extract()?;
+                other_map.entry(k_lower).or_insert_with(Vec::new).push(v_str);
+            }
+            // Sort values for comparison
+            for (k, values) in &self.inner {
+                if let Some(other_values) = other_map.get(k) {
+                    let mut self_sorted = values.clone();
+                    let mut other_sorted = other_values.clone();
+                    self_sorted.sort();
+                    other_sorted.sort();
+                    if self_sorted != other_sorted {
+                        return Ok(false);
+                    }
+                } else {
+                    return Ok(false);
+                }
+            }
+            // Make sure other_map doesn't have extra keys
+            if other_map.len() != self.inner.len() {
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 
@@ -146,7 +281,7 @@ impl Headers {
     }
 
     pub fn from_reqwest_headers(headers: &reqwest::header::HeaderMap) -> Self {
-        let mut inner = HashMap::new();
+        let mut inner = IndexMap::new();
         for (key, value) in headers.iter() {
             let key_str = key.as_str().to_lowercase();
             if let Ok(value_str) = value.to_str() {
@@ -157,6 +292,30 @@ impl Headers {
             }
         }
         Self { inner }
+    }
+}
+
+/// Iterator for Headers keys
+#[pyclass]
+pub struct HeadersIterator {
+    keys: Vec<String>,
+    index: usize,
+}
+
+#[pymethods]
+impl HeadersIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<String> {
+        if slf.index < slf.keys.len() {
+            let key = slf.keys[slf.index].clone();
+            slf.index += 1;
+            Some(key)
+        } else {
+            None
+        }
     }
 }
 
@@ -1065,10 +1224,10 @@ impl URL {
         self.inner.host_str().map(|s| s.to_string())
     }
 
-    /// Get the port number
+    /// Get the port number (None for default ports)
     #[getter]
     pub fn port(&self) -> Option<u16> {
-        self.inner.port_or_known_default()
+        self.inner.port()
     }
 
     /// Get the path (e.g., "/api/v1/users")
@@ -1077,10 +1236,10 @@ impl URL {
         self.inner.path()
     }
 
-    /// Get the query string (without the leading '?')
+    /// Get the query string as bytes (without the leading '?')
     #[getter]
-    pub fn query(&self) -> Option<&str> {
-        self.inner.query()
+    pub fn query(&self) -> Vec<u8> {
+        self.inner.query().unwrap_or("").as_bytes().to_vec()
     }
 
     /// Get the query parameters as a QueryParams object (HTTPX compatible)
@@ -1113,8 +1272,8 @@ impl URL {
 
     /// Get the fragment (without the leading '#')
     #[getter]
-    pub fn fragment(&self) -> Option<&str> {
-        self.inner.fragment()
+    pub fn fragment(&self) -> String {
+        self.inner.fragment().unwrap_or("").to_string()
     }
 
     /// Get the raw path and query string as bytes (HTTPX compatible)
@@ -1161,6 +1320,29 @@ impl URL {
     #[getter]
     pub fn password(&self) -> Option<&str> {
         self.inner.password()
+    }
+
+    /// Get userinfo as bytes (username:password if present)
+    #[getter]
+    pub fn userinfo(&self) -> Vec<u8> {
+        let username = self.inner.username();
+        if username.is_empty() {
+            return Vec::new();
+        }
+        match self.inner.password() {
+            Some(password) => format!("{}:{}", username, password).into_bytes(),
+            None => username.as_bytes().to_vec(),
+        }
+    }
+
+    /// Get netloc as bytes (host:port or just host)
+    #[getter]
+    pub fn netloc(&self) -> Vec<u8> {
+        let host = self.inner.host_str().unwrap_or("");
+        match self.inner.port() {
+            Some(port) => format!("{}:{}", host, port).into_bytes(),
+            None => host.as_bytes().to_vec(),
+        }
     }
 
     /// Join with another URL or path
@@ -1278,7 +1460,19 @@ impl URL {
         if let Ok(url) = other.extract::<URL>() {
             Ok(self.inner == url.inner)
         } else if let Ok(s) = other.extract::<String>() {
-            Ok(self.inner.as_str() == s)
+            // Handle trailing slash normalization
+            let self_str = self.inner.as_str();
+            if self_str == s {
+                return Ok(true);
+            }
+            // Compare without trailing slash
+            let self_no_slash = self_str.trim_end_matches('/');
+            let s_no_slash = s.trim_end_matches('/');
+            // Only normalize if path is just "/"
+            if self.inner.path() == "/" && self_no_slash == s_no_slash {
+                return Ok(true);
+            }
+            Ok(false)
         } else {
             Ok(false)
         }

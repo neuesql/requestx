@@ -43,6 +43,9 @@ sonic-rs = "0.5"
 url = "2"
 urlencoding = "2"
 
+# Ordered map (for headers)
+indexmap = "2"
+
 # Bytes
 bytes = "1"
 
