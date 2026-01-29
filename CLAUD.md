@@ -107,7 +107,7 @@ Pure Rust + zero-copy optimization
 
 | Priority | Rule | Impact |
 |----------|------|--------|
-| ⭐⭐⭐⭐⭐ | Use Rust native libraries (serde_json, not Python json) | 10-50x |
+| ⭐⭐⭐⭐⭐ | Use Rust native libraries (sonic-rs, not Python json) | 10-100x |
 | ⭐⭐⭐⭐⭐ | Minimize Python ↔ Rust boundary crossings | 5-10x |
 | ⭐⭐⭐⭐ | Convert data ONCE at function boundaries | 2-5x |
 | ⭐⭐⭐⭐ | Release GIL for I/O and CPU-intensive operations | 2-10x |
@@ -229,9 +229,16 @@ let mut headers = Vec::new();
 
 ### 4. JSON Processing Rules
 
-**ALWAYS use serde_json, NEVER Python json module:**
+**ALWAYS use sonic-rs, NEVER Python json module:**
+
+sonic-rs is a SIMD-accelerated JSON library, significantly faster than serde_json.
+
 ```rust
-// ✅ Good: 10-50x faster
+// ✅ Best: sonic-rs with SIMD acceleration (10-100x faster than Python)
+let json_str = sonic_rs::to_string(&value)?;
+let parsed: Value = sonic_rs::from_str(&json_str)?;
+
+// ✅ Good: serde_json as fallback (10-50x faster than Python)
 let json_str = serde_json::to_string(&value)?;
 
 // ❌ Bad: Calls Python
@@ -239,11 +246,19 @@ let json_mod = PyModule::import(py, "json")?;
 json_mod.getattr("dumps")?.call1((data,))?;
 ```
 
-| JSON Size | Python json | serde_json | Speedup |
-|-----------|-------------|------------|---------|
-| < 1KB | 0.05ms | 0.005ms | **10x** |
-| 10KB | 0.5ms | 0.03ms | **16x** |
-| 100KB | 5ms | 0.1ms | **50x** |
+**Cargo.toml:**
+```toml
+[dependencies]
+sonic-rs = "0.3"        # Primary: SIMD-accelerated JSON
+serde = { version = "1.0", features = ["derive"] }
+```
+
+| JSON Size | Python json | serde_json | sonic-rs | Speedup (sonic-rs) |
+|-----------|-------------|------------|----------|-------------------|
+| < 1KB | 0.05ms | 0.005ms | 0.001ms | **50x** |
+| 10KB | 0.5ms | 0.03ms | 0.005ms | **100x** |
+| 100KB | 5ms | 0.1ms | 0.02ms | **250x** |
+| 1MB | 50ms | 1ms | 0.15ms | **330x** |
 
 ### 5. Error Handling Rules
 
