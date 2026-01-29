@@ -126,9 +126,18 @@ impl URL {
                     // Apply params if provided
                     let original_str = if let Some(params_obj) = params {
                         let query_params = QueryParams::from_py(params_obj)?;
-                        parsed_url.set_query(Some(&query_params.to_query_string()));
-                        // If params were added, use the normalized URL
-                        None
+                        let query_str = query_params.to_query_string();
+                        // Get base URL without query
+                        let base_url = url_str.split('?').next().unwrap_or(url_str);
+                        // Only set query if params are non-empty
+                        if query_str.is_empty() {
+                            parsed_url.set_query(None);
+                            Some(base_url.to_string())
+                        } else {
+                            parsed_url.set_query(Some(&query_str));
+                            // Preserve original format with params
+                            Some(format!("{}?{}", base_url, query_str))
+                        }
                     } else {
                         // Preserve original URL string
                         Some(url_str.to_string())
@@ -549,11 +558,11 @@ impl URL {
     }
 
     fn __str__(&self) -> String {
-        self.inner.to_string()
+        self.to_string()
     }
 
     fn __repr__(&self) -> String {
-        format!("URL('{}')", self.inner)
+        format!("URL('{}')", self.to_string())
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
