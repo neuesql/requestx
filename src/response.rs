@@ -37,6 +37,7 @@ pub struct Response {
     is_closed: bool,
     is_stream_consumed: bool,
     default_encoding: String,
+    explicit_encoding: Option<String>,
 }
 
 impl Response {
@@ -52,6 +53,7 @@ impl Response {
             is_closed: false,
             is_stream_consumed: false,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
         }
     }
 
@@ -84,6 +86,7 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
         })
     }
 
@@ -111,6 +114,7 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
         })
     }
 }
@@ -272,8 +276,12 @@ impl Response {
 
     #[getter]
     fn text(&self) -> PyResult<String> {
-        // Get encoding from content-type header
-        let encoding = self.get_encoding();
+        // Get encoding - use explicit encoding if set, otherwise detect from header
+        let encoding = if let Some(ref explicit) = self.explicit_encoding {
+            explicit.clone()
+        } else {
+            self.get_encoding()
+        };
         let encoding_lower = encoding.to_lowercase();
 
         // Normalize encoding name (handle common aliases)
@@ -349,6 +357,11 @@ impl Response {
 
     #[getter]
     fn encoding(&self) -> String {
+        // If explicit encoding is set, use it
+        if let Some(ref enc) = self.explicit_encoding {
+            return enc.clone();
+        }
+
         let encoding = self.get_encoding();
         let encoding_lower = encoding.to_lowercase();
 
@@ -365,6 +378,11 @@ impl Response {
         } else {
             "utf-8".to_string()
         }
+    }
+
+    #[setter]
+    fn set_encoding(&mut self, encoding: &str) {
+        self.explicit_encoding = Some(encoding.to_string());
     }
 
     #[getter]
