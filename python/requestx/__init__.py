@@ -951,6 +951,7 @@ class AsyncClient:
     """Async HTTP client that wraps the Rust implementation with proper auth sentinel handling."""
 
     def __init__(self, *args, **kwargs):
+        import os
         # Extract auth from kwargs before passing to Rust client
         auth = kwargs.pop('auth', None)
         # Validate and convert auth value
@@ -962,10 +963,205 @@ class AsyncClient:
             self._auth = auth
         else:
             raise TypeError(f"Invalid 'auth' argument. Expected (username, password) tuple, Auth instance, or callable. Got {type(auth).__name__}.")
-        # Store transport reference for Python-level handling
-        self._transport = kwargs.get('transport', None)
+
+        # Extract proxy and mounts from kwargs
+        proxy = kwargs.pop('proxy', None)
+        mounts = kwargs.pop('mounts', None)
+        trust_env = kwargs.get('trust_env', True)
+
+        # Validate mount keys (must end with "://")
+        if mounts:
+            for key in mounts.keys():
+                if not key.endswith("://") and "://" not in key:
+                    raise ValueError(
+                        f"Proxy keys must end with '://'. Got {key!r}. "
+                        f"Did you mean '{key}://'?"
+                    )
+
+        # Store mounts dictionary
+        self._mounts = mounts or {}
+
+        # Create default transport (with proxy if specified)
+        custom_transport = kwargs.get('transport', None)
+        if custom_transport is not None:
+            self._default_transport = custom_transport
+        elif proxy is not None:
+            self._default_transport = AsyncHTTPTransport(proxy=proxy)
+        else:
+            # Check for proxy env vars if trust_env is True
+            env_proxy = None
+            if trust_env:
+                env_proxy = self._get_proxy_from_env()
+            if env_proxy:
+                self._default_transport = AsyncHTTPTransport(proxy=env_proxy)
+            else:
+                self._default_transport = AsyncHTTPTransport()
+
+        self._custom_transport = custom_transport  # Keep reference to user-provided transport
         self._client = _AsyncClient(*args, **kwargs)
         self._is_closed = False
+
+    def _get_proxy_from_env(self):
+        """Get proxy URL from environment variables."""
+        import os
+        for var in ('ALL_PROXY', 'all_proxy', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'):
+            proxy = os.environ.get(var)
+            if proxy:
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+        return None
+
+    def _should_use_proxy(self, url):
+        """Check if URL should use proxy based on NO_PROXY env var."""
+        import os
+        no_proxy = os.environ.get('NO_PROXY', os.environ.get('no_proxy', ''))
+
+        if not no_proxy:
+            return True
+
+        if no_proxy == '*':
+            return False
+
+        if isinstance(url, str):
+            url = URL(url)
+        host = url.host
+
+        for pattern in no_proxy.split(','):
+            pattern = pattern.strip()
+            if not pattern:
+                continue
+
+            if '://' in pattern:
+                pattern_scheme, pattern_host = pattern.split('://', 1)
+                if pattern_scheme != url.scheme:
+                    continue
+                pattern = pattern_host
+
+            if host == pattern:
+                return False
+
+            if pattern.startswith('.'):
+                if host.endswith(pattern):
+                    return False
+            elif host.endswith('.' + pattern):
+                return False
+
+        return True
+
+    @property
+    def _transport(self):
+        """Get the default transport for this client."""
+        return self._default_transport
+
+    def _transport_for_url(self, url):
+        """Get the transport to use for a given URL."""
+        import os
+        if isinstance(url, str):
+            url = URL(url)
+
+        url_scheme = url.scheme
+        url_host = url.host or ''
+        url_port = url.port
+
+        best_match = None
+        best_score = -1
+
+        for pattern, transport in self._mounts.items():
+            score = self._match_pattern(url_scheme, url_host, url_port, pattern)
+            if score > best_score:
+                best_score = score
+                best_match = transport
+
+        if best_match is not None:
+            return best_match
+
+        if getattr(self._client, 'trust_env', True):
+            proxy_url = self._get_proxy_for_url(url)
+            if proxy_url:
+                if not self._should_use_proxy(url):
+                    return self._default_transport
+                return AsyncHTTPTransport(proxy=proxy_url)
+
+        return self._default_transport
+
+    def _get_proxy_for_url(self, url):
+        """Get proxy URL from environment for a specific URL."""
+        import os
+        scheme = url.scheme if hasattr(url, 'scheme') else 'http'
+
+        if scheme == 'https':
+            proxy = os.environ.get('HTTPS_PROXY', os.environ.get('https_proxy'))
+            if proxy:
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+
+        if scheme == 'http':
+            proxy = os.environ.get('HTTP_PROXY', os.environ.get('http_proxy'))
+            if proxy:
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+
+        proxy = os.environ.get('ALL_PROXY', os.environ.get('all_proxy'))
+        if proxy:
+            if '://' not in proxy:
+                proxy = 'http://' + proxy
+            return proxy
+
+        return None
+
+    def _match_pattern(self, url_scheme, url_host, url_port, pattern):
+        """Match URL against a mount pattern. Returns score (higher is better match), or -1 if no match."""
+        if '://' in pattern:
+            pattern_scheme, pattern_rest = pattern.split('://', 1)
+        else:
+            return -1
+
+        if pattern_scheme not in ('all', url_scheme):
+            return -1
+
+        score = 0 if pattern_scheme == 'all' else 1
+
+        if not pattern_rest:
+            return score
+
+        if ':' in pattern_rest and not pattern_rest.startswith('['):
+            pattern_host, pattern_port_str = pattern_rest.rsplit(':', 1)
+            try:
+                pattern_port = int(pattern_port_str)
+            except ValueError:
+                pattern_host = pattern_rest
+                pattern_port = None
+        else:
+            pattern_host = pattern_rest
+            pattern_port = None
+
+        if pattern_host == '*':
+            score += 2
+        elif pattern_host.startswith('*.'):
+            suffix = pattern_host[1:]
+            if url_host.endswith(suffix) and url_host != suffix[1:]:
+                score += 2
+            else:
+                return -1
+        elif pattern_host.startswith('*'):
+            suffix = pattern_host[1:]
+            if url_host == suffix or url_host.endswith('.' + suffix):
+                score += 2
+            else:
+                return -1
+        else:
+            if url_host.lower() != pattern_host.lower():
+                return -1
+            score += 2
+
+        if pattern_port is not None:
+            if url_port == pattern_port:
+                score += 4
+
+        return score
 
     def __getattr__(self, name):
         """Delegate attribute access to the underlying client."""
@@ -975,16 +1171,16 @@ class AsyncClient:
         if self._is_closed:
             raise RuntimeError("Cannot open a client that has been closed")
         # Call transport's __aenter__ if it exists
-        if self._transport is not None and hasattr(self._transport, '__aenter__'):
-            await self._transport.__aenter__()
+        if self._custom_transport is not None and hasattr(self._custom_transport, '__aenter__'):
+            await self._custom_transport.__aenter__()
         await self._client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         result = await self._client.__aexit__(exc_type, exc_val, exc_tb)
         # Call transport's __aexit__ if it exists
-        if self._transport is not None and hasattr(self._transport, '__aexit__'):
-            await self._transport.__aexit__(exc_type, exc_val, exc_tb)
+        if self._custom_transport is not None and hasattr(self._custom_transport, '__aexit__'):
+            await self._custom_transport.__aexit__(exc_type, exc_val, exc_tb)
         self._is_closed = True
         return result
 
@@ -992,8 +1188,8 @@ class AsyncClient:
         """Close the client."""
         if hasattr(self._client, 'aclose'):
             await self._client.aclose()
-        if self._transport is not None and hasattr(self._transport, 'aclose'):
-            await self._transport.aclose()
+        if self._custom_transport is not None and hasattr(self._custom_transport, 'aclose'):
+            await self._custom_transport.aclose()
         self._is_closed = True
 
     @property
@@ -1449,6 +1645,7 @@ class Client:
     """Sync HTTP client that wraps the Rust implementation with proper auth sentinel handling."""
 
     def __init__(self, *args, **kwargs):
+        import os
         # Extract auth and transport from kwargs before passing to Rust client
         auth = kwargs.pop('auth', None)
         # Validate and convert auth value
@@ -1460,10 +1657,235 @@ class Client:
             self._auth = auth
         else:
             raise TypeError(f"Invalid 'auth' argument. Expected (username, password) tuple, Auth instance, or callable. Got {type(auth).__name__}.")
-        self._transport = kwargs.get('transport', None)  # Keep in kwargs for Rust
+
+        # Extract proxy and mounts from kwargs
+        proxy = kwargs.pop('proxy', None)
+        mounts = kwargs.pop('mounts', None)
+        trust_env = kwargs.get('trust_env', True)
+
+        # Validate mount keys (must end with "://")
+        if mounts:
+            for key in mounts.keys():
+                if not key.endswith("://") and "://" not in key:
+                    raise ValueError(
+                        f"Proxy keys must end with '://'. Got {key!r}. "
+                        f"Did you mean '{key}://'?"
+                    )
+
+        # Store mounts dictionary
+        self._mounts = mounts or {}
+
+        # Create default transport (with proxy if specified)
+        custom_transport = kwargs.get('transport', None)
+        if custom_transport is not None:
+            self._default_transport = custom_transport
+        elif proxy is not None:
+            self._default_transport = HTTPTransport(proxy=proxy)
+        else:
+            # Check for proxy env vars if trust_env is True
+            env_proxy = None
+            if trust_env:
+                env_proxy = self._get_proxy_from_env()
+            if env_proxy:
+                self._default_transport = HTTPTransport(proxy=env_proxy)
+            else:
+                self._default_transport = HTTPTransport()
+
+        self._custom_transport = custom_transport  # Keep reference to user-provided transport
         self._client = _Client(*args, **kwargs)
         self._headers_proxy = None
         self._is_closed = False
+
+    def _get_proxy_from_env(self):
+        """Get proxy URL from environment variables."""
+        import os
+        # Check common proxy env vars
+        for var in ('ALL_PROXY', 'all_proxy', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'):
+            proxy = os.environ.get(var)
+            if proxy:
+                # Auto-prepend http:// if no scheme
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+        return None
+
+    def _should_use_proxy(self, url):
+        """Check if URL should use proxy based on NO_PROXY env var."""
+        import os
+        no_proxy = os.environ.get('NO_PROXY', os.environ.get('no_proxy', ''))
+
+        if not no_proxy:
+            return True
+
+        if no_proxy == '*':
+            return False
+
+        # Get host from URL
+        if isinstance(url, str):
+            url = URL(url)
+        host = url.host
+
+        for pattern in no_proxy.split(','):
+            pattern = pattern.strip()
+            if not pattern:
+                continue
+
+            # Check if pattern has scheme
+            if '://' in pattern:
+                pattern_scheme, pattern_host = pattern.split('://', 1)
+                # Check scheme matches
+                if pattern_scheme != url.scheme:
+                    continue
+                pattern = pattern_host
+
+            # Check for exact match
+            if host == pattern:
+                return False
+
+            # Check if host ends with pattern (with dot separator)
+            if pattern.startswith('.'):
+                # .example.com matches www.example.com
+                if host.endswith(pattern):
+                    return False
+            elif host.endswith('.' + pattern):
+                # example.com matches www.example.com but not wwwexample.com
+                return False
+
+        return True
+
+    @property
+    def _transport(self):
+        """Get the default transport for this client."""
+        return self._default_transport
+
+    def _transport_for_url(self, url):
+        """Get the transport to use for a given URL.
+
+        Returns the most specific matching mount, or the default transport if no match.
+        """
+        import os
+        if isinstance(url, str):
+            url = URL(url)
+
+        url_scheme = url.scheme
+        url_host = url.host or ''
+        url_port = url.port
+
+        # First check mounts dictionary for a matching pattern
+        best_match = None
+        best_score = -1
+
+        for pattern, transport in self._mounts.items():
+            score = self._match_pattern(url_scheme, url_host, url_port, pattern)
+            if score > best_score:
+                best_score = score
+                best_match = transport
+
+        if best_match is not None:
+            return best_match
+
+        # If trust_env is enabled, check environment variables
+        if getattr(self._client, 'trust_env', True):
+            proxy_url = self._get_proxy_for_url(url)
+            if proxy_url:
+                if not self._should_use_proxy(url):
+                    return self._default_transport
+                return HTTPTransport(proxy=proxy_url)
+
+        return self._default_transport
+
+    def _get_proxy_for_url(self, url):
+        """Get proxy URL from environment for a specific URL."""
+        import os
+        scheme = url.scheme if hasattr(url, 'scheme') else 'http'
+
+        # Check scheme-specific proxy first
+        if scheme == 'https':
+            proxy = os.environ.get('HTTPS_PROXY', os.environ.get('https_proxy'))
+            if proxy:
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+
+        if scheme == 'http':
+            proxy = os.environ.get('HTTP_PROXY', os.environ.get('http_proxy'))
+            if proxy:
+                if '://' not in proxy:
+                    proxy = 'http://' + proxy
+                return proxy
+
+        # Fallback to ALL_PROXY
+        proxy = os.environ.get('ALL_PROXY', os.environ.get('all_proxy'))
+        if proxy:
+            if '://' not in proxy:
+                proxy = 'http://' + proxy
+            return proxy
+
+        return None
+
+    def _match_pattern(self, url_scheme, url_host, url_port, pattern):
+        """Match URL against a mount pattern. Returns score (higher is better match), or -1 if no match."""
+        # Parse pattern
+        if '://' in pattern:
+            pattern_scheme, pattern_rest = pattern.split('://', 1)
+        else:
+            return -1  # Invalid pattern
+
+        # Check scheme match
+        if pattern_scheme not in ('all', url_scheme):
+            return -1
+
+        # Score: all:// = 0, http:// = 1, with host = +2, with port = +4
+        score = 0 if pattern_scheme == 'all' else 1
+
+        if not pattern_rest:
+            # Pattern is just "http://" or "all://"
+            return score
+
+        # Parse host and port from pattern
+        if ':' in pattern_rest and not pattern_rest.startswith('['):
+            pattern_host, pattern_port_str = pattern_rest.rsplit(':', 1)
+            try:
+                pattern_port = int(pattern_port_str)
+            except ValueError:
+                pattern_host = pattern_rest
+                pattern_port = None
+        else:
+            pattern_host = pattern_rest
+            pattern_port = None
+
+        # Match host
+        if pattern_host == '*':
+            # Matches any host
+            score += 2
+        elif pattern_host.startswith('*.'):
+            # Wildcard subdomain: *.example.com matches www.example.com but not example.com
+            suffix = pattern_host[1:]  # ".example.com"
+            if url_host.endswith(suffix) and url_host != suffix[1:]:
+                score += 2
+            else:
+                return -1
+        elif pattern_host.startswith('*'):
+            # Pattern like "*example.com" - must end with .example.com or be example.com
+            suffix = pattern_host[1:]  # "example.com"
+            if url_host == suffix or url_host.endswith('.' + suffix):
+                score += 2
+            else:
+                return -1
+        else:
+            # Exact host match (case insensitive)
+            if url_host.lower() != pattern_host.lower():
+                return -1
+            score += 2
+
+        # Match port if specified
+        if pattern_port is not None:
+            if url_port == pattern_port:
+                score += 4
+            # Don't return -1 if port doesn't match - host without port matches any port
+            # But if pattern has port, it should match for higher score
+
+        return score
 
     def __getattr__(self, name):
         """Delegate attribute access to the underlying client."""

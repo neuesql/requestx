@@ -150,9 +150,11 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 392 failed / 1014 passed / 1 skipped (Total: 1407)
+## Test Status: 340 failed / 1066 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY)
+- URL: Added `raw_scheme` property, fixed `raw_host` IPv6 bracket handling
 - Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
 - DigestAuth implementation with MD5, SHA, SHA-256, SHA-512 algorithm support
 - AsyncClient and Client auth type validation (raises TypeError for invalid auth)
@@ -173,7 +175,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 | 2 | models/test_responses.py | 60/46 | Response streaming, encoding | 🟡 Partial | P0 |
 | 3 | models/test_url.py | 48/42 | RFC3986 compliance, IDNA | 🔴 Failing | P0 |
 | 4 | test_content.py | 18/25 | Stream markers, async iterators | 🟡 Partial | P0 |
-| 5 | client/test_proxies.py | 35/34 | Proxy env vars | 🟡 Partial | P1 |
+| 5 | client/test_proxies.py | 0/69 | Proxy env vars (HTTP_PROXY, NO_PROXY) | ✅ Done | - |
 | 6 | client/test_redirects.py | 30/1 | history, next_request | 🔴 Failing | P1 |
 | 7 | client/test_async_client.py | 20/32 | Async streaming, build_request | 🟡 Partial | P1 |
 | 8 | test_decoders.py | 26/14 | gzip/brotli/zstd/deflate | 🔴 Failing | P1 |

@@ -384,7 +384,23 @@ impl URL {
     #[getter]
     fn raw_host<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         let host = self.inner.host_str().unwrap_or("");
+        // Strip brackets for IPv6 addresses - httpcore expects host without brackets
+        let host = if host.starts_with('[') && host.ends_with(']') {
+            &host[1..host.len()-1]
+        } else {
+            host
+        };
         PyBytes::new(py, host.as_bytes())
+    }
+
+    #[getter]
+    fn raw_scheme<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        let scheme = self.inner.scheme();
+        if scheme == "relative" {
+            PyBytes::new(py, b"")
+        } else {
+            PyBytes::new(py, scheme.as_bytes())
+        }
     }
 
     #[getter]

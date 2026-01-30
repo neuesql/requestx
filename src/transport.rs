@@ -331,35 +331,15 @@ impl HTTPTransport {
             if proxy_url.starts_with("socks") {
                 let httpcore = py.import("httpcore")?;
                 let socks_proxy_class = httpcore.getattr("SOCKSProxy")?;
-                // Parse proxy URL to get components
-                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-                })?;
-                let scheme = parsed.scheme().as_bytes().to_vec();
-                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
-                let port = parsed.port();
-                let proxy = socks_proxy_class.call1((
-                    PyBytes::new(py, &scheme),
-                    PyBytes::new(py, &host),
-                    port,
-                ))?;
+                // Pass the proxy URL as-is - httpcore will parse it
+                let proxy = socks_proxy_class.call1((proxy_url.as_str(),))?;
                 Ok(proxy)
             } else {
                 // HTTP/HTTPS proxy
                 let httpcore = py.import("httpcore")?;
                 let http_proxy_class = httpcore.getattr("HTTPProxy")?;
-                // Parse proxy URL to get components
-                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-                })?;
-                let scheme = parsed.scheme().as_bytes().to_vec();
-                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
-                let port = parsed.port();
-                let proxy = http_proxy_class.call1((
-                    PyBytes::new(py, &scheme),
-                    PyBytes::new(py, &host),
-                    port,
-                ))?;
+                // Pass the proxy URL as-is - httpcore will parse it
+                let proxy = http_proxy_class.call1((proxy_url.as_str(),))?;
                 Ok(proxy)
             }
         } else {
@@ -513,35 +493,15 @@ impl AsyncHTTPTransport {
             if proxy_url.starts_with("socks") {
                 let httpcore = py.import("httpcore")?;
                 let socks_proxy_class = httpcore.getattr("AsyncSOCKSProxy")?;
-                // Parse proxy URL to get components
-                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-                })?;
-                let scheme = parsed.scheme().as_bytes().to_vec();
-                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
-                let port = parsed.port();
-                let proxy = socks_proxy_class.call1((
-                    PyBytes::new(py, &scheme),
-                    PyBytes::new(py, &host),
-                    port,
-                ))?;
+                // Pass the proxy URL as-is - httpcore will parse it
+                let proxy = socks_proxy_class.call1((proxy_url.as_str(),))?;
                 Ok(proxy)
             } else {
                 // HTTP/HTTPS proxy
                 let httpcore = py.import("httpcore")?;
                 let http_proxy_class = httpcore.getattr("AsyncHTTPProxy")?;
-                // Parse proxy URL to get components
-                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-                })?;
-                let scheme = parsed.scheme().as_bytes().to_vec();
-                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
-                let port = parsed.port();
-                let proxy = http_proxy_class.call1((
-                    PyBytes::new(py, &scheme),
-                    PyBytes::new(py, &host),
-                    port,
-                ))?;
+                // Pass the proxy URL as-is - httpcore will parse it
+                let proxy = http_proxy_class.call1((proxy_url.as_str(),))?;
                 Ok(proxy)
             }
         } else {
