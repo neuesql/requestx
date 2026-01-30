@@ -2,8 +2,50 @@
 
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 use std::collections::HashMap;
+
+/// Extract string from either str or bytes, returning (string, encoding)
+fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+    // Check for None first
+    if obj.is_none() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            format!("Header value must be str or bytes, not {}", obj.get_type())
+        ));
+    }
+    // Try string first
+    if let Ok(s) = obj.downcast::<PyString>() {
+        return Ok((s.to_string(), "ascii".to_string()));
+    }
+    // Try bytes
+    if let Ok(b) = obj.downcast::<PyBytes>() {
+        let bytes = b.as_bytes();
+        // Try to detect encoding
+        // First try ASCII (all bytes < 128)
+        if bytes.iter().all(|&byte| byte < 128) {
+            return Ok((String::from_utf8_lossy(bytes).to_string(), "ascii".to_string()));
+        }
+        // Try UTF-8
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            return Ok((s.to_string(), "utf-8".to_string()));
+        }
+        // Fall back to ISO-8859-1 (Latin-1) - direct byte to char mapping
+        let s: String = bytes.iter().map(|&b| b as char).collect();
+        return Ok((s, "iso-8859-1".to_string()));
+    }
+    // Try extracting as string - if this fails, give a better error
+    obj.extract::<String>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(
+            format!("Header value must be str or bytes, not {}", obj.get_type())
+        )
+    }).map(|s| (s, "ascii".to_string()))
+}
+
+/// Extract key (lowercased) from either str or bytes, returning (string, encoding)
+fn extract_key_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+    let (s, enc) = extract_string_or_bytes(obj)?;
+    Ok((s.to_lowercase(), enc))
+}
 
 /// HTTP Headers with case-insensitive keys
 #[pyclass(name = "Headers")]
@@ -13,15 +55,17 @@ pub struct Headers {
     inner: Vec<(String, String)>,
     /// Whether headers were created from a dict (affects repr format)
     from_dict: bool,
+    /// Encoding used to decode bytes (ascii, utf-8, iso-8859-1)
+    encoding: String,
 }
 
 impl Headers {
     pub fn new() -> Self {
-        Self { inner: Vec::new(), from_dict: false }
+        Self { inner: Vec::new(), from_dict: false, encoding: "ascii".to_string() }
     }
 
     pub fn from_vec(headers: Vec<(String, String)>) -> Self {
-        Self { inner: headers, from_dict: false }
+        Self { inner: headers, from_dict: false, encoding: "ascii".to_string() }
     }
 
     pub fn get_all(&self, key: &str) -> Vec<&str> {
@@ -56,7 +100,7 @@ impl Headers {
                 )
             })
             .collect();
-        Self { inner, from_dict: false }
+        Self { inner, from_dict: false, encoding: "ascii".to_string() }
     }
 
     pub fn inner(&self) -> &Vec<(String, String)> {
@@ -69,10 +113,11 @@ impl Headers {
     }
 
     /// Set a header value (removes existing headers with same key)
+    /// Keys are normalized to lowercase to match httpx behavior
     pub fn set(&mut self, key: String, value: String) {
         let key_lower = key.to_lowercase();
         self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
-        self.inner.push((key, value));
+        self.inner.push((key_lower, value));
     }
 
     /// Check if a header exists
@@ -96,6 +141,18 @@ impl Headers {
             Some(values.join(", "))
         }
     }
+
+    /// Remove a header by key (case-insensitive)
+    pub fn remove(&mut self, key: &str) {
+        let key_lower = key.to_lowercase();
+        self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
+    }
+
+    /// Append a header value (allows duplicate keys)
+    pub fn append(&mut self, key: String, value: String) {
+        let key_lower = key.to_lowercase();
+        self.inner.push((key_lower, value));
+    }
 }
 
 #[pymethods]
@@ -103,26 +160,46 @@ impl Headers {
     #[new]
     #[pyo3(signature = (headers=None))]
     fn py_new(headers: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        use pyo3::types::PyBytes;
+
         let mut h = Self::new();
 
         if let Some(obj) = headers {
             if let Ok(dict) = obj.downcast::<PyDict>() {
                 h.from_dict = true;
                 for (key, value) in dict.iter() {
-                    let k: String = key.extract()?;
-                    let v: String = value.extract()?;
+                    // Handle both string and bytes keys/values (keys are lowercased)
+                    let (k, k_encoding) = extract_key_or_bytes(&key)?;
+                    let (v, v_encoding) = extract_string_or_bytes(&value)?;
                     h.inner.push((k, v));
+                    // Update encoding if non-ascii detected
+                    if k_encoding != "ascii" || v_encoding != "ascii" {
+                        if k_encoding == "utf-8" || v_encoding == "utf-8" {
+                            h.encoding = "utf-8".to_string();
+                        } else if k_encoding == "iso-8859-1" || v_encoding == "iso-8859-1" {
+                            h.encoding = "iso-8859-1".to_string();
+                        }
+                    }
                 }
             } else if let Ok(list) = obj.downcast::<PyList>() {
                 for item in list.iter() {
                     let tuple = item.downcast::<PyTuple>()?;
-                    let k: String = tuple.get_item(0)?.extract()?;
-                    let v: String = tuple.get_item(1)?.extract()?;
+                    let (k, k_encoding) = extract_key_or_bytes(&tuple.get_item(0)?)?;
+                    let (v, v_encoding) = extract_string_or_bytes(&tuple.get_item(1)?)?;
                     h.inner.push((k, v));
+                    // Update encoding if non-ascii detected
+                    if k_encoding != "ascii" || v_encoding != "ascii" {
+                        if k_encoding == "utf-8" || v_encoding == "utf-8" {
+                            h.encoding = "utf-8".to_string();
+                        } else if k_encoding == "iso-8859-1" || v_encoding == "iso-8859-1" {
+                            h.encoding = "iso-8859-1".to_string();
+                        }
+                    }
                 }
             } else if let Ok(other_headers) = obj.extract::<Headers>() {
                 h.inner = other_headers.inner;
                 h.from_dict = other_headers.from_dict;
+                h.encoding = other_headers.encoding;
             }
         }
 
@@ -196,7 +273,7 @@ impl Headers {
             existing
         } else {
             let value = default.unwrap_or_default();
-            self.inner.push((key, value.clone()));
+            self.inner.push((key_lower, value.clone()));
             value
         }
     }
@@ -267,9 +344,9 @@ impl Headers {
         }
 
         if let Some(pos) = insert_pos {
-            new_inner.insert(pos, (key, value));
+            new_inner.insert(pos, (key_lower.clone(), value));
         } else {
-            new_inner.push((key, value));
+            new_inner.push((key_lower, value));
         }
 
         self.inner = new_inner;
@@ -354,21 +431,56 @@ impl Headers {
     }
 
     fn __repr__(&self) -> String {
+        // Sensitive headers that should be masked
+        let sensitive_headers = ["authorization", "proxy-authorization"];
+
+        let mask_value = |k: &str, v: &str| -> String {
+            if sensitive_headers.contains(&k.to_lowercase().as_str()) {
+                "[secure]".to_string()
+            } else {
+                v.to_string()
+            }
+        };
+
         if self.from_dict {
             let items: Vec<String> = self
                 .inner
                 .iter()
-                .map(|(k, v)| format!("'{}': '{}'", k, v))
+                .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
                 .collect();
             format!("Headers({{{}}})", items.join(", "))
         } else {
-            let items: Vec<String> = self
-                .inner
-                .iter()
-                .map(|(k, v)| format!("('{}', '{}')", k, v))
-                .collect();
-            format!("Headers([{}])", items.join(", "))
+            // Check if we have duplicate keys - if so, use list format
+            let mut seen = std::collections::HashSet::new();
+            let has_duplicates = self.inner.iter().any(|(k, _)| !seen.insert(k.to_lowercase()));
+
+            if has_duplicates {
+                let items: Vec<String> = self
+                    .inner
+                    .iter()
+                    .map(|(k, v)| format!("('{}', '{}')", k, mask_value(k, v)))
+                    .collect();
+                format!("Headers([{}])", items.join(", "))
+            } else {
+                // Single values per key - use dict format
+                let items: Vec<String> = self
+                    .inner
+                    .iter()
+                    .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
+                    .collect();
+                format!("Headers({{{}}})", items.join(", "))
+            }
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> &str {
+        &self.encoding
+    }
+
+    #[setter]
+    fn set_encoding(&mut self, encoding: &str) {
+        self.encoding = encoding.to_string();
     }
 
     fn copy(&self) -> Self {

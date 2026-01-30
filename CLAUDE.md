@@ -150,37 +150,59 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 527 failed / 880 passed / 1 skipped (Total: 1407)
+## Test Status: 392 failed / 1014 passed / 1 skipped (Total: 1407)
 
-| ID | Test File | Tests (F/T) | Features | Dependencies | Status | Priority |
-|----|-----------|-------------|----------|--------------|--------|----------|
-| 1 | client/test_auth.py | 77/79 | Basic/Digest auth, custom auth callables | MockTransport | 🔴 Failing | P0 |
-| 2 | models/test_responses.py | 64/106 | Response streaming, encoding, links | Response model | 🔴 Failing | P0 |
-| 3 | models/test_url.py | 48/90 | RFC3986 compliance, percent encoding, IDNA | URL model | 🔴 Failing | P0 |
-| 4 | test_content.py | 42/43 | Stream markers, async iterators, multipart | Content handling | 🔴 Failing | P0 |
-| 5 | client/test_proxies.py | 35/69 | Proxy env vars (HTTP_PROXY, NO_PROXY) | Transport | 🟡 Partial | P1 |
-| 6 | client/test_redirects.py | 30/31 | history, next_request, cross-domain auth | Response | 🔴 Failing | P1 |
-| 7 | client/test_async_client.py | 28/52 | Async streaming, build_request | AsyncClient | 🟡 Partial | P1 |
-| 8 | test_decoders.py | 26/40 | gzip/brotli/zstd/deflate decoders | Decoders | 🔴 Failing | P1 |
-| 9 | test_asgi.py | 24/24 | ASGITransport, app lifecycle | Transport | 🔴 Failing | P2 |
-| 10 | client/test_client.py | 18/35 | build_request, transport management | Client | 🟡 Partial | P1 |
-| 11 | client/test_headers.py | 15/17 | Header encoding, sensitive masking | Headers | 🔴 Failing | P1 |
-| 12 | models/test_headers.py | 15/27 | parse_header_links, encoding | Headers | 🔴 Failing | P1 |
-| 13 | test_multipart.py | 15/38 | Key/value validation, HTML5 escaping | Multipart | 🟡 Partial | P1 |
-| 14 | test_utils.py | 14/40 | guess_json_utf, BOM detection | Utils | 🟡 Partial | P2 |
-| 15 | models/test_queryparams.py | 13/14 | set(), add(), remove(), __hash__ | QueryParams | 🔴 Failing | P1 |
-| 16 | models/test_requests.py | 13/24 | Request.stream, pickle support | Request | 🟡 Partial | P1 |
-| 17 | test_config.py | 12/28 | create_ssl_context, verify, cert | SSL | 🟡 Partial | P0 |
-| 18 | test_auth.py | 8/8 | Auth module exports | Auth | 🔴 Failing | P1 |
-| 19 | test_timeouts.py | 8/10 | Timeout edge cases | Timeout | 🟡 Partial | P2 |
-| 20 | client/test_event_hooks.py | 6/9 | Hooks on redirects | Hooks | 🟡 Partial | P2 |
-| 21 | client/test_cookies.py | 6/7 | Cookie persistence | Cookies | 🔴 Failing | P2 |
-| 22 | models/test_cookies.py | 4/7 | Domain/path support | Cookies | 🟡 Partial | P2 |
-| 23 | client/test_queryparams.py | 3/3 | Client query params | QueryParams | 🔴 Failing | P2 |
-| 24 | test_api.py | 2/12 | Iterator content in post/put | API | 🟡 Partial | P1 |
-| 25 | test_exceptions.py | 1/3 | Exception hierarchy | Exceptions | 🟡 Partial | P2 |
-| 26 | client/test_properties.py | 0/8 | Client properties | Client | ✅ Done | - |
-| 27 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | URL | ✅ Done | - |
-| 28 | test_exported_members.py | 0/1 | Module exports | Exports | ✅ Done | - |
-| 29 | test_status_codes.py | 0/6 | Status codes | Status | ✅ Done | - |
-| 30 | test_wsgi.py | 0/12 | WSGI transport | Transport | ✅ Done | - |
+### Recent Improvements
+- Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
+- DigestAuth implementation with MD5, SHA, SHA-256, SHA-512 algorithm support
+- AsyncClient and Client auth type validation (raises TypeError for invalid auth)
+- AsyncClient and Client stream() context manager with auth support
+- Transport routing in auth flows (_send_single_request pattern)
+- HTTPStatusError now has `request` and `response` attributes
+- Response history tracking during auth flows
+- AsyncClient properly handles custom transports with auth flows
+- Response.request setter now works
+- Request.headers proxy properly syncs with Rust headers
+- AsyncClient/Client context manager calls transport lifecycle methods
+- MutableHeaders.raw property for raw header bytes
+- Content-length: 0 header for POST/PUT/PATCH without body
+
+| ID | Test File | Tests (F/P) | Features | Status | Priority |
+|----|-----------|-------------|----------|--------|----------|
+| 1 | client/test_auth.py | 13/66 | Basic/Digest auth, custom auth | 🟡 Partial | P0 |
+| 2 | models/test_responses.py | 60/46 | Response streaming, encoding | 🟡 Partial | P0 |
+| 3 | models/test_url.py | 48/42 | RFC3986 compliance, IDNA | 🔴 Failing | P0 |
+| 4 | test_content.py | 18/25 | Stream markers, async iterators | 🟡 Partial | P0 |
+| 5 | client/test_proxies.py | 35/34 | Proxy env vars | 🟡 Partial | P1 |
+| 6 | client/test_redirects.py | 30/1 | history, next_request | 🔴 Failing | P1 |
+| 7 | client/test_async_client.py | 20/32 | Async streaming, build_request | 🟡 Partial | P1 |
+| 8 | test_decoders.py | 26/14 | gzip/brotli/zstd/deflate | 🔴 Failing | P1 |
+| 9 | test_asgi.py | 24/0 | ASGITransport | 🔴 Failing | P2 |
+| 10 | client/test_client.py | 14/21 | build_request, transport | 🟡 Partial | P1 |
+| 11 | client/test_headers.py | 15/2 | Header encoding | 🔴 Failing | P1 |
+| 12 | models/test_headers.py | 2/25 | parse_header_links | 🟢 Mostly | P1 |
+| 13 | test_multipart.py | 15/23 | Key/value validation | 🟡 Partial | P1 |
+| 14 | test_utils.py | 14/26 | guess_json_utf, BOM | 🟡 Partial | P2 |
+| 15 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - |
+| 16 | models/test_requests.py | 15/9 | Request.stream, pickle | 🟡 Partial | P1 |
+| 17 | test_config.py | 1/27 | create_ssl_context | 🟢 Mostly | P0 |
+| 18 | test_auth.py | 4/4 | Auth module exports | 🟡 Partial | P1 |
+| 19 | test_timeouts.py | 8/2 | Timeout edge cases | 🟡 Partial | P2 |
+| 20 | client/test_event_hooks.py | 6/3 | Hooks on redirects | 🟡 Partial | P2 |
+| 21 | client/test_cookies.py | 6/1 | Cookie persistence | 🔴 Failing | P2 |
+| 22 | models/test_cookies.py | 4/3 | Domain/path support | 🟡 Partial | P2 |
+| 23 | client/test_queryparams.py | 3/0 | Client query params | 🔴 Failing | P2 |
+| 24 | test_api.py | 2/10 | Iterator content | 🟢 Mostly | P1 |
+| 25 | test_exceptions.py | 1/2 | Exception hierarchy | 🟡 Partial | P2 |
+| 26 | client/test_properties.py | 0/8 | Client properties | ✅ Done | - |
+| 27 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - |
+| 28 | test_exported_members.py | 0/1 | Module exports | ✅ Done | - |
+| 29 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - |
+| 30 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - |
+
+### Known Issues (Priority Order)
+1. **Header case preservation**: Headers are lowercased, tests expect original case
+2. **URL scheme handling**: Empty scheme URLs (e.g., "://example.com") not fully supported
+3. **Digest auth**: Full RFC 2069/7616 implementation needed
+4. **Redirect handling**: Need manual redirect handling for history tracking
+5. **UTF-16/32 encoding**: JSON decoding for non-UTF-8 encodings

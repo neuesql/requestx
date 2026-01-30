@@ -48,6 +48,14 @@ impl MockTransport {
                 return Ok(response);
             }
 
+            // Check if it's a Python wrapper with _response attribute
+            let result_bound = result.bind(py);
+            if let Ok(inner) = result_bound.getattr("_response") {
+                if let Ok(response) = inner.extract::<Response>() {
+                    return Ok(response);
+                }
+            }
+
             // If it's a callable that needs to be awaited (async), handle that
             // For now, we expect sync handlers
             Err(pyo3::exceptions::PyTypeError::new_err(
@@ -87,7 +95,20 @@ impl MockTransport {
                 return future_into_py(py, async move {
                     let py_result = fut.await?;
                     Python::with_gil(|py| -> PyResult<Response> {
-                        Ok(py_result.extract::<Response>(py)?)
+                        // Try direct extraction first
+                        if let Ok(response) = py_result.extract::<Response>(py) {
+                            return Ok(response);
+                        }
+                        // Try extracting from _response attribute (Python wrapper)
+                        let result_bound = py_result.bind(py);
+                        if let Ok(inner) = result_bound.getattr("_response") {
+                            if let Ok(response) = inner.extract::<Response>() {
+                                return Ok(response);
+                            }
+                        }
+                        Err(pyo3::exceptions::PyTypeError::new_err(
+                            "MockTransport handler must return a Response object",
+                        ))
                     })
                 });
             }
@@ -96,6 +117,14 @@ impl MockTransport {
             if let Ok(response) = result.extract::<Response>(py) {
                 drop(handler);
                 return future_into_py(py, async move { Ok(response) });
+            }
+
+            // Check if it's a Python wrapper with _response attribute
+            if let Ok(inner) = result_bound.getattr("_response") {
+                if let Ok(response) = inner.extract::<Response>() {
+                    drop(handler);
+                    return future_into_py(py, async move { Ok(response) });
+                }
             }
 
             return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -154,7 +183,20 @@ impl AsyncMockTransport {
                 let handler = handler_arc.lock();
                 if let Some(ref h) = *handler {
                     let result = h.call1(py, (request,))?;
-                    result.extract::<Response>(py).map_err(|e| e.into())
+                    // Try direct extraction first
+                    if let Ok(response) = result.extract::<Response>(py) {
+                        return Ok(response);
+                    }
+                    // Try extracting from _response attribute (Python wrapper)
+                    let result_bound = result.bind(py);
+                    if let Ok(inner) = result_bound.getattr("_response") {
+                        if let Ok(response) = inner.extract::<Response>() {
+                            return Ok(response);
+                        }
+                    }
+                    Err(pyo3::exceptions::PyTypeError::new_err(
+                        "AsyncMockTransport handler must return a Response object",
+                    ))
                 } else {
                     Ok(Response::new(200))
                 }

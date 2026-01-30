@@ -1,13 +1,37 @@
 //! HTTP Request implementation
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString};
 
 use crate::cookies::Cookies;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
 use crate::types::SyncByteStream;
 use crate::url::URL;
+
+/// Convert a Python value to a string for form encoding (handles int, float, bool, str, None)
+fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if obj.is_none() {
+        return Ok(String::new());
+    }
+    // Check bool before int (since bool is subclass of int in Python)
+    if let Ok(b) = obj.downcast::<PyBool>() {
+        return Ok(if b.is_true() { "true" } else { "false" }.to_string());
+    }
+    if let Ok(i) = obj.downcast::<PyInt>() {
+        let val: i64 = i.extract()?;
+        return Ok(val.to_string());
+    }
+    if let Ok(f) = obj.downcast::<PyFloat>() {
+        let val: f64 = f.extract()?;
+        return Ok(val.to_string());
+    }
+    if let Ok(s) = obj.downcast::<PyString>() {
+        return Ok(s.extract::<String>()?);
+    }
+    // Fall back to str() representation
+    Ok(obj.str()?.to_string())
+}
 
 /// Mutable headers wrapper for Request.headers
 /// This allows modifying headers in place and assigning back to Request
@@ -85,7 +109,40 @@ impl MutableHeaders {
     }
 
     fn items(&self) -> Vec<(String, String)> {
+        // Return merged values for duplicate keys (httpx behavior)
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for (key, _) in self.headers.inner() {
+            let key_lower = key.to_lowercase();
+            if seen.insert(key_lower.clone()) {
+                let values: Vec<&str> = self.headers.inner()
+                    .iter()
+                    .filter(|(k, _)| k.to_lowercase() == key_lower)
+                    .map(|(_, v)| v.as_str())
+                    .collect();
+                result.push((key.clone(), values.join(", ")));
+            }
+        }
+        result
+    }
+
+    fn multi_items(&self) -> Vec<(String, String)> {
         self.headers.inner().clone()
+    }
+
+    /// Returns the raw headers as a list of (name, value) tuples of bytes
+    #[getter]
+    fn raw<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        use pyo3::types::PyBytes;
+        let items: Vec<_> = self.headers.inner()
+            .iter()
+            .map(|(k, v)| {
+                let key_bytes = PyBytes::new(py, k.as_bytes());
+                let value_bytes = PyBytes::new(py, v.as_bytes());
+                (key_bytes, value_bytes)
+            })
+            .collect();
+        PyList::new(py, items)
     }
 
     fn update(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -284,6 +341,11 @@ impl Request {
                 request.content = Some(bytes);
             } else if let Ok(s) = c.extract::<String>() {
                 request.content = Some(s.into_bytes());
+            } else {
+                // Invalid content type - must be bytes or str
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    format!("'content' must be bytes or str, not {}", c.get_type().name()?)
+                ));
             }
         }
 
@@ -335,8 +397,16 @@ impl Request {
                 let mut form_data = Vec::new();
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
-                    let v: String = value.extract()?;
-                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                    // Handle lists - create multiple key=value pairs
+                    if let Ok(list) = value.downcast::<PyList>() {
+                        for item in list.iter() {
+                            let v = py_value_to_form_str(&item)?;
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    } else {
+                        let v = py_value_to_form_str(&value)?;
+                        form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                    }
                 }
                 request.content = Some(form_data.join("&").into_bytes());
                 if !request.headers.contains("content-type") {
@@ -349,8 +419,14 @@ impl Request {
         }
 
         // Set Content-Length header
-        let content_len = request.content.as_ref().map(|c| c.len()).unwrap_or(0);
-        request.headers.set("Content-Length".to_string(), content_len.to_string());
+        // - If content was provided, set to actual length
+        // - For methods with body (POST, PUT, PATCH), set to 0 if no content
+        // - For other methods (GET, HEAD, etc.), don't set if no content
+        if let Some(ref content) = request.content {
+            request.headers.set("Content-Length".to_string(), content.len().to_string());
+        } else if matches!(request.method.as_str(), "POST" | "PUT" | "PATCH") {
+            request.headers.set("Content-Length".to_string(), "0".to_string());
+        }
 
         // Set Host header
         if let Some(host) = request.url.get_host() {
@@ -419,8 +495,18 @@ impl Request {
         self.content.clone().unwrap_or_default()
     }
 
+    /// Set a single header on the request
+    fn set_header(&mut self, name: &str, value: &str) {
+        self.headers.set(name.to_string(), value.to_string());
+    }
+
+    /// Get a single header from the request
+    fn get_header(&self, name: &str, default: Option<&str>) -> Option<String> {
+        self.headers.get(name, default)
+    }
+
     fn __repr__(&self) -> String {
-        format!("<Request({:?}, {:?})>", self.method, self.url.to_string())
+        format!("<Request('{}', '{}')>", self.method, self.url.to_string())
     }
 
     fn __eq__(&self, other: &Request) -> bool {
@@ -428,12 +514,25 @@ impl Request {
     }
 }
 
-/// Convert Python object to JSON string using sonic-rs
+/// Convert Python object to JSON string
+/// Uses Python's json module for serialization to preserve dict insertion order
+/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
 fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let value = py_to_json_value(obj)?;
-    sonic_rs::to_string(&value).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("JSON serialization error: {}", e))
-    })
+    let py = obj.py();
+    let json_mod = py.import("json")?;
+
+    // Use httpx's default JSON settings:
+    // - ensure_ascii=False (allows non-ASCII characters)
+    // - allow_nan=False (raises ValueError for NaN/Inf)
+    // - separators=(',', ':') (compact representation)
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("ensure_ascii", false)?;
+    kwargs.set_item("allow_nan", false)?;
+    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
+    kwargs.set_item("separators", separators)?;
+
+    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
+    result.extract::<String>()
 }
 
 /// Convert Python object to sonic_rs::Value

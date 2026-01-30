@@ -80,10 +80,29 @@ impl Client {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create client: {}", e))
         })?;
 
+        // Create default headers if none provided
+        let version = env!("CARGO_PKG_VERSION");
+        let mut default_headers = Headers::default();
+        default_headers.set("accept".to_string(), "*/*".to_string());
+        default_headers.set("accept-encoding".to_string(), "gzip, deflate, br, zstd".to_string());
+        default_headers.set("connection".to_string(), "keep-alive".to_string());
+        default_headers.set("user-agent".to_string(), format!("python-httpx/{}", version));
+
+        // Merge user-provided headers over defaults
+        let final_headers = if let Some(user_headers) = headers {
+            // Start with defaults, then overlay user headers
+            for (k, v) in user_headers.inner() {
+                default_headers.set(k.clone(), v.clone());
+            }
+            default_headers
+        } else {
+            default_headers
+        };
+
         Ok(Self {
             inner: client,
             base_url,
-            headers: headers.unwrap_or_default(),
+            headers: final_headers,
             cookies: cookies.unwrap_or_default(),
             timeout,
             follow_redirects,
@@ -168,6 +187,15 @@ impl Client {
                         let k: String = key.extract()?;
                         let v: String = value.extract()?;
                         request_headers.set(k, v);
+                    }
+                } else if let Ok(list) = h.downcast::<PyList>() {
+                    // Handle list of tuples (for repeated headers)
+                    for item in list.iter() {
+                        let tuple = item.downcast::<pyo3::types::PyTuple>()?;
+                        let k: String = tuple.get_item(0)?.extract()?;
+                        let v: String = tuple.get_item(1)?.extract()?;
+                        // For repeated headers, we need to append not replace
+                        request_headers.append(k, v);
                     }
                 }
             }
@@ -288,16 +316,41 @@ impl Client {
                 self.auth.clone()
             };
 
+            // Build default headers that httpx sets
+            let url_obj = URL::parse(&final_url)?;
+            let host_header = Self::get_host_header(&url_obj);
+            let version = env!("CARGO_PKG_VERSION");
+
+            // Determine final auth - either from effective_auth, or from URL userinfo
             if let Some((username, password)) = effective_auth {
                 let credentials = format!("{}:{}", username, password);
                 let encoded = base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     credentials.as_bytes(),
                 );
-                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+                request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+            } else {
+                // Extract auth from URL userinfo if present
+                let url_username = url_obj.get_username();
+                if !url_username.is_empty() {
+                    let url_password = url_obj.get_password().unwrap_or_default();
+                    let credentials = format!("{}:{}", url_username, url_password);
+                    let encoded = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        credentials.as_bytes(),
+                    );
+                    request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+                }
             }
 
-            let mut request = Request::new(method, URL::parse(&final_url)?);
+            // Only add Host header if not already present (required for HTTP)
+            // Other headers (accept, accept-encoding, connection, user-agent) come from
+            // client.headers which has defaults set at initialization
+            if !request_headers.contains("host") {
+                request_headers.set("host".to_string(), host_header);
+            }
+
+            let mut request = Request::new(method, url_obj);
             request.set_headers(request_headers);
             if let Some(body) = body_content {
                 request.set_content(body);
@@ -736,6 +789,20 @@ impl Client {
     }
 
     fn send(&self, py: Python<'_>, request: &Request) -> PyResult<Response> {
+        // If a custom transport is set, use it directly with the request
+        if let Some(ref transport) = self.transport {
+            let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
+            let mut response = response.extract::<Response>(py)?;
+            response.set_request_attr(Some(request.clone()));
+            return Ok(response);
+        }
+
+        // For regular HTTP, use execute_request but pass the request's headers
+        let headers_bound = pyo3::types::PyDict::new(py);
+        for (k, v) in request.headers_ref().inner() {
+            headers_bound.set_item(k, v)?;
+        }
+
         self.execute_request(
             py,
             request.method(),
@@ -745,7 +812,7 @@ impl Client {
             None,
             None,
             None,
-            None,
+            Some(&headers_bound.as_borrowed()),
             None,
             None,
             None,
@@ -757,7 +824,7 @@ impl Client {
     fn build_request(
         &self,
         method: &str,
-        url: &str,
+        url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
         data: Option<&Bound<'_, PyDict>>,
         files: Option<&Bound<'_, PyAny>>,
@@ -766,7 +833,8 @@ impl Client {
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Request> {
-        let resolved_url = self.resolve_url(url)?;
+        let url_str = Self::url_to_string(url)?;
+        let resolved_url = self.resolve_url(&url_str)?;
         let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
         let mut request = Request::new(method, parsed_url);
 
@@ -784,6 +852,14 @@ impl Client {
         // Add content
         if let Some(c) = content {
             request.set_content(c);
+        } else {
+            // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
+            let method_upper = method.to_uppercase();
+            if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
+                let mut headers_mut = request.headers_ref().clone();
+                headers_mut.set("content-length".to_string(), "0".to_string());
+                request.set_headers(headers_mut);
+            }
         }
 
         Ok(request)
@@ -1011,9 +1087,71 @@ impl Client {
     fn __repr__(&self) -> String {
         "<Client>".to_string()
     }
+
+    /// Compute headers for a redirect request.
+    /// This handles cross-origin auth header stripping.
+    fn _redirect_headers(&self, request: &Request, url: &URL, method: &str) -> Headers {
+        let mut headers = request.headers_ref().clone();
+
+        // Determine if same origin - same scheme, host, port
+        let request_url = request.url_ref();
+        let same_host = request_url.get_host_str().to_lowercase() == url.get_host_str().to_lowercase();
+        let same_scheme = request_url.get_scheme().to_uppercase() == url.get_scheme().to_uppercase();
+
+        // Get ports, defaulting to standard ports for comparison
+        let request_port = request_url.get_port().unwrap_or_else(|| {
+            if request_url.get_scheme() == "https" { 443 } else { 80 }
+        });
+        let url_port = url.get_port().unwrap_or_else(|| {
+            if url.get_scheme() == "https" { 443 } else { 80 }
+        });
+        let same_port = request_port == url_port;
+
+        let same_origin = same_scheme && same_host && same_port;
+
+        // Check if this is an HTTPS upgrade (http -> https on same host with default ports)
+        let is_https_upgrade = !same_scheme
+            && request_url.get_scheme() == "http"
+            && url.get_scheme() == "https"
+            && same_host
+            && request_port == 80
+            && url_port == 443;
+
+        // Update Host header for the new URL
+        let new_host = Self::get_host_header(url);
+        headers.set("Host".to_string(), new_host);
+
+        // Strip Authorization header unless same origin or HTTPS upgrade
+        if !same_origin && !is_https_upgrade {
+            headers.remove("authorization");
+        }
+
+        headers
+    }
 }
 
 impl Client {
+    /// Get the host header value for a URL (without userinfo, port only if non-default)
+    fn get_host_header(url: &URL) -> String {
+        let host = url.get_host_str();
+        let port = url.get_port();
+        let scheme = url.get_scheme();
+
+        // Only include port if non-default
+        let default_port = match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => 0,
+        };
+
+        if let Some(p) = port {
+            if p != default_port {
+                return format!("{}:{}", host, p);
+            }
+        }
+        host
+    }
+
     /// Check if a URL matches a mount pattern
     fn url_matches_pattern(&self, url: &str, pattern: &str) -> bool {
         // Mount patterns can be:
@@ -1115,11 +1253,24 @@ impl Client {
 }
 
 /// Convert Python object to JSON string
+/// Uses Python's json module for serialization to preserve dict insertion order
+/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
 fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let value = py_to_json_value(obj)?;
-    sonic_rs::to_string(&value).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("JSON serialization error: {}", e))
-    })
+    let py = obj.py();
+    let json_mod = py.import("json")?;
+
+    // Use httpx's default JSON settings:
+    // - ensure_ascii=False (allows non-ASCII characters)
+    // - allow_nan=False (raises ValueError for NaN/Inf)
+    // - separators=(',', ':') (compact representation)
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("ensure_ascii", false)?;
+    kwargs.set_item("allow_nan", false)?;
+    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
+    kwargs.set_item("separators", separators)?;
+
+    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
+    result.extract::<String>()
 }
 
 /// Convert Python object to sonic_rs::Value

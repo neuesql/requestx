@@ -94,10 +94,29 @@ impl AsyncClient {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create client: {}", e))
         })?;
 
+        // Create default headers if none provided
+        let version = env!("CARGO_PKG_VERSION");
+        let mut default_headers = Headers::default();
+        default_headers.set("accept".to_string(), "*/*".to_string());
+        default_headers.set("accept-encoding".to_string(), "gzip, deflate, br, zstd".to_string());
+        default_headers.set("connection".to_string(), "keep-alive".to_string());
+        default_headers.set("user-agent".to_string(), format!("python-httpx/{}", version));
+
+        // Merge user-provided headers over defaults
+        let final_headers = if let Some(user_headers) = headers {
+            // Start with defaults, then overlay user headers
+            for (k, v) in user_headers.inner() {
+                default_headers.set(k.clone(), v.clone());
+            }
+            default_headers
+        } else {
+            default_headers
+        };
+
         Ok(Self {
             inner: Arc::new(client),
             base_url,
-            headers: headers.unwrap_or_default(),
+            headers: final_headers,
             cookies: cookies.unwrap_or_default(),
             timeout,
             follow_redirects,
@@ -455,6 +474,133 @@ impl AsyncClient {
         })
     }
 
+    #[pyo3(signature = (method, url, *, content=None, params=None, headers=None))]
+    fn build_request(
+        &self,
+        method: &str,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Request> {
+        let url_str = extract_url_string(url)?;
+        let resolved_url = self.resolve_url(&url_str)?;
+        let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
+        let mut request = Request::new(method, parsed_url);
+
+        // Add headers
+        let mut all_headers = self.headers.clone();
+        if let Some(h) = headers {
+            if let Ok(headers_obj) = h.extract::<Headers>() {
+                for (k, v) in headers_obj.inner() {
+                    all_headers.set(k.clone(), v.clone());
+                }
+            }
+        }
+        request.set_headers(all_headers);
+
+        // Add content
+        if let Some(c) = content {
+            request.set_content(c);
+        } else {
+            // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
+            let method_upper = method.to_uppercase();
+            if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
+                let mut headers_mut = request.headers_ref().clone();
+                headers_mut.set("content-length".to_string(), "0".to_string());
+                request.set_headers(headers_mut);
+            }
+        }
+
+        Ok(request)
+    }
+
+    /// Send a pre-built request
+    fn send<'py>(&self, py: Python<'py>, request: Request) -> PyResult<Bound<'py, PyAny>> {
+        // If a custom transport is set, use it
+        if let Some(ref transport) = self.transport {
+            let transport = transport.clone_ref(py);
+            let request_clone = request.clone();
+            return future_into_py(py, async move {
+                Python::with_gil(|py| -> PyResult<Response> {
+                    let result = transport.call_method1(py, "handle_async_request", (request_clone.clone(),))?;
+                    // Check if it's a coroutine
+                    let inspect = py.import("inspect")?;
+                    let is_coro = inspect.call_method1("iscoroutine", (result.bind(py),))?.extract::<bool>()?;
+                    if is_coro {
+                        // If coroutine, we need to await it - but we can't easily do that here
+                        // For now, extract directly
+                        let mut response = result.extract::<Response>(py)?;
+                        response.set_request_attr(Some(request_clone));
+                        Ok(response)
+                    } else {
+                        let mut response = result.extract::<Response>(py)?;
+                        response.set_request_attr(Some(request_clone));
+                        Ok(response)
+                    }
+                })
+            });
+        }
+
+        // For regular HTTP, use async_request
+        let method = request.method().to_string();
+        let url = request.url_ref().to_string();
+        let inner = self.inner.clone();
+        let headers = request.headers_ref().clone();
+        let content = request.content_bytes().map(|b| b.to_vec());
+
+        future_into_py(py, async move {
+            // Build the reqwest request
+            let req_method = match method.as_str() {
+                "GET" => reqwest::Method::GET,
+                "POST" => reqwest::Method::POST,
+                "PUT" => reqwest::Method::PUT,
+                "DELETE" => reqwest::Method::DELETE,
+                "HEAD" => reqwest::Method::HEAD,
+                "OPTIONS" => reqwest::Method::OPTIONS,
+                "PATCH" => reqwest::Method::PATCH,
+                _ => reqwest::Method::GET,
+            };
+
+            let mut req_builder = inner.request(req_method, &url);
+
+            // Add headers
+            for (k, v) in headers.inner() {
+                req_builder = req_builder.header(k.as_str(), v.as_str());
+            }
+
+            // Add content if present
+            if let Some(body) = content {
+                req_builder = req_builder.body(body);
+            }
+
+            let response = req_builder.send().await.map_err(convert_reqwest_error)?;
+            let (status, response_headers, version) = (
+                response.status().as_u16(),
+                response.headers().clone(),
+                format!("{:?}", response.version()),
+            );
+            let url_str = response.url().to_string();
+            let content = response.bytes().await.map_err(convert_reqwest_error)?;
+
+            // Build response
+            let mut resp = Response::new(status);
+            resp.set_content(content.to_vec());
+            // Convert headers
+            let mut resp_headers = Headers::new();
+            for (k, v) in response_headers.iter() {
+                if let Ok(v_str) = v.to_str() {
+                    resp_headers.set(k.as_str().to_string(), v_str.to_string());
+                }
+            }
+            resp.set_headers(resp_headers);
+            resp.set_url(URL::new_impl(Some(&url_str), None, None, None, None, None, None, None, None, None, None, None)?);
+            resp.set_http_version(version);
+            resp.set_request_attr(Some(request));
+            Ok(resp)
+        })
+    }
+
     fn __aenter__<'py>(slf: PyRef<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let slf_obj = slf.into_pyobject(py)?.unbind();
@@ -783,8 +929,31 @@ impl AsyncClient {
 
         // If a custom transport is set, use it instead of making HTTP requests
         if let Some(transport) = transport_opt {
+            // Parse URL for host header and userinfo extraction
+            let url_obj = URL::parse(&final_url)?;
+            let host_header = Self::get_host_header(&url_obj);
+
+            // Extract auth from URL userinfo if no auth was already set
+            if !request_headers.contains("authorization") {
+                let url_username = url_obj.get_username();
+                if !url_username.is_empty() {
+                    let url_password = url_obj.get_password().unwrap_or_default();
+                    let credentials = format!("{}:{}", url_username, url_password);
+                    let encoded = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        credentials.as_bytes(),
+                    );
+                    request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+                }
+            }
+
+            // Add Host header if not already present
+            if !request_headers.contains("host") {
+                request_headers.set("host".to_string(), host_header);
+            }
+
             // Build the Request object
-            let mut request = Request::new(&method, URL::parse(&final_url)?);
+            let mut request = Request::new(&method, url_obj);
             request.set_headers(request_headers);
             if let Some(ref body) = body_content {
                 request.set_content(body.clone());
@@ -893,6 +1062,27 @@ impl AsyncClient {
 }
 
 impl AsyncClient {
+    /// Get the host header value for a URL (without userinfo, port only if non-default)
+    fn get_host_header(url: &URL) -> String {
+        let host = url.get_host_str();
+        let port = url.get_port();
+        let scheme = url.get_scheme();
+
+        // Only include port if non-default
+        let default_port = match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => 0,
+        };
+
+        if let Some(p) = port {
+            if p != default_port {
+                return format!("{}:{}", host, p);
+            }
+        }
+        host
+    }
+
     /// Check if a URL matches a mount pattern
     fn url_matches_pattern_static(url: &str, pattern: &str) -> bool {
         // Mount patterns can be:
@@ -994,11 +1184,24 @@ impl AsyncClient {
 }
 
 /// Convert Python object to JSON string
+/// Uses Python's json module for serialization to preserve dict insertion order
+/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
 fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let value = py_to_json_value(obj)?;
-    sonic_rs::to_string(&value).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("JSON serialization error: {}", e))
-    })
+    let py = obj.py();
+    let json_mod = py.import("json")?;
+
+    // Use httpx's default JSON settings:
+    // - ensure_ascii=False (allows non-ASCII characters)
+    // - allow_nan=False (raises ValueError for NaN/Inf)
+    // - separators=(',', ':') (compact representation)
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("ensure_ascii", false)?;
+    kwargs.set_item("allow_nan", false)?;
+    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
+    kwargs.set_item("separators", separators)?;
+
+    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
+    result.extract::<String>()
 }
 
 /// Convert Python object to sonic_rs::Value

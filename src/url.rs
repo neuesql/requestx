@@ -87,6 +87,42 @@ impl URL {
         self.inner.host_str().map(|s| s.to_lowercase())
     }
 
+    /// Get the scheme (public Rust API)
+    pub fn get_scheme(&self) -> String {
+        let s = self.inner.scheme();
+        if s == "relative" {
+            String::new()
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Get the host as string (public Rust API)
+    pub fn get_host_str(&self) -> String {
+        self.inner.host_str().unwrap_or("").to_lowercase()
+    }
+
+    /// Get the port (public Rust API)
+    pub fn get_port(&self) -> Option<u16> {
+        self.inner.port()
+    }
+
+    /// Get the username (public Rust API)
+    pub fn get_username(&self) -> String {
+        urlencoding::decode(self.inner.username())
+            .unwrap_or_else(|_| self.inner.username().into())
+            .into_owned()
+    }
+
+    /// Get the password (public Rust API)
+    pub fn get_password(&self) -> Option<String> {
+        self.inner.password().map(|p| {
+            urlencoding::decode(p)
+                .unwrap_or_else(|_| p.into())
+                .into_owned()
+        })
+    }
+
     /// Constructor with Python params
     pub fn new_impl(
         url: Option<&str>,
@@ -598,7 +634,43 @@ impl URL {
     }
 
     fn __repr__(&self) -> String {
-        format!("URL('{}')", self.inner)
+        // Mask password in repr for security
+        if self.inner.password().is_some() {
+            // Build URL string with [secure] instead of actual password
+            let mut url_str = String::new();
+            url_str.push_str(self.inner.scheme());
+            url_str.push_str("://");
+
+            let username = self.inner.username();
+            if !username.is_empty() {
+                url_str.push_str(username);
+                url_str.push_str(":[secure]@");
+            }
+
+            if let Some(host) = self.inner.host_str() {
+                url_str.push_str(host);
+            }
+
+            if let Some(port) = self.inner.port() {
+                url_str.push_str(&format!(":{}", port));
+            }
+
+            url_str.push_str(self.inner.path());
+
+            if let Some(query) = self.inner.query() {
+                url_str.push('?');
+                url_str.push_str(query);
+            }
+
+            if let Some(fragment) = self.inner.fragment() {
+                url_str.push('#');
+                url_str.push_str(fragment);
+            }
+
+            format!("URL('{}')", url_str)
+        } else {
+            format!("URL('{}')", self.inner)
+        }
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {

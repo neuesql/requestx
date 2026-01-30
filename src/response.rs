@@ -192,7 +192,7 @@ impl Response {
                     }
                 }
                 response.content = content_bytes;
-            } else {
+            } else if c.hasattr("__iter__")? || c.hasattr("__aiter__")? {
                 // Try to treat as an iterator (generator, etc.)
                 let mut content_bytes = Vec::new();
 
@@ -264,6 +264,11 @@ def collect_async_iter(it):
                         response.content = content_bytes;
                     }
                 }
+            } else {
+                // Invalid content type
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    format!("'content' must be bytes, str, or iterable, not {}", c.get_type().name()?)
+                ));
             }
             if !response.headers.contains("content-length") {
                 response.headers.set(
@@ -393,8 +398,12 @@ def collect_async_iter(it):
     }
 
     #[getter]
-    fn request(&self) -> Option<Request> {
-        self.request.clone()
+    fn request(&self) -> PyResult<Request> {
+        self.request.clone().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "The request instance has not been set on this response."
+            )
+        })
     }
 
     #[setter]
@@ -501,6 +510,56 @@ def collect_async_iter(it):
         std::collections::HashMap::new()
     }
 
+    /// Parse Link headers and return a dict of link relations
+    #[getter]
+    fn links(&self) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+        let mut result = std::collections::HashMap::new();
+
+        if let Some(link_header) = self.headers.get("link", None) {
+            // Parse Link header format: <url>; rel=value; type="value", <url2>; rel=value2
+            for link in link_header.split(',') {
+                let link = link.trim();
+                if link.is_empty() {
+                    continue;
+                }
+
+                let mut link_data = std::collections::HashMap::new();
+                let mut parts = link.split(';');
+
+                // First part is the URL in angle brackets
+                if let Some(url_part) = parts.next() {
+                    let url_part = url_part.trim();
+                    if url_part.starts_with('<') && url_part.contains('>') {
+                        let end = url_part.find('>').unwrap();
+                        let url = &url_part[1..end];
+                        link_data.insert("url".to_string(), url.to_string());
+
+                        // Parse remaining parameters
+                        for param in parts {
+                            let param = param.trim();
+                            if param.is_empty() {
+                                continue;
+                            }
+                            if let Some(eq_idx) = param.find('=') {
+                                let key = param[..eq_idx].trim().to_lowercase();
+                                let value = param[eq_idx + 1..].trim();
+                                // Remove quotes if present (both single and double)
+                                let value = value.trim_matches('"').trim_matches('\'');
+                                link_data.insert(key, value.to_string());
+                            }
+                        }
+
+                        // Use 'rel' as the key if present, otherwise use URL
+                        let key = link_data.get("rel").cloned().unwrap_or_else(|| url.to_string());
+                        result.insert(key, link_data);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     #[getter]
     fn elapsed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         // Import datetime.timedelta and create an instance
@@ -516,32 +575,34 @@ def collect_async_iter(it):
         timedelta.call((), Some(&kwargs))
     }
 
-    fn raise_for_status(&self) -> PyResult<()> {
+    fn raise_for_status(slf: PyRef<'_, Self>) -> PyResult<Py<Self>> {
         // Must have a request associated
-        if self.request.is_none() {
+        if slf.request.is_none() {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "Cannot call `raise_for_status` as the request instance has not been set on this response."
             ));
         }
 
         // Only 2xx status codes are considered successful
-        if self.is_success() {
-            return Ok(());
+        if slf.is_success() {
+            return Ok(slf.into());
         }
 
+        let self_ref = &*slf;
+
         // Get URL from response or from request if available
-        let url_str = self.url.as_ref()
+        let url_str = self_ref.url.as_ref()
             .map(|u| u.to_string())
-            .or_else(|| self.request.as_ref().map(|r| r.url_ref().to_string()))
+            .or_else(|| self_ref.request.as_ref().map(|r| r.url_ref().to_string()))
             .unwrap_or_default();
 
-        let message_prefix = if self.is_informational() {
+        let message_prefix = if self_ref.is_informational() {
             "Informational response"
-        } else if self.is_redirect() {
+        } else if self_ref.is_redirect() {
             "Redirect response"
-        } else if self.is_client_error() {
+        } else if self_ref.is_client_error() {
             "Client error"
-        } else if self.is_server_error() {
+        } else if self_ref.is_server_error() {
             "Server error"
         } else {
             "Error"
@@ -551,21 +612,21 @@ def collect_async_iter(it):
         let mut message = format!(
             "{} '{} {}' for url '{}'",
             message_prefix,
-            self.status_code,
-            self.reason_phrase(),
+            self_ref.status_code,
+            self_ref.reason_phrase(),
             url_str
         );
 
         // Add redirect location for redirect responses
-        if self.is_redirect() {
-            if let Some(location) = self.headers.get("location", None) {
+        if self_ref.is_redirect() {
+            if let Some(location) = self_ref.headers.get("location", None) {
                 message.push_str(&format!("\nRedirect location: '{}'", location));
             }
         }
 
         message.push_str(&format!(
             "\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}",
-            self.status_code
+            self_ref.status_code
         ));
 
         Err(crate::exceptions::HTTPStatusError::new_err(message))
@@ -842,6 +903,21 @@ impl Response {
         self.is_stream_consumed = true;
         self.is_closed = true;
     }
+
+    /// Set all headers on the response
+    pub fn set_headers(&mut self, headers: Headers) {
+        self.headers = headers;
+    }
+
+    /// Set the URL on the response
+    pub fn set_url(&mut self, url: URL) {
+        self.url = Some(url);
+    }
+
+    /// Set the HTTP version string
+    pub fn set_http_version(&mut self, version: String) {
+        self.http_version = version;
+    }
 }
 
 /// Iterator for response bytes
@@ -1116,16 +1192,29 @@ fn status_code_to_reason(code: u16) -> &'static str {
         508 => "Loop Detected",
         510 => "Not Extended",
         511 => "Network Authentication Required",
-        _ => "Unknown",
+        _ => "",
     }
 }
 
 /// Convert Python object to JSON string
+/// Uses Python's json module for serialization to preserve dict insertion order
+/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
 fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let value = py_to_json_value(obj)?;
-    sonic_rs::to_string(&value).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("JSON serialization error: {}", e))
-    })
+    let py = obj.py();
+    let json_mod = py.import("json")?;
+
+    // Use httpx's default JSON settings:
+    // - ensure_ascii=False (allows non-ASCII characters)
+    // - allow_nan=False (raises ValueError for NaN/Inf)
+    // - separators=(',', ':') (compact representation)
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("ensure_ascii", false)?;
+    kwargs.set_item("allow_nan", false)?;
+    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
+    kwargs.set_item("separators", separators)?;
+
+    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
+    result.extract::<String>()
 }
 
 /// Convert Python object to sonic_rs::Value
@@ -1147,6 +1236,12 @@ fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
 
     if let Ok(f) = obj.downcast::<PyFloat>() {
         let val: f64 = f.extract()?;
+        // Check for NaN and Inf - not allowed by default in JSON
+        if val.is_nan() || val.is_infinite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Out of range float values are not JSON compliant",
+            ));
+        }
         return Ok(sonic_rs::json!(val));
     }
 
