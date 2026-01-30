@@ -519,6 +519,91 @@ impl Response {
         self.is_closed = true;
     }
 
+    /// Async read - returns content as bytes
+    fn aread<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.is_stream_consumed = true;
+        let content = self.content.clone();
+
+        // Create a completed future with the result
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+
+        let bytes = PyBytes::new(py, &content);
+        future.call_method1("set_result", (bytes,))?;
+
+        Ok(future)
+    }
+
+    /// Async close - marks response as closed
+    fn aclose<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.is_closed = true;
+
+        // Create a completed future
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+        let none = py.None();
+        future.call_method1("set_result", (none,))?;
+
+        Ok(future)
+    }
+
+    /// Async iter bytes - returns an async iterator over bytes
+    fn aiter_bytes(&self, py: Python<'_>) -> PyResult<AsyncBytesIterator> {
+        Ok(AsyncBytesIterator {
+            content: self.content.clone(),
+            position: 0,
+            chunk_size: 4096,
+        })
+    }
+
+    /// Async iter text - returns an async iterator over text
+    fn aiter_text(&self, py: Python<'_>) -> PyResult<AsyncTextIterator> {
+        let text = self.text()?;
+        Ok(AsyncTextIterator {
+            text,
+            position: 0,
+            chunk_size: 4096,
+        })
+    }
+
+    /// Async iter lines - returns an async iterator over lines
+    fn aiter_lines(&self, py: Python<'_>) -> PyResult<AsyncLinesIterator> {
+        let text = self.text()?;
+        // Handle all line endings: \r\n, \n, or \r
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\r' {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                lines.push(current_line);
+                current_line = String::new();
+            } else if c == '\n' {
+                lines.push(current_line);
+                current_line = String::new();
+            } else {
+                current_line.push(c);
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        Ok(AsyncLinesIterator { lines, position: 0 })
+    }
+
+    /// Async iter raw - same as aiter_bytes for this implementation
+    fn aiter_raw(&self, py: Python<'_>) -> PyResult<AsyncBytesIterator> {
+        self.aiter_bytes(py)
+    }
+
     fn iter_bytes(&self) -> BytesIterator {
         BytesIterator {
             content: self.content.clone(),
@@ -881,4 +966,105 @@ fn json_value_to_py(py: Python<'_>, value: &sonic_rs::Value) -> PyResult<PyObjec
     }
 
     Ok(py.None())
+}
+
+/// Async bytes iterator
+#[pyclass]
+pub struct AsyncBytesIterator {
+    content: Vec<u8>,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl AsyncBytesIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+
+        if self.position >= self.content.len() {
+            let stop_async_iter = py.import("builtins")?.getattr("StopAsyncIteration")?.call0()?;
+            future.call_method1("set_exception", (stop_async_iter,))?;
+        } else {
+            let end = (self.position + self.chunk_size).min(self.content.len());
+            let chunk = &self.content[self.position..end];
+            self.position = end;
+            let bytes = PyBytes::new(py, chunk);
+            future.call_method1("set_result", (bytes,))?;
+        }
+
+        Ok(future)
+    }
+}
+
+/// Async text iterator
+#[pyclass]
+pub struct AsyncTextIterator {
+    text: String,
+    position: usize,
+    chunk_size: usize,
+}
+
+#[pymethods]
+impl AsyncTextIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+
+        if self.position >= self.text.len() {
+            let stop_async_iter = py.import("builtins")?.getattr("StopAsyncIteration")?.call0()?;
+            future.call_method1("set_exception", (stop_async_iter,))?;
+        } else {
+            let end = (self.position + self.chunk_size).min(self.text.len());
+            let chunk = &self.text[self.position..end];
+            self.position = end;
+            future.call_method1("set_result", (chunk,))?;
+        }
+
+        Ok(future)
+    }
+}
+
+/// Async lines iterator
+#[pyclass]
+pub struct AsyncLinesIterator {
+    lines: Vec<String>,
+    position: usize,
+}
+
+#[pymethods]
+impl AsyncLinesIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let asyncio = py.import("asyncio")?;
+        let loop_fn = asyncio.getattr("get_running_loop")?;
+        let event_loop = loop_fn.call0()?;
+        let future = event_loop.call_method0("create_future")?;
+
+        if self.position >= self.lines.len() {
+            let stop_async_iter = py.import("builtins")?.getattr("StopAsyncIteration")?.call0()?;
+            future.call_method1("set_exception", (stop_async_iter,))?;
+        } else {
+            let line = self.lines[self.position].clone();
+            self.position += 1;
+            future.call_method1("set_result", (line,))?;
+        }
+
+        Ok(future)
+    }
 }

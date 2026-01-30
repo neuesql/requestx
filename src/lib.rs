@@ -28,7 +28,7 @@ use exceptions::*;
 use headers::Headers;
 use queryparams::QueryParams;
 use request::Request;
-use response::{Response, BytesIterator, TextIterator, LinesIterator};
+use response::{Response, BytesIterator, TextIterator, LinesIterator, AsyncBytesIterator, AsyncTextIterator, AsyncLinesIterator};
 use timeout::{Limits, Timeout, UnsetType};
 use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport, WSGITransport};
 use types::*;
@@ -64,6 +64,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BytesIterator>()?;
     m.add_class::<TextIterator>()?;
     m.add_class::<LinesIterator>()?;
+    m.add_class::<AsyncBytesIterator>()?;
+    m.add_class::<AsyncTextIterator>()?;
+    m.add_class::<AsyncLinesIterator>()?;
 
     // Auth types
     m.add_class::<BasicAuth>()?;
