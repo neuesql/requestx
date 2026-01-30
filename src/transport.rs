@@ -59,6 +59,56 @@ impl MockTransport {
         }
     }
 
+    /// Async version of handle_request for use with AsyncClient
+    /// This can handle both sync and async handlers
+    fn handle_async_request<'py>(
+        &self,
+        py: Python<'py>,
+        request: &Request,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        use pyo3_async_runtimes::tokio::future_into_py;
+
+        // Call the handler first to see if it's async or sync
+        let handler = self.handler.lock();
+        if let Some(ref h) = *handler {
+            // Call the Python handler function
+            let result = h.call1(py, (request.clone(),))?;
+            let result_bound = result.bind(py);
+
+            // Check if result is a coroutine (needs await)
+            let inspect = py.import("inspect")?;
+            let is_coro = inspect.call_method1("iscoroutine", (result_bound,))?.extract::<bool>()?;
+
+            if is_coro {
+                // Convert Python coroutine to Rust future and await it
+                let fut = pyo3_async_runtimes::tokio::into_future(result_bound.clone())?;
+                drop(handler); // Release the lock before awaiting
+
+                return future_into_py(py, async move {
+                    let py_result = fut.await?;
+                    Python::with_gil(|py| -> PyResult<Response> {
+                        Ok(py_result.extract::<Response>(py)?)
+                    })
+                });
+            }
+
+            // If it returns a Response directly, use it
+            if let Ok(response) = result.extract::<Response>(py) {
+                drop(handler);
+                return future_into_py(py, async move { Ok(response) });
+            }
+
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "MockTransport handler must return a Response object",
+            ));
+        }
+        drop(handler);
+
+        // Return a default 200 response
+        let default_response = Response::new(200);
+        future_into_py(py, async move { Ok(default_response) })
+    }
+
     fn __repr__(&self) -> String {
         "<MockTransport>".to_string()
     }
@@ -125,6 +175,7 @@ pub struct HTTPTransport {
     verify: bool,
     cert: Option<String>,
     http2: bool,
+    proxy_url: Option<String>,
 }
 
 impl Default for HTTPTransport {
@@ -134,19 +185,59 @@ impl Default for HTTPTransport {
             verify: true,
             cert: None,
             http2: false,
+            proxy_url: None,
         }
+    }
+}
+
+impl HTTPTransport {
+    /// Create a new HTTPTransport with optional proxy (Rust-callable)
+    pub fn with_proxy(proxy: Option<&str>) -> PyResult<Self> {
+        let mut builder = reqwest::blocking::Client::builder();
+
+        // Add proxy if specified
+        if let Some(proxy_url) = proxy {
+            // Validate proxy scheme
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            let scheme = parsed.scheme();
+            if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown scheme for proxy URL '{}'. Scheme must be 'http', 'https', 'socks4', 'socks5', or 'socks5h'.",
+                    proxy_url
+                )));
+            }
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            builder = builder.proxy(reqwest_proxy);
+        }
+
+        let client = builder.build().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
+        })?;
+
+        Ok(Self {
+            inner: Arc::new(client),
+            verify: true,
+            cert: None,
+            http2: false,
+            proxy_url: proxy.map(|s| s.to_string()),
+        })
     }
 }
 
 #[pymethods]
 impl HTTPTransport {
     #[new]
-    #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, **_kwargs))]
+    #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, proxy=None, **_kwargs))]
     fn new(
         verify: bool,
         cert: Option<String>,
         http2: bool,
         retries: usize,
+        proxy: Option<&str>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let _ = retries; // TODO: implement retries
@@ -157,7 +248,24 @@ impl HTTPTransport {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        // TODO: Add cert support
+        // Add proxy if specified
+        if let Some(proxy_url) = proxy {
+            // Validate proxy scheme
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            let scheme = parsed.scheme();
+            if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown scheme for proxy URL '{}'. Scheme must be 'http', 'https', 'socks4', 'socks5', or 'socks5h'.",
+                    proxy_url
+                )));
+            }
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            builder = builder.proxy(reqwest_proxy);
+        }
 
         let client = builder.build().map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
@@ -168,7 +276,54 @@ impl HTTPTransport {
             verify,
             cert,
             http2,
+            proxy_url: proxy.map(|s| s.to_string()),
         })
+    }
+
+    /// Get the _pool attribute for httpcore compatibility
+    #[getter]
+    fn _pool<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Create a mock httpcore-compatible pool object
+        if let Some(ref proxy_url) = self.proxy_url {
+            // Check if it's a SOCKS proxy
+            if proxy_url.starts_with("socks") {
+                let httpcore = py.import("httpcore")?;
+                let socks_proxy_class = httpcore.getattr("SOCKSProxy")?;
+                // Parse proxy URL to get components
+                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+                })?;
+                let scheme = parsed.scheme().as_bytes().to_vec();
+                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
+                let port = parsed.port();
+                let proxy = socks_proxy_class.call1((
+                    PyBytes::new(py, &scheme),
+                    PyBytes::new(py, &host),
+                    port,
+                ))?;
+                Ok(proxy)
+            } else {
+                // HTTP/HTTPS proxy
+                let httpcore = py.import("httpcore")?;
+                let http_proxy_class = httpcore.getattr("HTTPProxy")?;
+                // Parse proxy URL to get components
+                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+                })?;
+                let scheme = parsed.scheme().as_bytes().to_vec();
+                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
+                let port = parsed.port();
+                let proxy = http_proxy_class.call1((
+                    PyBytes::new(py, &scheme),
+                    PyBytes::new(py, &host),
+                    port,
+                ))?;
+                Ok(proxy)
+            }
+        } else {
+            // Return None or a basic connection pool
+            Ok(py.None().into_bound(py))
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -202,6 +357,7 @@ pub struct AsyncHTTPTransport {
     verify: bool,
     cert: Option<String>,
     http2: bool,
+    proxy_url: Option<String>,
 }
 
 impl Default for AsyncHTTPTransport {
@@ -211,19 +367,59 @@ impl Default for AsyncHTTPTransport {
             verify: true,
             cert: None,
             http2: false,
+            proxy_url: None,
         }
+    }
+}
+
+impl AsyncHTTPTransport {
+    /// Create a new AsyncHTTPTransport with optional proxy (Rust-callable)
+    pub fn with_proxy(proxy: Option<&str>) -> PyResult<Self> {
+        let mut builder = reqwest::Client::builder();
+
+        // Add proxy if specified
+        if let Some(proxy_url) = proxy {
+            // Validate proxy scheme
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            let scheme = parsed.scheme();
+            if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown scheme for proxy URL '{}'. Scheme must be 'http', 'https', 'socks4', 'socks5', or 'socks5h'.",
+                    proxy_url
+                )));
+            }
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            builder = builder.proxy(reqwest_proxy);
+        }
+
+        let client = builder.build().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
+        })?;
+
+        Ok(Self {
+            inner: Arc::new(client),
+            verify: true,
+            cert: None,
+            http2: false,
+            proxy_url: proxy.map(|s| s.to_string()),
+        })
     }
 }
 
 #[pymethods]
 impl AsyncHTTPTransport {
     #[new]
-    #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, **_kwargs))]
+    #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, proxy=None, **_kwargs))]
     fn new(
         verify: bool,
         cert: Option<String>,
         http2: bool,
         retries: usize,
+        proxy: Option<&str>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let _ = retries;
@@ -232,6 +428,25 @@ impl AsyncHTTPTransport {
 
         if !verify {
             builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        // Add proxy if specified
+        if let Some(proxy_url) = proxy {
+            // Validate proxy scheme
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            let scheme = parsed.scheme();
+            if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown scheme for proxy URL '{}'. Scheme must be 'http', 'https', 'socks4', 'socks5', or 'socks5h'.",
+                    proxy_url
+                )));
+            }
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+            })?;
+            builder = builder.proxy(reqwest_proxy);
         }
 
         let client = builder.build().map_err(|e| {
@@ -243,7 +458,54 @@ impl AsyncHTTPTransport {
             verify,
             cert,
             http2,
+            proxy_url: proxy.map(|s| s.to_string()),
         })
+    }
+
+    /// Get the _pool attribute for httpcore compatibility
+    #[getter]
+    fn _pool<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Create a mock httpcore-compatible pool object
+        if let Some(ref proxy_url) = self.proxy_url {
+            // Check if it's a SOCKS proxy
+            if proxy_url.starts_with("socks") {
+                let httpcore = py.import("httpcore")?;
+                let socks_proxy_class = httpcore.getattr("AsyncSOCKSProxy")?;
+                // Parse proxy URL to get components
+                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+                })?;
+                let scheme = parsed.scheme().as_bytes().to_vec();
+                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
+                let port = parsed.port();
+                let proxy = socks_proxy_class.call1((
+                    PyBytes::new(py, &scheme),
+                    PyBytes::new(py, &host),
+                    port,
+                ))?;
+                Ok(proxy)
+            } else {
+                // HTTP/HTTPS proxy
+                let httpcore = py.import("httpcore")?;
+                let http_proxy_class = httpcore.getattr("AsyncHTTPProxy")?;
+                // Parse proxy URL to get components
+                let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
+                })?;
+                let scheme = parsed.scheme().as_bytes().to_vec();
+                let host = parsed.host_str().unwrap_or("").as_bytes().to_vec();
+                let port = parsed.port();
+                let proxy = http_proxy_class.call1((
+                    PyBytes::new(py, &scheme),
+                    PyBytes::new(py, &host),
+                    port,
+                ))?;
+                Ok(proxy)
+            }
+        } else {
+            // Return None or a basic connection pool
+            Ok(py.None().into_bound(py))
+        }
     }
 
     fn __repr__(&self) -> String {

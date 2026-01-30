@@ -193,6 +193,86 @@ impl Cookies {
         }
         Ok(())
     }
+
+    /// Get the jar property (returns CookieJar for iteration over Cookie objects)
+    #[getter]
+    fn jar(&self) -> CookieJar {
+        let cookies = self
+            .inner
+            .iter()
+            .map(|(k, v)| Cookie {
+                name: k.clone(),
+                value: v.clone(),
+                domain: String::new(),
+                path: "/".to_string(),
+            })
+            .collect();
+        CookieJar { cookies }
+    }
+}
+
+/// A single Cookie object (for jar iteration)
+#[pyclass(name = "Cookie")]
+#[derive(Clone)]
+pub struct Cookie {
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    value: String,
+    #[pyo3(get)]
+    domain: String,
+    #[pyo3(get)]
+    path: String,
+}
+
+#[pymethods]
+impl Cookie {
+    fn __repr__(&self) -> String {
+        format!("<Cookie {}={} for {}/>", self.name, self.value, self.domain)
+    }
+}
+
+/// Cookie jar that holds Cookie objects
+#[pyclass(name = "CookieJar")]
+pub struct CookieJar {
+    cookies: Vec<Cookie>,
+}
+
+#[pymethods]
+impl CookieJar {
+    fn __iter__(&self) -> CookieJarIterator {
+        CookieJarIterator {
+            cookies: self.cookies.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.cookies.len()
+    }
+}
+
+#[pyclass]
+pub struct CookieJarIterator {
+    cookies: Vec<Cookie>,
+    index: usize,
+}
+
+#[pymethods]
+impl CookieJarIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<Cookie> {
+        if self.index < self.cookies.len() {
+            let cookie = self.cookies[self.index].clone();
+            self.index += 1;
+            Some(cookie)
+        } else {
+            None
+        }
+    }
 }
 
 #[pyclass]

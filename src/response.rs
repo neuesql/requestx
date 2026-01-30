@@ -10,7 +10,7 @@ use crate::request::Request;
 use crate::url::URL;
 
 /// HTTP Response object
-#[pyclass(name = "Response")]
+#[pyclass(name = "Response", subclass)]
 #[derive(Clone)]
 pub struct Response {
     status_code: u16,
@@ -23,6 +23,8 @@ pub struct Response {
     is_closed: bool,
     is_stream_consumed: bool,
     default_encoding: String,
+    explicit_encoding: Option<String>,
+    text_accessed: bool,
     elapsed: Duration,
 }
 
@@ -39,6 +41,8 @@ impl Response {
             is_closed: false,
             is_stream_consumed: false,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
+            text_accessed: false,
             elapsed: Duration::ZERO,
         }
     }
@@ -63,7 +67,11 @@ impl Response {
         let http_version = format!("{:?}", response.version());
 
         let content = response.bytes().map_err(|e| {
-            crate::exceptions::ReadError::new_err(format!("Failed to read response: {}", e))
+            if e.is_timeout() {
+                crate::exceptions::ReadTimeout::new_err(format!("Read timeout: {}", e))
+            } else {
+                crate::exceptions::ReadError::new_err(format!("Failed to read response: {}", e))
+            }
         })?;
 
         Ok(Self {
@@ -77,6 +85,8 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
+            text_accessed: false,
             elapsed: Duration::ZERO,
         })
     }
@@ -91,7 +101,11 @@ impl Response {
         let http_version = format!("{:?}", response.version());
 
         let content = response.bytes().await.map_err(|e| {
-            crate::exceptions::ReadError::new_err(format!("Failed to read response: {}", e))
+            if e.is_timeout() {
+                crate::exceptions::ReadTimeout::new_err(format!("Read timeout: {}", e))
+            } else {
+                crate::exceptions::ReadError::new_err(format!("Failed to read response: {}", e))
+            }
         })?;
 
         Ok(Self {
@@ -105,6 +119,8 @@ impl Response {
             is_closed: true,
             is_stream_consumed: true,
             default_encoding: "utf-8".to_string(),
+            explicit_encoding: None,
+            text_accessed: false,
             elapsed: Duration::ZERO,
         })
     }
@@ -329,17 +345,41 @@ def collect_async_iter(it):
 
     #[getter]
     fn text(&mut self) -> PyResult<String> {
-        // Try to get encoding from content-type header
-        let _encoding = self.get_encoding();
+        let encoding = self.get_encoding();
 
         // Mark stream as consumed and closed when accessing text
         self.is_stream_consumed = true;
         self.is_closed = true;
+        self.text_accessed = true;
 
-        // For now, just use UTF-8 (proper encoding detection would need more work)
-        String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })
+        // Decode based on encoding
+        let enc_lower = encoding.to_lowercase();
+        match enc_lower.as_str() {
+            "utf-8" | "utf8" => {
+                String::from_utf8(self.content.clone()).map_err(|e| {
+                    crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
+                })
+            }
+            "latin-1" | "latin1" | "iso-8859-1" | "iso_8859_1" => {
+                // Latin-1 is a simple 1:1 byte to char mapping
+                Ok(self.content.iter().map(|&b| b as char).collect())
+            }
+            "ascii" | "us-ascii" => {
+                // ASCII is UTF-8 compatible for bytes 0-127
+                let valid: Result<String, _> = String::from_utf8(
+                    self.content.iter().map(|&b| if b > 127 { b'?' } else { b }).collect()
+                );
+                valid.map_err(|e| {
+                    crate::exceptions::DecodingError::new_err(format!("Failed to decode ASCII: {}", e))
+                })
+            }
+            _ => {
+                // For unknown encodings, try UTF-8 first, then fall back to latin-1
+                String::from_utf8(self.content.clone()).or_else(|_| {
+                    Ok(self.content.iter().map(|&b| b as char).collect())
+                })
+            }
+        }
     }
 
     fn json(&mut self, py: Python<'_>) -> PyResult<PyObject> {
@@ -393,6 +433,17 @@ def collect_async_iter(it):
     #[getter]
     fn encoding(&self) -> String {
         self.get_encoding()
+    }
+
+    #[setter]
+    fn set_encoding(&mut self, encoding: &str) -> PyResult<()> {
+        if self.text_accessed {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "cannot set encoding after .text has been accessed"
+            ));
+        }
+        self.explicit_encoding = Some(encoding.to_string());
+        Ok(())
     }
 
     #[getter]
@@ -763,6 +814,11 @@ def collect_async_iter(it):
 
 impl Response {
     fn get_encoding(&self) -> String {
+        // If encoding was explicitly set, use it
+        if let Some(ref enc) = self.explicit_encoding {
+            return enc.clone();
+        }
+        // Otherwise, try to detect from content-type header
         if let Some(content_type) = self.headers.get("content-type", None) {
             // Look for charset in content-type
             for part in content_type.split(';') {

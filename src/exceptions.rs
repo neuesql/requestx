@@ -75,19 +75,42 @@ pub fn register_exceptions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Convert reqwest error to appropriate Python exception
 pub fn convert_reqwest_error(e: reqwest::Error) -> PyErr {
+    let error_str = format!("{}", e);
+
+    // Check for unsupported protocol/scheme errors
+    if e.is_builder() {
+        // Builder errors often indicate URL scheme issues
+        let lower = error_str.to_lowercase();
+        if lower.contains("url") || lower.contains("scheme") || lower.contains("builder error") {
+            // Check if it's a scheme/protocol issue by looking at the URL
+            if let Some(url) = e.url() {
+                let scheme = url.scheme();
+                if scheme != "http" && scheme != "https" {
+                    return UnsupportedProtocol::new_err(format!(
+                        "Request URL has unsupported protocol '{}://': {}",
+                        scheme,
+                        url
+                    ));
+                }
+            }
+            // Generic unsupported protocol for builder URL errors
+            return UnsupportedProtocol::new_err(error_str);
+        }
+    }
+
     if e.is_timeout() {
         if e.is_connect() {
-            ConnectTimeout::new_err(format!("{}", e))
+            ConnectTimeout::new_err(error_str)
         } else {
-            ReadTimeout::new_err(format!("{}", e))
+            ReadTimeout::new_err(error_str)
         }
     } else if e.is_connect() {
-        ConnectError::new_err(format!("{}", e))
+        ConnectError::new_err(error_str)
     } else if e.is_request() {
-        RequestError::new_err(format!("{}", e))
+        RequestError::new_err(error_str)
     } else if e.is_redirect() {
-        TooManyRedirects::new_err(format!("{}", e))
+        TooManyRedirects::new_err(error_str)
     } else {
-        TransportError::new_err(format!("{}", e))
+        TransportError::new_err(error_str)
     }
 }

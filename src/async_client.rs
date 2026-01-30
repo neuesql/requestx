@@ -48,6 +48,11 @@ pub struct AsyncClient {
     event_hooks: EventHooks,
     trust_env: bool,
     mounts: HashMap<String, Py<PyAny>>,
+    transport: Option<Py<PyAny>>,
+    /// Cached default transport - created lazily and reused
+    default_transport: Option<Py<PyAny>>,
+    /// Client-level auth
+    auth: Option<(String, String)>,
 }
 
 impl Default for AsyncClient {
@@ -100,6 +105,9 @@ impl AsyncClient {
             event_hooks: EventHooks::default(),
             trust_env: true,
             mounts: HashMap::new(),
+            transport: None,
+            default_transport: None,
+            auth,
         })
     }
 
@@ -116,8 +124,9 @@ impl AsyncClient {
 #[pymethods]
 impl AsyncClient {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
     fn new(
+        py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
@@ -127,6 +136,9 @@ impl AsyncClient {
         base_url: Option<&Bound<'_, PyAny>>,
         event_hooks: Option<&Bound<'_, PyDict>>,
         trust_env: Option<bool>,
+        transport: Option<Py<PyAny>>,
+        mounts: Option<&Bound<'_, PyDict>>,
+        proxy: Option<&str>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -224,9 +236,37 @@ impl AsyncClient {
             }
         }
 
+        // Set transport if provided
+        client.transport = transport;
+
+        // Initialize default transport (with proxy if specified)
+        let async_transport = if proxy.is_some() {
+            crate::transport::AsyncHTTPTransport::with_proxy(proxy)?
+        } else {
+            crate::transport::AsyncHTTPTransport::default()
+        };
+        client.default_transport = Some(Py::new(py, async_transport)?.into_any());
+
+        // Handle mounts with validation
+        if let Some(mounts_dict) = mounts {
+            for (key, value) in mounts_dict.iter() {
+                let pattern: String = key.extract()?;
+                // Validate mount key format - must contain "://"
+                if !pattern.contains("://") {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Mount pattern '{}' is invalid. Did you mean '{}://'?",
+                        pattern, pattern
+                    )));
+                }
+                client.mounts.insert(pattern, value.unbind());
+            }
+        }
+
         Ok(client)
     }
 
+    /// HTTP GET request
+    /// auth parameter: Rust None = use client auth, Python None = disable auth, (user,pass) = use this auth
     #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
     fn get<'py>(
         &self,
@@ -372,6 +412,43 @@ impl AsyncClient {
         self.async_request(py, method, url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
     }
 
+    #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn stream<'py>(
+        &self,
+        py: Python<'py>,
+        method: String,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<PyObject>,
+        files: Option<PyObject>,
+        json: Option<PyObject>,
+        params: Option<PyObject>,
+        headers: Option<PyObject>,
+        cookies: Option<PyObject>,
+        auth: Option<PyObject>,
+        follow_redirects: Option<bool>,
+        timeout: Option<PyObject>,
+    ) -> PyResult<AsyncStreamContextManager> {
+        let url_str = extract_url_string(url)?;
+
+        // Prepare all the request parameters for the async context manager
+        Ok(AsyncStreamContextManager {
+            client: self.clone_for_stream(py)?,
+            method,
+            url: url_str,
+            content,
+            data,
+            json,
+            params,
+            headers,
+            cookies,
+            auth,
+            follow_redirects,
+            timeout,
+            response: None,
+        })
+    }
+
     fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         future_into_py(py, async move {
             Ok(())
@@ -445,6 +522,34 @@ impl AsyncClient {
         self.trust_env = value;
     }
 
+    /// Get client-level auth
+    #[getter]
+    fn auth(&self) -> Option<BasicAuth> {
+        self.auth.as_ref().map(|(user, pass)| {
+            BasicAuth {
+                username: user.clone(),
+                password: pass.clone(),
+            }
+        })
+    }
+
+    /// Set client-level auth
+    #[setter]
+    fn set_auth(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if value.is_none() {
+            self.auth = None;
+        } else if let Ok(basic) = value.extract::<BasicAuth>() {
+            self.auth = Some((basic.username, basic.password));
+        } else if let Ok(tuple) = value.extract::<(String, String)>() {
+            self.auth = Some(tuple);
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "auth must be a tuple (username, password) or BasicAuth object",
+            ));
+        }
+        Ok(())
+    }
+
     /// Mount a transport for a given URL pattern
     fn mount(&mut self, pattern: &str, transport: Py<PyAny>) {
         self.mounts.insert(pattern.to_string(), transport);
@@ -452,6 +557,42 @@ impl AsyncClient {
 
     fn __repr__(&self) -> String {
         "<AsyncClient>".to_string()
+    }
+
+    /// Get the default transport
+    #[getter]
+    fn _transport<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if let Some(ref t) = self.transport {
+            Ok(t.bind(py).clone())
+        } else if let Some(ref t) = self.default_transport {
+            Ok(t.bind(py).clone())
+        } else {
+            // This shouldn't happen if initialized properly
+            let transport_module = py.import("requestx")?;
+            let http_transport = transport_module.getattr("AsyncHTTPTransport")?;
+            let transport = http_transport.call0()?;
+            Ok(transport)
+        }
+    }
+
+    /// Get the transport for a given URL, considering mounts
+    fn _transport_for_url<'py>(&self, py: Python<'py>, url: &URL) -> PyResult<Bound<'py, PyAny>> {
+        let url_str = url.to_string();
+
+        // Check mounts in order of specificity (longer patterns first)
+        let mut sorted_patterns: Vec<_> = self.mounts.keys().collect();
+        sorted_patterns.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        for pattern in sorted_patterns {
+            if Self::url_matches_pattern_static(&url_str, pattern) {
+                if let Some(transport) = self.mounts.get(pattern) {
+                    return Ok(transport.bind(py).clone());
+                }
+            }
+        }
+
+        // Return default transport
+        self._transport(py)
     }
 }
 
@@ -471,7 +612,6 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         timeout: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let client = self.inner.clone();
         let default_headers = self.headers.clone();
         let default_cookies = self.cookies.clone();
         let base_url = self.base_url.clone();
@@ -505,9 +645,222 @@ impl AsyncClient {
             resolved_url.clone()
         };
 
-        // Build headers
+        // Build headers for request
+        let mut request_headers = default_headers.clone();
+        if let Some(h) = &headers {
+            Python::with_gil(|py| {
+                let h_bound = h.bind(py);
+                if let Ok(headers_obj) = h_bound.extract::<Headers>() {
+                    for (k, v) in headers_obj.inner() {
+                        request_headers.set(k.clone(), v.clone());
+                    }
+                } else if let Ok(dict) = h_bound.downcast::<PyDict>() {
+                    for (key, value) in dict.iter() {
+                        if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                            request_headers.set(k, v);
+                        }
+                    }
+                }
+            });
+        }
+
+        // Add cookies to headers
+        let cookie_header = default_cookies.to_header_value();
+        if !cookie_header.is_empty() {
+            request_headers.set("Cookie".to_string(), cookie_header);
+        }
+
+        // Process body
+        let body_content = if let Some(c) = content {
+            Some(c)
+        } else if let Some(j) = &json {
+            let json_str = Python::with_gil(|py| {
+                let j_bound = j.bind(py);
+                py_to_json_string(j_bound)
+            })?;
+            if !request_headers.contains("content-type") {
+                request_headers.set("Content-Type".to_string(), "application/json".to_string());
+            }
+            Some(json_str.into_bytes())
+        } else if let Some(d) = &data {
+            Python::with_gil(|py| {
+                let d_bound = d.bind(py);
+                if let Ok(dict) = d_bound.downcast::<PyDict>() {
+                    let mut form_data = Vec::new();
+                    for (key, value) in dict.iter() {
+                        if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    }
+                    if !request_headers.contains("content-type") {
+                        request_headers.set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
+                    }
+                    Ok::<Option<Vec<u8>>, PyErr>(Some(form_data.join("&").into_bytes()))
+                } else {
+                    Ok(None)
+                }
+            })?
+        } else {
+            None
+        };
+
+        // Process auth - add Authorization header (per-request auth takes precedence over client-level auth)
+        // Auth handling - four cases (handled via Python wrapper with sentinels):
+        // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
+        // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
+        // 3. auth=(user,pass) or BasicAuth → use Basic auth
+        // 4. auth=callable → call it with Request to modify headers
+        enum AuthAction {
+            UseClientAuth,
+            DisableAuth,
+            BasicAuth(String, String),
+            CallableAuth(Py<PyAny>),
+        }
+
+        let auth_action = if let Some(a) = &auth {
+            Python::with_gil(|py| {
+                let a_bound = a.bind(py);
+                // Check type name for sentinels
+                if let Ok(type_name) = a_bound.get_type().name() {
+                    let type_str = type_name.to_string();
+                    // _AuthUnset sentinel - use client auth
+                    if type_str == "_AuthUnset" {
+                        return AuthAction::UseClientAuth;
+                    }
+                    // _AuthDisabled sentinel - disable auth
+                    if type_str == "_AuthDisabled" {
+                        return AuthAction::DisableAuth;
+                    }
+                }
+                // Check if it's Python's None
+                if a_bound.is_none() {
+                    AuthAction::DisableAuth
+                } else if let Ok(basic) = a_bound.extract::<BasicAuth>() {
+                    AuthAction::BasicAuth(basic.username, basic.password)
+                } else if let Ok(tuple) = a_bound.extract::<(String, String)>() {
+                    AuthAction::BasicAuth(tuple.0, tuple.1)
+                } else if a_bound.is_callable() {
+                    // Callable auth - will call it with Request later
+                    AuthAction::CallableAuth(a.clone_ref(py))
+                } else {
+                    // Unknown auth type, disable auth
+                    AuthAction::DisableAuth
+                }
+            })
+        } else {
+            // No per-request auth specified (Rust None), fall back to client-level auth
+            AuthAction::UseClientAuth
+        };
+
+        // Apply auth based on action
+        let callable_auth: Option<Py<PyAny>> = match auth_action {
+            AuthAction::UseClientAuth => {
+                if let Some((username, password)) = &self.auth {
+                    let credentials = format!("{}:{}", username, password);
+                    let encoded = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        credentials.as_bytes(),
+                    );
+                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+                }
+                None
+            }
+            AuthAction::DisableAuth => None,
+            AuthAction::BasicAuth(username, password) => {
+                let credentials = format!("{}:{}", username, password);
+                let encoded = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    credentials.as_bytes(),
+                );
+                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+                None
+            }
+            AuthAction::CallableAuth(auth_fn) => Some(auth_fn),
+        };
+
+        // Clone transport outside the borrow so the clone lives beyond &self
+        let transport_opt: Option<Py<PyAny>> = self.transport.as_ref().map(|t| t.clone_ref(py));
+
+        // If a custom transport is set, use it instead of making HTTP requests
+        if let Some(transport) = transport_opt {
+            // Build the Request object
+            let mut request = Request::new(&method, URL::parse(&final_url)?);
+            request.set_headers(request_headers);
+            if let Some(ref body) = body_content {
+                request.set_content(body.clone());
+            }
+
+            // Apply callable auth if provided - it modifies the request in place
+            if let Some(ref auth_fn) = callable_auth {
+                let auth_fn_bound = auth_fn.bind(py);
+                let modified_request = auth_fn_bound.call1((request.clone(),))?;
+                // The auth function returns a modified Request
+                if let Ok(req) = modified_request.extract::<Request>() {
+                    request = req;
+                }
+            }
+
+            // Call the transport's handle_async_request method (for async handlers)
+            // or handle_request method (for sync handlers)
+            let request_clone = request.clone();
+
+            // Check if transport has handle_async_request (works with async handlers)
+            let has_async_handler = transport.bind(py).hasattr("handle_async_request")?;
+
+            if has_async_handler {
+                // Use handle_async_request which can handle both sync and async handlers
+                let transport_bound = transport.bind(py);
+                let coro = transport_bound.call_method1("handle_async_request", (request_clone.clone(),))?;
+
+                // Convert the coroutine to a Rust future and await it
+                return pyo3_async_runtimes::tokio::into_future(coro).map(|fut| {
+                    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                        let response = fut.await?;
+                        Python::with_gil(|py| {
+                            let mut resp = response.extract::<Response>(py)?;
+                            resp.set_request_attr(Some(request_clone));
+                            Ok(resp)
+                        })
+                    })
+                })?;
+            }
+
+            // Fall back to handle_request for sync-only transports
+            return future_into_py(py, async move {
+                Python::with_gil(|py| -> PyResult<Response> {
+                    let transport_bound: &Bound<'_, PyAny> = transport.bind(py);
+
+                    // Try handle_request (for MockTransport with sync handlers)
+                    if transport_bound.hasattr("handle_request")? {
+                        let result = transport_bound.call_method1("handle_request", (request_clone.clone(),))?;
+                        let mut response = result.extract::<Response>()?;
+                        response.set_request_attr(Some(request_clone));
+                        return Ok(response);
+                    }
+
+                    // If it's a callable (Python function), call it directly
+                    if transport_bound.is_callable() {
+                        let result = transport_bound.call1((request_clone.clone(),))?;
+                        let mut response = result.extract::<Response>()?;
+                        response.set_request_attr(Some(request_clone));
+                        return Ok(response);
+                    }
+
+                    Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Transport must have handle_request method or be callable",
+                    ))
+                })
+            });
+        }
+
+        // Standard HTTP request path using reqwest
+        let client = self.inner.clone();
+        let method_clone = method.clone();
+        let url_clone = final_url.clone();
+
+        // Convert Headers to reqwest::header::HeaderMap
         let mut all_headers = reqwest::header::HeaderMap::new();
-        for (k, v) in default_headers.inner() {
+        for (k, v) in request_headers.inner() {
             if let (Ok(name), Ok(val)) = (
                 reqwest::header::HeaderName::from_bytes(k.as_bytes()),
                 reqwest::header::HeaderValue::from_str(v),
@@ -516,82 +869,6 @@ impl AsyncClient {
             }
         }
 
-        if let Some(h) = &headers {
-            Python::with_gil(|py| {
-                let h_bound = h.bind(py);
-                if let Ok(headers_obj) = h_bound.extract::<Headers>() {
-                    for (k, v) in headers_obj.inner() {
-                        if let (Ok(name), Ok(val)) = (
-                            reqwest::header::HeaderName::from_bytes(k.as_bytes()),
-                            reqwest::header::HeaderValue::from_str(v),
-                        ) {
-                            all_headers.insert(name, val);
-                        }
-                    }
-                }
-            });
-        }
-
-        // Process cookies
-        let cookie_header = default_cookies.to_header_value();
-        if !cookie_header.is_empty() {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&cookie_header) {
-                all_headers.insert(reqwest::header::COOKIE, val);
-            }
-        }
-
-        // Process body
-        let body = if let Some(c) = content {
-            Some(c)
-        } else if let Some(j) = &json {
-            let json_str = Python::with_gil(|py| {
-                let j_bound = j.bind(py);
-                py_to_json_string(j_bound)
-            })?;
-            all_headers.insert(
-                reqwest::header::CONTENT_TYPE,
-                reqwest::header::HeaderValue::from_static("application/json"),
-            );
-            Some(json_str.into_bytes())
-        } else {
-            None
-        };
-
-        // Process auth
-        let auth_header = if let Some(a) = &auth {
-            Python::with_gil(|py| {
-                let a_bound = a.bind(py);
-                if let Ok(basic) = a_bound.extract::<BasicAuth>() {
-                    let credentials = format!("{}:{}", basic.username, basic.password);
-                    let encoded = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        credentials.as_bytes(),
-                    );
-                    Some(format!("Basic {}", encoded))
-                } else if let Ok(tuple) = a_bound.extract::<(String, String)>() {
-                    let credentials = format!("{}:{}", tuple.0, tuple.1);
-                    let encoded = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        credentials.as_bytes(),
-                    );
-                    Some(format!("Basic {}", encoded))
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
-
-        if let Some(auth_val) = auth_header {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&auth_val) {
-                all_headers.insert(reqwest::header::AUTHORIZATION, val);
-            }
-        }
-
-        let method_clone = method.clone();
-        let url_clone = final_url.clone();
-
         future_into_py(py, async move {
             let method = reqwest::Method::from_bytes(method_clone.as_bytes())
                 .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid HTTP method"))?;
@@ -599,7 +876,7 @@ impl AsyncClient {
             let mut builder = client.request(method.clone(), &url_clone);
             builder = builder.headers(all_headers);
 
-            if let Some(b) = body {
+            if let Some(b) = body_content {
                 builder = builder.body(b);
             }
 
@@ -612,6 +889,107 @@ impl AsyncClient {
             result.set_elapsed(elapsed);
             Ok(result)
         })
+    }
+}
+
+impl AsyncClient {
+    /// Check if a URL matches a mount pattern
+    fn url_matches_pattern_static(url: &str, pattern: &str) -> bool {
+        // Mount patterns can be:
+        // - "all://" - matches all URLs
+        // - "http://" - matches all HTTP URLs
+        // - "https://" - matches all HTTPS URLs
+        // - "http://example.com" - matches specific domain (any port)
+        // - "http://example.com:8080" - matches specific domain and port
+        // - "http://*.example.com" - matches subdomains only (not example.com itself)
+        // - "http://*example.com" - matches domain suffix (example.com and www.example.com)
+        // - "http://*" - matches any domain with http scheme
+        // - "all://example.com" - matches domain on any scheme
+
+        if pattern == "all://" {
+            return true;
+        }
+
+        // Parse the URL scheme
+        let url_scheme = url.split("://").next().unwrap_or("");
+        let pattern_scheme = pattern.split("://").next().unwrap_or("");
+
+        // Check scheme match (unless pattern scheme is "all")
+        if pattern_scheme != "all" && pattern_scheme != url_scheme {
+            return false;
+        }
+
+        // Get the URL host (with port)
+        let url_host = if let Some(rest) = url.strip_prefix(&format!("{}://", url_scheme)) {
+            rest.split('/').next().unwrap_or("")
+        } else {
+            ""
+        };
+
+        // Get the pattern host (with port if specified)
+        let pattern_host = if let Some(rest) = pattern.strip_prefix(&format!("{}://", pattern_scheme)) {
+            rest.split('/').next().unwrap_or("")
+        } else {
+            ""
+        };
+
+        // If pattern is just scheme://, match all hosts
+        if pattern_host.is_empty() {
+            return true;
+        }
+
+        // Handle "*" pattern - matches any host
+        if pattern_host == "*" {
+            return true;
+        }
+
+        // Split into host and port
+        let url_host_no_port = url_host.split(':').next().unwrap_or(url_host);
+        let url_port = url_host.split(':').nth(1);
+        let pattern_host_no_port = pattern_host.split(':').next().unwrap_or(pattern_host);
+        let pattern_port = pattern_host.split(':').nth(1);
+
+        // Handle "*.example.com" pattern - matches subdomains ONLY (NOT example.com itself)
+        if pattern_host_no_port.starts_with("*.") {
+            let suffix = &pattern_host_no_port[2..]; // Remove "*."
+            // Must have a dot before the suffix (i.e., must be a subdomain)
+            // "*.example.com" matches "www.example.com" but NOT "example.com"
+            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            return false;
+        }
+
+        // Handle "*example.com" pattern (no dot) - matches suffix
+        // e.g., "*example.com" matches "example.com" and "www.example.com" but NOT "wwwexample.com"
+        if pattern_host_no_port.starts_with('*') && !pattern_host_no_port.starts_with("*.") {
+            let suffix = &pattern_host_no_port[1..]; // Remove "*"
+            // Must either be exact match or have a dot before suffix
+            if url_host_no_port == suffix {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            return false;
+        }
+
+        // Exact host match
+        if url_host_no_port != pattern_host_no_port {
+            return false;
+        }
+
+        // If pattern has a port, URL must have matching port
+        // If pattern has no port, any port matches
+        Self::port_matches(url_port, pattern_port)
+    }
+
+    /// Check if URL port matches pattern port
+    fn port_matches(url_port: Option<&str>, pattern_port: Option<&str>) -> bool {
+        match pattern_port {
+            None => true,  // Pattern has no port requirement
+            Some(pp) => url_port == Some(pp),  // Port must match exactly
+        }
     }
 }
 
@@ -671,4 +1049,118 @@ fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
     Err(pyo3::exceptions::PyTypeError::new_err(
         "Unsupported type for JSON serialization",
     ))
+}
+
+/// Async stream context manager for client.stream()
+#[pyclass(name = "AsyncStreamContextManager")]
+pub struct AsyncStreamContextManager {
+    client: Py<AsyncClient>,
+    method: String,
+    url: String,
+    content: Option<Vec<u8>>,
+    data: Option<PyObject>,
+    json: Option<PyObject>,
+    params: Option<PyObject>,
+    headers: Option<PyObject>,
+    cookies: Option<PyObject>,
+    auth: Option<PyObject>,
+    follow_redirects: Option<bool>,
+    timeout: Option<PyObject>,
+    response: Option<Response>,
+}
+
+#[pymethods]
+impl AsyncStreamContextManager {
+    fn __aenter__<'py>(mut slf: PyRefMut<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+
+        // Extract all values first before borrowing the client
+        let method = slf.method.clone();
+        let url = slf.url.clone();
+        let content = slf.content.take();
+        let data = slf.data.take();
+        let json = slf.json.take();
+        let params = slf.params.take();
+        let headers = slf.headers.take();
+        let cookies = slf.cookies.take();
+        let auth = slf.auth.take();
+        let follow_redirects = slf.follow_redirects;
+        let timeout = slf.timeout.take();
+
+        // Now get client reference
+        let client = slf.client.bind(py);
+
+        // Call the Python-level request method
+        let kwargs = PyDict::new(py);
+        if let Some(c) = content {
+            kwargs.set_item("content", c)?;
+        }
+        if let Some(d) = data {
+            kwargs.set_item("data", d)?;
+        }
+        if let Some(j) = json {
+            kwargs.set_item("json", j)?;
+        }
+        if let Some(p) = params {
+            kwargs.set_item("params", p)?;
+        }
+        if let Some(h) = headers {
+            kwargs.set_item("headers", h)?;
+        }
+        if let Some(c) = cookies {
+            kwargs.set_item("cookies", c)?;
+        }
+        if let Some(a) = auth {
+            kwargs.set_item("auth", a)?;
+        }
+        if let Some(f) = follow_redirects {
+            kwargs.set_item("follow_redirects", f)?;
+        }
+        if let Some(t) = timeout {
+            kwargs.set_item("timeout", t)?;
+        }
+
+        // Call client.request(method, url, **kwargs)
+        client.call_method("request", (method, url), Some(&kwargs))
+    }
+
+    fn __aexit__<'py>(
+        &mut self,
+        py: Python<'py>,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        future_into_py(py, async move {
+            Ok(false)
+        })
+    }
+}
+
+impl AsyncClient {
+    /// Clone the client for use in stream context manager
+    fn clone_for_stream(&self, py: Python<'_>) -> PyResult<Py<AsyncClient>> {
+        // Clone mounts manually since Py<PyAny> requires clone_ref
+        let mut mounts_clone = HashMap::new();
+        for (k, v) in &self.mounts {
+            mounts_clone.insert(k.clone(), v.clone_ref(py));
+        }
+
+        let client = AsyncClient {
+            inner: self.inner.clone(),
+            base_url: self.base_url.clone(),
+            headers: self.headers.clone(),
+            cookies: self.cookies.clone(),
+            timeout: self.timeout.clone(),
+            follow_redirects: self.follow_redirects,
+            max_redirects: self.max_redirects,
+            event_hooks: EventHooks::default(),
+            trust_env: self.trust_env,
+            mounts: mounts_clone,
+            transport: self.transport.as_ref().map(|t| t.clone_ref(py)),
+            default_transport: self.default_transport.as_ref().map(|t| t.clone_ref(py)),
+            auth: self.auth.clone(),
+        };
+        Py::new(py, client)
+    }
 }

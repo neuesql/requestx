@@ -9,8 +9,173 @@ use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary,
 use crate::types::SyncByteStream;
 use crate::url::URL;
 
+/// Mutable headers wrapper for Request.headers
+/// This allows modifying headers in place and assigning back to Request
+#[pyclass(name = "MutableHeaders")]
+#[derive(Clone)]
+pub struct MutableHeaders {
+    pub headers: Headers,
+}
+
+#[pymethods]
+impl MutableHeaders {
+    fn __getitem__(&self, key: &str) -> Option<String> {
+        self.headers.get(key, None)
+    }
+
+    fn __setitem__(&mut self, key: &str, value: &str) {
+        self.headers.set(key.to_string(), value.to_string());
+    }
+
+    fn __delitem__(&mut self, key: &str) {
+        // Remove all entries with this key
+        let key_lower = key.to_lowercase();
+        let new_inner: Vec<_> = self.headers.inner()
+            .iter()
+            .filter(|(k, _)| k.to_lowercase() != key_lower)
+            .cloned()
+            .collect();
+        self.headers = Headers::from_vec(new_inner);
+    }
+
+    fn __contains__(&self, key: &str) -> bool {
+        self.headers.get(key, None).is_some()
+    }
+
+    fn __iter__(&self) -> MutableHeadersIter {
+        // Get unique keys
+        let mut seen = std::collections::HashSet::new();
+        let keys: Vec<String> = self.headers.inner()
+            .iter()
+            .filter_map(|(k, _)| {
+                let k_lower = k.to_lowercase();
+                if seen.insert(k_lower) {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        MutableHeadersIter { keys, index: 0 }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, key: &str, default: Option<String>) -> Option<String> {
+        self.headers.get(key, default.as_deref())
+    }
+
+    fn keys(&self) -> Vec<String> {
+        // Return unique keys
+        let mut seen = std::collections::HashSet::new();
+        self.headers.inner()
+            .iter()
+            .filter_map(|(k, _)| {
+                let k_lower = k.to_lowercase();
+                if seen.insert(k_lower) {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn values(&self) -> Vec<String> {
+        self.headers.inner().iter().map(|(_, v)| v.clone()).collect()
+    }
+
+    fn items(&self) -> Vec<(String, String)> {
+        self.headers.inner().clone()
+    }
+
+    fn update(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(h) = other.extract::<Headers>() {
+            for (k, v) in h.inner() {
+                self.headers.set(k.clone(), v.clone());
+            }
+        } else if let Ok(mh) = other.extract::<MutableHeaders>() {
+            for (k, v) in mh.headers.inner() {
+                self.headers.set(k.clone(), v.clone());
+            }
+        } else if let Ok(dict) = other.downcast::<PyDict>() {
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                self.headers.set(k, v);
+            }
+        }
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("MutableHeaders({:?})", self.headers.inner())
+    }
+
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        use pyo3::types::PyDict;
+        // Compare with dict
+        if let Ok(dict) = other.downcast::<PyDict>() {
+            // Build dict from our headers
+            let our_items: Vec<(String, String)> = self.headers.inner().clone();
+            // Convert to lowercase-keyed map for comparison
+            let mut our_map = std::collections::HashMap::new();
+            for (k, v) in &our_items {
+                our_map.insert(k.to_lowercase(), v.clone());
+            }
+            // Compare
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                if our_map.get(&k.to_lowercase()) != Some(&v) {
+                    return Ok(false);
+                }
+            }
+            // Check same number of keys
+            // Count unique keys in our headers
+            let our_unique_keys: std::collections::HashSet<String> = our_items.iter().map(|(k, _)| k.to_lowercase()).collect();
+            if our_unique_keys.len() != dict.len() {
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        // Compare with Headers
+        if let Ok(h) = other.extract::<Headers>() {
+            // Compare inner vectors - both have same structure
+            return Ok(self.headers.inner() == h.inner());
+        }
+        // Compare with MutableHeaders
+        if let Ok(mh) = other.extract::<MutableHeaders>() {
+            return Ok(self.headers.inner() == mh.headers.inner());
+        }
+        Ok(false)
+    }
+}
+
+#[pyclass]
+pub struct MutableHeadersIter {
+    keys: Vec<String>,
+    index: usize,
+}
+
+#[pymethods]
+impl MutableHeadersIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<String> {
+        if self.index < self.keys.len() {
+            let key = self.keys[self.index].clone();
+            self.index += 1;
+            Some(key)
+        } else {
+            None
+        }
+    }
+}
+
 /// HTTP Request object
-#[pyclass(name = "Request")]
+#[pyclass(name = "Request", subclass)]
 #[derive(Clone)]
 pub struct Request {
     method: String,
@@ -184,9 +349,8 @@ impl Request {
         }
 
         // Set Content-Length header
-        if let Some(ref content) = request.content {
-            request.headers.set("Content-Length".to_string(), content.len().to_string());
-        }
+        let content_len = request.content.as_ref().map(|c| c.len()).unwrap_or(0);
+        request.headers.set("Content-Length".to_string(), content_len.to_string());
 
         // Set Host header
         if let Some(host) = request.url.get_host() {
@@ -207,8 +371,27 @@ impl Request {
     }
 
     #[getter]
-    fn headers(&self) -> Headers {
-        self.headers.clone()
+    fn headers(&self) -> MutableHeaders {
+        // Return a MutableHeaders wrapper that holds a reference-like proxy
+        MutableHeaders { headers: self.headers.clone() }
+    }
+
+    #[setter(headers)]
+    fn py_set_headers(&mut self, headers: &Bound<'_, PyAny>) -> PyResult<()> {
+        use pyo3::types::PyDict;
+        if let Ok(h) = headers.extract::<Headers>() {
+            self.headers = h;
+        } else if let Ok(mh) = headers.extract::<MutableHeaders>() {
+            self.headers = mh.headers;
+        } else if let Ok(dict) = headers.downcast::<PyDict>() {
+            self.headers = Headers::new();
+            for (key, value) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                self.headers.set(k, v);
+            }
+        }
+        Ok(())
     }
 
     #[getter]

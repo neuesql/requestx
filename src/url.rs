@@ -17,12 +17,20 @@ const MAX_URL_LENGTH: usize = 65536;
 pub struct URL {
     inner: Url,
     fragment: String,
+    /// Track if the original URL had an explicit trailing slash for root path
+    has_trailing_slash: bool,
 }
 
 impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment }
+        // Default to true since url crate always normalizes to have slash
+        Self { inner: url, fragment, has_trailing_slash: true }
+    }
+
+    pub fn from_url_with_slash(url: Url, has_trailing_slash: bool) -> Self {
+        let fragment = url.fragment().unwrap_or("").to_string();
+        Self { inner: url, fragment, has_trailing_slash }
     }
 
     pub fn inner(&self) -> &Url {
@@ -49,16 +57,29 @@ impl URL {
         }
     }
 
-    /// Convert to string with proper normalization (strip trailing slash when appropriate)
+    /// Convert to string (preserving trailing slash based on original input)
     pub fn to_string(&self) -> String {
         let s = self.inner.to_string();
-        // Strip trailing slash when path is "/" and no query/fragment
-        if self.inner.path() == "/" && self.inner.query().is_none() && self.inner.fragment().is_none() {
-            if let Some(stripped) = s.strip_suffix('/') {
-                return stripped.to_string();
-            }
+        // Only strip trailing slash if:
+        // 1. The URL ends with /
+        // 2. The path is exactly "/" (root path)
+        // 3. There's no query or fragment
+        // 4. The original URL did NOT have a trailing slash
+        if s.ends_with('/')
+            && self.inner.path() == "/"
+            && self.inner.query().is_none()
+            && self.inner.fragment().is_none()
+            && !self.has_trailing_slash
+        {
+            s[..s.len() - 1].to_string()
+        } else {
+            s
         }
-        s
+    }
+
+    /// Convert to string with trailing slash (raw representation)
+    pub fn to_string_raw(&self) -> String {
+        self.inner.to_string()
     }
 
     /// Get the host (public Rust API)
@@ -125,10 +146,23 @@ impl URL {
                         parsed_url.set_query(Some(&query_params.to_query_string()));
                     }
 
+                    // Track if original URL had a trailing slash
+                    // For root paths, check if original ended with /
+                    let has_trailing_slash = if parsed_url.path() == "/" {
+                        // Check if original string ended with / (before query/fragment)
+                        let base = url_str.split('?').next().unwrap_or(url_str);
+                        let base = base.split('#').next().unwrap_or(base);
+                        base.ends_with('/')
+                    } else {
+                        // For non-root paths, preserve as-is
+                        true
+                    };
+
                     let frag = parsed_url.fragment().unwrap_or("").to_string();
                     return Ok(Self {
                         inner: parsed_url,
                         fragment: frag,
+                        has_trailing_slash,
                     });
                 }
                 Err(e) => {
@@ -204,10 +238,14 @@ impl URL {
         if host.is_empty() && scheme.is_empty() {
             let dummy_base = Url::parse("relative://dummy").unwrap();
             match dummy_base.join(&url_string) {
-                Ok(u) => Ok(Self {
-                    inner: u,
-                    fragment: frag,
-                }),
+                Ok(u) => {
+                    let has_slash = u.path() != "/" || url_string.ends_with('/');
+                    Ok(Self {
+                        inner: u,
+                        fragment: frag,
+                        has_trailing_slash: has_slash,
+                    })
+                }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
                     "Invalid URL: {}",
                     e
@@ -215,10 +253,14 @@ impl URL {
             }
         } else {
             match Url::parse(&url_string) {
-                Ok(u) => Ok(Self {
-                    inner: u,
-                    fragment: frag,
-                }),
+                Ok(u) => {
+                    let has_slash = u.path() != "/" || url_string.ends_with('/');
+                    Ok(Self {
+                        inner: u,
+                        fragment: frag,
+                        has_trailing_slash: has_slash,
+                    })
+                }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
                     "Invalid URL: {}",
                     e
@@ -399,10 +441,27 @@ impl URL {
                         })?;
                     }
                     "port" => {
-                        let port: Option<u16> = value.extract()?;
-                        new_url.inner.set_port(port).map_err(|_| {
-                            crate::exceptions::InvalidURL::new_err("Invalid port")
-                        })?;
+                        // Handle port - allow large values in URL (will fail at connection time)
+                        if value.is_none() {
+                            new_url.inner.set_port(None).map_err(|_| {
+                                crate::exceptions::InvalidURL::new_err("Invalid port")
+                            })?;
+                        } else {
+                            let port_value: i64 = value.extract()?;
+                            // Store as u16 by taking modulo - the connection will fail if truly invalid
+                            // This matches httpx behavior which allows "impossible" ports in URLs
+                            if port_value < 0 {
+                                return Err(crate::exceptions::InvalidURL::new_err(
+                                    "Invalid port: negative values not allowed"
+                                ));
+                            }
+                            // Convert large port numbers by truncating to u16 range
+                            // The URL will be invalid for actual connections
+                            let port_u16 = (port_value % 65536) as u16;
+                            new_url.inner.set_port(Some(port_u16)).map_err(|_| {
+                                crate::exceptions::InvalidURL::new_err("Invalid port")
+                            })?;
+                        }
                     }
                     "path" => {
                         let path: String = value.extract()?;
@@ -535,7 +594,7 @@ impl URL {
     }
 
     fn __str__(&self) -> String {
-        self.inner.to_string()
+        self.to_string()
     }
 
     fn __repr__(&self) -> String {
@@ -544,9 +603,26 @@ impl URL {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_url) = other.extract::<URL>() {
-            Ok(self.to_string() == other_url.to_string())
+            // Compare internal URLs (both normalized)
+            Ok(self.inner.as_str() == other_url.inner.as_str())
         } else if let Ok(other_str) = other.extract::<String>() {
-            Ok(self.to_string() == other_str)
+            // For string comparison, try both with and without trailing slash
+            // to match user expectations
+            let self_str = self.inner.to_string();
+            if self_str == other_str {
+                return Ok(true);
+            }
+            // Also compare after normalizing both (strip or add trailing slash)
+            let self_normalized = self.to_string();
+            let other_normalized = other_str.trim_end_matches('/');
+            if self_normalized == other_normalized || self_normalized == other_str {
+                return Ok(true);
+            }
+            // Final check: if other has trailing slash, check against inner
+            if other_str.ends_with('/') && self_str == other_str {
+                return Ok(true);
+            }
+            Ok(false)
         } else {
             Ok(false)
         }

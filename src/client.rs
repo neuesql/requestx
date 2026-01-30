@@ -35,6 +35,10 @@ pub struct Client {
     trust_env: bool,
     mounts: HashMap<String, Py<PyAny>>,
     transport: Option<Py<PyAny>>,
+    /// Cached default transport - created lazily and reused
+    default_transport: Option<Py<PyAny>>,
+    /// Client-level auth
+    auth: Option<(String, String)>,
 }
 
 impl Default for Client {
@@ -88,6 +92,8 @@ impl Client {
             trust_env: true,
             mounts: HashMap::new(),
             transport: None,
+            default_transport: None,
+            auth,
         })
     }
 
@@ -249,6 +255,48 @@ impl Client {
                 request_headers.set("Content-Type".to_string(), ct);
             }
 
+            // Apply auth - three cases (handled via Python wrapper with sentinels):
+            // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
+            // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
+            // 3. auth=(user,pass) → use this auth
+            let effective_auth: Option<(String, String)> = if let Some(a) = auth {
+                // Check type name for sentinels
+                if let Ok(type_name) = a.get_type().name() {
+                    let type_str = type_name.to_string();
+                    // _AuthUnset sentinel - use client auth
+                    if type_str == "_AuthUnset" {
+                        self.auth.clone()
+                    // _AuthDisabled sentinel - disable auth
+                    } else if type_str == "_AuthDisabled" {
+                        None
+                    } else if let Ok(basic) = a.extract::<BasicAuth>() {
+                        Some((basic.username, basic.password))
+                    } else if let Ok(tuple) = a.extract::<(String, String)>() {
+                        Some(tuple)
+                    } else {
+                        None
+                    }
+                } else if let Ok(basic) = a.extract::<BasicAuth>() {
+                    Some((basic.username, basic.password))
+                } else if let Ok(tuple) = a.extract::<(String, String)>() {
+                    Some(tuple)
+                } else {
+                    None
+                }
+            } else {
+                // No per-request auth specified, fall back to client-level auth
+                self.auth.clone()
+            };
+
+            if let Some((username, password)) = effective_auth {
+                let credentials = format!("{}:{}", username, password);
+                let encoded = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    credentials.as_bytes(),
+                );
+                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+            }
+
             let mut request = Request::new(method, URL::parse(&final_url)?);
             request.set_headers(request_headers);
             if let Some(body) = body_content {
@@ -304,13 +352,41 @@ impl Client {
             builder = builder.header("cookie", cookie_header);
         }
 
-        // Add authentication
-        if let Some(a) = auth {
-            if let Ok(basic) = a.extract::<BasicAuth>() {
-                builder = builder.basic_auth(&basic.username, Some(&basic.password));
+        // Add authentication - three cases (handled via Python wrapper with sentinels):
+        // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
+        // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
+        // 3. auth=(user,pass) → use this auth
+        let effective_auth: Option<(String, String)> = if let Some(a) = auth {
+            // Check type name for sentinels
+            if let Ok(type_name) = a.get_type().name() {
+                let type_str = type_name.to_string();
+                // _AuthUnset sentinel - use client auth
+                if type_str == "_AuthUnset" {
+                    self.auth.clone()
+                // _AuthDisabled sentinel - disable auth
+                } else if type_str == "_AuthDisabled" {
+                    None
+                } else if let Ok(basic) = a.extract::<BasicAuth>() {
+                    Some((basic.username, basic.password))
+                } else if let Ok(tuple) = a.extract::<(String, String)>() {
+                    Some(tuple)
+                } else {
+                    None
+                }
+            } else if let Ok(basic) = a.extract::<BasicAuth>() {
+                Some((basic.username, basic.password))
             } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                builder = builder.basic_auth(&tuple.0, Some(&tuple.1));
+                Some(tuple)
+            } else {
+                None
             }
+        } else {
+            // No per-request auth specified, fall back to client-level auth
+            self.auth.clone()
+        };
+
+        if let Some((username, password)) = effective_auth {
+            builder = builder.basic_auth(&username, Some(&password));
         }
 
         // Add body
@@ -351,7 +427,7 @@ impl Client {
 #[pymethods]
 impl Client {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
@@ -364,6 +440,8 @@ impl Client {
         event_hooks: Option<&Bound<'_, PyDict>>,
         trust_env: Option<bool>,
         transport: Option<Py<PyAny>>,
+        mounts: Option<&Bound<'_, PyDict>>,
+        proxy: Option<&str>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -463,6 +541,29 @@ impl Client {
 
         // Set transport if provided
         client.transport = transport;
+
+        // Initialize default transport (with proxy if specified)
+        let http_transport = if proxy.is_some() {
+            crate::transport::HTTPTransport::with_proxy(proxy)?
+        } else {
+            crate::transport::HTTPTransport::default()
+        };
+        client.default_transport = Some(Py::new(py, http_transport)?.into_any());
+
+        // Handle mounts with validation
+        if let Some(mounts_dict) = mounts {
+            for (key, value) in mounts_dict.iter() {
+                let pattern: String = key.extract()?;
+                // Validate mount key format - must contain "://"
+                if !pattern.contains("://") {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Mount pattern '{}' is invalid. Did you mean '{}://'?",
+                        pattern, pattern
+                    )));
+                }
+                client.mounts.insert(pattern, value.unbind());
+            }
+        }
 
         Ok(client)
     }
@@ -753,13 +854,263 @@ impl Client {
         self.trust_env = value;
     }
 
+    /// Get base_url
+    #[getter]
+    fn base_url(&self) -> Option<URL> {
+        self.base_url.clone()
+    }
+
+    /// Set base_url (ensures trailing slash for paths)
+    #[setter]
+    fn set_base_url(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if value.is_none() {
+            self.base_url = None;
+        } else {
+            let url_str = if let Ok(url) = value.extract::<URL>() {
+                url.to_string()
+            } else if let Ok(s) = value.extract::<String>() {
+                s
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "base_url must be a string or URL object",
+                ));
+            };
+
+            // Normalize base_url: ensure trailing slash for paths
+            let normalized = if !url_str.ends_with('/') {
+                // Check if URL has a path component (not just domain)
+                // If URL has a path, add trailing slash
+                format!("{}/", url_str)
+            } else {
+                url_str
+            };
+
+            self.base_url = Some(URL::parse(&normalized)?);
+        }
+        Ok(())
+    }
+
+    /// Get headers
+    #[getter]
+    fn headers(&self) -> Headers {
+        self.headers.clone()
+    }
+
+    /// Set headers
+    #[setter]
+    fn set_headers(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(headers) = value.extract::<Headers>() {
+            self.headers = headers;
+        } else if let Ok(dict) = value.downcast::<PyDict>() {
+            let mut headers = Headers::default();
+            for (key, val) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = val.extract()?;
+                headers.set(k, v);
+            }
+            self.headers = headers;
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "headers must be a Headers object or dict",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Get cookies
+    #[getter]
+    fn cookies(&self) -> Cookies {
+        self.cookies.clone()
+    }
+
+    /// Set cookies
+    #[setter]
+    fn set_cookies(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(cookies) = value.extract::<Cookies>() {
+            self.cookies = cookies;
+        } else if let Ok(dict) = value.downcast::<PyDict>() {
+            let mut cookies = Cookies::default();
+            for (key, val) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = val.extract()?;
+                cookies.set(&k, &v);
+            }
+            self.cookies = cookies;
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "cookies must be a Cookies object or dict",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Get timeout
+    #[getter]
+    fn timeout(&self) -> Timeout {
+        self.timeout.clone()
+    }
+
+    /// Set timeout
+    #[setter]
+    fn set_timeout(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(timeout) = value.extract::<Timeout>() {
+            self.timeout = timeout;
+        } else if let Ok(seconds) = value.extract::<f64>() {
+            self.timeout = Timeout::new(Some(seconds), None, None, None, None);
+        } else if value.is_none() {
+            self.timeout = Timeout::default();
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "timeout must be a Timeout object or number",
+            ));
+        }
+        Ok(())
+    }
+
     /// Mount a transport for a given URL pattern
     fn mount(&mut self, pattern: &str, transport: Py<PyAny>) {
         self.mounts.insert(pattern.to_string(), transport);
     }
 
+    /// Get the default transport
+    #[getter]
+    fn _transport<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if let Some(ref t) = self.transport {
+            Ok(t.bind(py).clone())
+        } else if let Some(ref t) = self.default_transport {
+            Ok(t.bind(py).clone())
+        } else {
+            // This shouldn't happen if initialized properly
+            let transport_module = py.import("requestx")?;
+            let http_transport = transport_module.getattr("HTTPTransport")?;
+            let transport = http_transport.call0()?;
+            Ok(transport)
+        }
+    }
+
+    /// Get the transport for a given URL, considering mounts
+    fn _transport_for_url<'py>(&self, py: Python<'py>, url: &URL) -> PyResult<Bound<'py, PyAny>> {
+        let url_str = url.to_string();
+
+        // Check mounts in order of specificity (longer patterns first)
+        let mut sorted_patterns: Vec<_> = self.mounts.keys().collect();
+        sorted_patterns.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        for pattern in sorted_patterns {
+            if self.url_matches_pattern(&url_str, pattern) {
+                if let Some(transport) = self.mounts.get(pattern) {
+                    return Ok(transport.bind(py).clone());
+                }
+            }
+        }
+
+        // Return default transport
+        self._transport(py)
+    }
+
     fn __repr__(&self) -> String {
         "<Client>".to_string()
+    }
+}
+
+impl Client {
+    /// Check if a URL matches a mount pattern
+    fn url_matches_pattern(&self, url: &str, pattern: &str) -> bool {
+        // Mount patterns can be:
+        // - "all://" - matches all URLs
+        // - "http://" - matches all HTTP URLs
+        // - "https://" - matches all HTTPS URLs
+        // - "http://example.com" - matches specific domain (any port)
+        // - "http://example.com:8080" - matches specific domain and port
+        // - "http://*.example.com" - matches subdomains only (not example.com itself)
+        // - "http://*example.com" - matches domain suffix (example.com and www.example.com)
+        // - "http://*" - matches any domain with http scheme
+        // - "all://example.com" - matches domain on any scheme
+
+        if pattern == "all://" {
+            return true;
+        }
+
+        // Parse the URL scheme
+        let url_scheme = url.split("://").next().unwrap_or("");
+        let pattern_scheme = pattern.split("://").next().unwrap_or("");
+
+        // Check scheme match (unless pattern scheme is "all")
+        if pattern_scheme != "all" && pattern_scheme != url_scheme {
+            return false;
+        }
+
+        // Get the URL host (with port)
+        let url_host = if let Some(rest) = url.strip_prefix(&format!("{}://", url_scheme)) {
+            rest.split('/').next().unwrap_or("")
+        } else {
+            ""
+        };
+
+        // Get the pattern host (with port if specified)
+        let pattern_host = if let Some(rest) = pattern.strip_prefix(&format!("{}://", pattern_scheme)) {
+            rest.split('/').next().unwrap_or("")
+        } else {
+            ""
+        };
+
+        // If pattern is just scheme://, match all hosts
+        if pattern_host.is_empty() {
+            return true;
+        }
+
+        // Handle "*" pattern - matches any host
+        if pattern_host == "*" {
+            return true;
+        }
+
+        // Split into host and port
+        let url_host_no_port = url_host.split(':').next().unwrap_or(url_host);
+        let url_port = url_host.split(':').nth(1);
+        let pattern_host_no_port = pattern_host.split(':').next().unwrap_or(pattern_host);
+        let pattern_port = pattern_host.split(':').nth(1);
+
+        // Handle "*.example.com" pattern - matches subdomains ONLY (NOT example.com itself)
+        if pattern_host_no_port.starts_with("*.") {
+            let suffix = &pattern_host_no_port[2..]; // Remove "*."
+            // Must have a dot before the suffix (i.e., must be a subdomain)
+            // "*.example.com" matches "www.example.com" but NOT "example.com"
+            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            return false;
+        }
+
+        // Handle "*example.com" pattern (no dot) - matches suffix
+        // e.g., "*example.com" matches "example.com" and "www.example.com" but NOT "wwwexample.com"
+        if pattern_host_no_port.starts_with('*') && !pattern_host_no_port.starts_with("*.") {
+            let suffix = &pattern_host_no_port[1..]; // Remove "*"
+            // Must either be exact match or have a dot before suffix
+            if url_host_no_port == suffix {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
+                return Self::port_matches(url_port, pattern_port);
+            }
+            return false;
+        }
+
+        // Exact host match
+        if url_host_no_port != pattern_host_no_port {
+            return false;
+        }
+
+        // If pattern has a port, URL must have matching port
+        // If pattern has no port, any port matches
+        Self::port_matches(url_port, pattern_port)
+    }
+
+    /// Check if URL port matches pattern port
+    fn port_matches(url_port: Option<&str>, pattern_port: Option<&str>) -> bool {
+        match pattern_port {
+            None => true,  // Pattern has no port requirement
+            Some(pp) => url_port == Some(pp),  // Port must match exactly
+        }
     }
 }
 

@@ -3,17 +3,26 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-/// Synchronous byte stream base class
+/// Dual-mode byte stream that supports both sync and async iteration
+/// This implements both SyncByteStream and AsyncByteStream protocols
 #[pyclass(name = "SyncByteStream", subclass)]
 #[derive(Clone, Debug, Default)]
 pub struct SyncByteStream {
     data: Vec<u8>,
+    /// Track iteration state - allows multiple iterations
+    sync_consumed: bool,
+    async_consumed: bool,
 }
 
 impl SyncByteStream {
     /// Create a new SyncByteStream with the given data
     pub fn from_data(data: Vec<u8>) -> Self {
-        Self { data }
+        Self { data, sync_consumed: false, async_consumed: false }
+    }
+
+    /// Get data reference
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 }
 
@@ -21,19 +30,109 @@ impl SyncByteStream {
 impl SyncByteStream {
     #[new]
     fn new() -> Self {
-        Self { data: Vec::new() }
+        Self { data: Vec::new(), sync_consumed: false, async_consumed: false }
     }
 
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+    // === Sync iteration support ===
+    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.sync_consumed = false;
         slf
     }
 
     fn __next__(&mut self) -> Option<Vec<u8>> {
-        if self.data.is_empty() {
+        if self.sync_consumed || self.data.is_empty() {
             None
         } else {
-            let data = std::mem::take(&mut self.data);
-            Some(data)
+            self.sync_consumed = true;
+            Some(self.data.clone())
+        }
+    }
+
+    // === Async iteration support - makes this dual-mode ===
+    fn __aiter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.async_consumed = false;
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        if self.async_consumed || self.data.is_empty() {
+            Ok(None)
+        } else {
+            self.async_consumed = true;
+            Ok(Some(PyBytes::new(py, &self.data)))
+        }
+    }
+
+    // === Common methods ===
+    fn read(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+
+    fn close(&mut self) {
+        self.data.clear();
+        self.sync_consumed = true;
+        self.async_consumed = true;
+    }
+
+    fn aread<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.data)
+    }
+
+    fn aclose(&mut self) {
+        self.data.clear();
+        self.sync_consumed = true;
+        self.async_consumed = true;
+    }
+
+    fn __repr__(&self) -> String {
+        format!("<SyncByteStream [{} bytes]>", self.data.len())
+    }
+}
+
+/// Asynchronous byte stream - alias to SyncByteStream for compatibility
+/// Both types support both sync and async iteration
+#[pyclass(name = "AsyncByteStream", subclass)]
+#[derive(Clone, Debug, Default)]
+pub struct AsyncByteStream {
+    data: Vec<u8>,
+    sync_consumed: bool,
+    async_consumed: bool,
+}
+
+#[pymethods]
+impl AsyncByteStream {
+    #[new]
+    fn new() -> Self {
+        Self { data: Vec::new(), sync_consumed: false, async_consumed: false }
+    }
+
+    // === Sync iteration support ===
+    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.sync_consumed = false;
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<Vec<u8>> {
+        if self.sync_consumed || self.data.is_empty() {
+            None
+        } else {
+            self.sync_consumed = true;
+            Some(self.data.clone())
+        }
+    }
+
+    // === Async iteration support ===
+    fn __aiter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.async_consumed = false;
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        if self.async_consumed || self.data.is_empty() {
+            Ok(None)
+        } else {
+            self.async_consumed = true;
+            Ok(Some(PyBytes::new(py, &self.data)))
         }
     }
 
@@ -43,34 +142,8 @@ impl SyncByteStream {
 
     fn close(&mut self) {
         self.data.clear();
-    }
-}
-
-/// Asynchronous byte stream base class
-#[pyclass(name = "AsyncByteStream", subclass)]
-#[derive(Clone, Debug, Default)]
-pub struct AsyncByteStream {
-    data: Vec<u8>,
-}
-
-#[pymethods]
-impl AsyncByteStream {
-    #[new]
-    fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        if self.data.is_empty() {
-            Ok(None)
-        } else {
-            let data = std::mem::take(&mut self.data);
-            Ok(Some(PyBytes::new(py, &data)))
-        }
+        self.sync_consumed = true;
+        self.async_consumed = true;
     }
 
     fn aread<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
@@ -79,6 +152,12 @@ impl AsyncByteStream {
 
     fn aclose(&mut self) {
         self.data.clear();
+        self.sync_consumed = true;
+        self.async_consumed = true;
+    }
+
+    fn __repr__(&self) -> String {
+        format!("<AsyncByteStream [{} bytes]>", self.data.len())
     }
 }
 

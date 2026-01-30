@@ -20,19 +20,19 @@ mod transport;
 mod types;
 mod url;
 
-use async_client::AsyncClient;
+use async_client::{AsyncClient, AsyncStreamContextManager};
 use auth::{Auth, FunctionAuth};
 use client::Client;
-use cookies::Cookies;
+use cookies::{Cookie, CookieJar, Cookies};
 use exceptions::*;
 use headers::Headers;
 use queryparams::QueryParams;
-use request::Request;
+use request::{Request, MutableHeaders, MutableHeadersIter};
 use response::{
     Response, BytesIterator, TextIterator, LinesIterator, RawIterator,
     AsyncRawIterator, AsyncBytesIterator, AsyncTextIterator, AsyncLinesIterator,
 };
-use timeout::{Limits, Timeout};
+use timeout::{Limits, Proxy, Timeout};
 use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport, WSGITransport};
 use types::*;
 use url::URL;
@@ -50,12 +50,18 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Headers>()?;
     m.add_class::<QueryParams>()?;
     m.add_class::<Cookies>()?;
+    m.add_class::<Cookie>()?;
+    m.add_class::<CookieJar>()?;
     m.add_class::<Request>()?;
+    m.add_class::<MutableHeaders>()?;
+    m.add_class::<MutableHeadersIter>()?;
     m.add_class::<Response>()?;
     m.add_class::<Client>()?;
     m.add_class::<AsyncClient>()?;
+    m.add_class::<AsyncStreamContextManager>()?;
     m.add_class::<Timeout>()?;
     m.add_class::<Limits>()?;
+    m.add_class::<Proxy>()?;
 
     // Stream types
     m.add_class::<SyncByteStream>()?;
