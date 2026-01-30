@@ -78,6 +78,7 @@ pub fn request(
         None,  // app
         None,  // event_hooks
         None,  // mounts
+        None,  // params
     )?;
 
     client.request(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))
@@ -350,6 +351,7 @@ pub fn stream(
         None,  // app
         None,  // event_hooks
         None,  // mounts
+        None,  // params
     )?;
 
     client.stream(method, url, params, headers, cookies, content, data, json, files, auth, timeout, Some(follow_redirects))

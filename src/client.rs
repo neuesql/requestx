@@ -353,7 +353,8 @@ impl Client {
         transport=None,
         app=None,
         event_hooks=None,
-        mounts=None
+        mounts=None,
+        params=None
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -375,6 +376,7 @@ impl Client {
         #[allow(unused_variables)] app: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] event_hooks: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] mounts: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] params: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let mut config = ClientConfig {
             base_url,
@@ -445,6 +447,12 @@ impl Client {
     #[getter]
     pub fn base_url(&self) -> Option<URL> {
         self.config.base_url.as_ref().and_then(|s| URL::from_str(s).ok())
+    }
+
+    /// Get the default headers (HTTPX compatibility)
+    #[getter]
+    pub fn headers(&self) -> Headers {
+        self.config.headers.clone()
     }
 
     /// Build a request without sending it
@@ -1264,7 +1272,8 @@ impl AsyncClient {
         transport=None,
         app=None,
         event_hooks=None,
-        mounts=None
+        mounts=None,
+        params=None
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -1286,6 +1295,7 @@ impl AsyncClient {
         #[allow(unused_variables)] app: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] event_hooks: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] mounts: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] params: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let mut config = ClientConfig {
             base_url,
@@ -1362,6 +1372,12 @@ impl AsyncClient {
     #[getter]
     pub fn base_url(&self) -> Option<URL> {
         self.config.base_url.as_ref().and_then(|s| URL::from_str(s).ok())
+    }
+
+    /// Get the default headers (HTTPX compatibility)
+    #[getter]
+    pub fn headers(&self) -> Headers {
+        self.config.headers.clone()
     }
 
     /// Build a request without sending it
