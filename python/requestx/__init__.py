@@ -1,11 +1,11 @@
 # RequestX - High-performance Python HTTP client
 # API-compatible with httpx, powered by Rust's reqwest via PyO3
 
-import contextlib
-import logging
+import contextlib as _contextlib
+import logging as _logging
 
 # Set up the httpx logger (for compatibility)
-logger = logging.getLogger("httpx")
+_logger = _logging.getLogger("httpx")
 
 # Sentinel for "auth not specified" - distinct from auth=None which disables auth
 class _AuthUnset:
@@ -1314,6 +1314,13 @@ class Response:
         if status_code is not None and status_code_or_response is None:
             status_code_or_response = status_code
 
+        # Unwrap _WrappedRequest to get the underlying Rust request
+        rust_request = request
+        if request is not None and hasattr(request, '_rust_request'):
+            rust_request = request._rust_request
+            # Store the wrapped request for later access
+            self._request = request
+
         # If passed a Rust _Response, wrap it
         if isinstance(status_code_or_response, _Response):
             self._response = status_code_or_response
@@ -1361,7 +1368,7 @@ class Response:
                     html=html,
                     json=json,
                     stream=stream,
-                    request=request,
+                    request=rust_request,
                 )
             elif is_sync_iter:
                 # Store sync iterator for lazy consumption, like async iterators
@@ -1395,7 +1402,7 @@ class Response:
                     html=html,
                     json=json,
                     stream=stream,
-                    request=request,
+                    request=rust_request,
                 )
             elif isinstance(content, list):
                 # Content is a list of bytes chunks
@@ -1409,7 +1416,7 @@ class Response:
                     html=html,
                     json=json,
                     stream=stream,
-                    request=request,
+                    request=rust_request,
                 )
             else:
                 # Regular content (bytes, str, or None)
@@ -1421,7 +1428,7 @@ class Response:
                     html=html,
                     json=json,
                     stream=stream,
-                    request=request,
+                    request=rust_request,
                 )
 
         # Eagerly decode content if provided directly (not streaming)
@@ -2095,55 +2102,23 @@ class DigestAuth:
         self.username = username
         self.password = password
         self._nonce_count = 0
+        # Cached challenge parameters for subsequent requests
+        self._challenge = None  # Dict with realm, nonce, qop, opaque, algorithm
 
-    def _get_client_nonce(self):
-        """Generate a client nonce."""
+    def _get_client_nonce(self, nonce_count: int, nonce: bytes) -> bytes:
+        """Generate a client nonce. Signature matches httpx for test mocking."""
         import os
-        return os.urandom(8).hex()  # 8 bytes = 16 hex characters
+        return os.urandom(16)
 
-    def sync_auth_flow(self, request):
-        """Generator-based sync auth flow for Digest auth."""
+    def _build_auth_header(self, request, challenge):
+        """Build the Authorization header from a challenge."""
         import hashlib
-        import re
 
-        # First request without auth to get challenge
-        response = yield request
-
-        if response.status_code != 401:
-            return
-
-        # Parse WWW-Authenticate header
-        auth_header = response.headers.get("www-authenticate", "")
-        if not auth_header.lower().startswith("digest"):
-            return
-
-        # Parse digest parameters
-        params = {}
-        # Handle both quoted and unquoted values
-        # Check for unclosed quotes (malformed header)
-        header_part = auth_header[7:]  # Skip "Digest "
-        if header_part.count('"') % 2 != 0:
-            raise ProtocolError("Malformed Digest auth header: unclosed quote")
-
-        for match in re.finditer(r'(\w+)=(?:"([^"]*)"|([^\s,]+))', auth_header):
-            key = match.group(1).lower()
-            value = match.group(2) if match.group(2) is not None else match.group(3)
-            # Strip any remaining quotes from unquoted values
-            if value and value.startswith('"'):
-                value = value[1:]
-            if value and value.endswith('"'):
-                value = value[:-1]
-            params[key] = value
-
-        realm = params.get("realm", "")
-        nonce = params.get("nonce", "")
-        qop = params.get("qop", "")
-        opaque = params.get("opaque", "")
-        algorithm = params.get("algorithm", "MD5").upper()
-
-        # Validate required fields
-        if not nonce:
-            raise ProtocolError("Malformed Digest auth header: missing required 'nonce' field")
+        realm = challenge.get("realm", "")
+        nonce = challenge.get("nonce", "")
+        qop = challenge.get("qop", "")
+        opaque = challenge.get("opaque", "")
+        algorithm = challenge.get("algorithm", "MD5").upper()
 
         # Choose hash function
         if algorithm in ("MD5", "MD5-SESS"):
@@ -2160,10 +2135,20 @@ class DigestAuth:
         def H(data):
             return hash_func(data.encode()).hexdigest()
 
+        # Increment nonce count
+        self._nonce_count += 1
+        nc = f"{self._nonce_count:08x}"
+
+        # Get client nonce
+        cnonce_bytes = self._get_client_nonce(self._nonce_count, nonce.encode())
+        if isinstance(cnonce_bytes, bytes):
+            cnonce = cnonce_bytes.decode('latin-1') if len(cnonce_bytes) < 50 else cnonce_bytes.hex()
+        else:
+            cnonce = str(cnonce_bytes)
+
         # Calculate A1
         a1 = f"{self.username}:{realm}:{self.password}"
         if algorithm.endswith("-SESS"):
-            cnonce = self._get_client_nonce()
             a1 = f"{H(a1)}:{nonce}:{cnonce}"
         ha1 = H(a1)
 
@@ -2176,17 +2161,13 @@ class DigestAuth:
         ha2 = H(a2)
 
         # Calculate response
-        self._nonce_count += 1
-        nc = f"{self._nonce_count:08x}"
-        cnonce = self._get_client_nonce()
-
         if qop:
             # Parse qop options
             qop_options = [q.strip() for q in qop.split(",")]
             if "auth" in qop_options:
                 qop_value = "auth"
             elif "auth-int" in qop_options:
-                raise ProtocolError("Digest auth qop=auth-int is not implemented")
+                raise NotImplementedError("Digest auth qop=auth-int is not implemented")
             else:
                 raise ProtocolError(f"Unsupported Digest auth qop value: {qop}")
             response_value = H(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop_value}:{ha2}")
@@ -2212,8 +2193,78 @@ class DigestAuth:
             auth_parts.append(f'nc={nc}')
             auth_parts.append(f'cnonce="{cnonce}"')
 
-        auth_header_value = "Digest " + ", ".join(auth_parts)
-        request.set_header("Authorization", auth_header_value)
+        return "Digest " + ", ".join(auth_parts)
+
+    def sync_auth_flow(self, request):
+        """Generator-based sync auth flow for Digest auth."""
+        import re
+
+        # If we have a cached challenge, use it to pre-authenticate
+        if self._challenge is not None:
+            auth_header_value = self._build_auth_header(request, self._challenge)
+            request.headers["Authorization"] = auth_header_value
+            response = yield request
+            # If we get 401, challenge may have changed - fall through to parse new one
+            if response.status_code != 401:
+                return
+        else:
+            # First request without auth to get challenge
+            response = yield request
+
+            if response.status_code != 401:
+                return
+
+        # Parse WWW-Authenticate header
+        auth_header = response.headers.get("www-authenticate", "")
+        if not auth_header.lower().startswith("digest"):
+            return
+
+        # Parse digest parameters
+        params = {}
+        # Handle both quoted and unquoted values
+        # Check for unclosed quotes (malformed header)
+        header_part = auth_header[7:]  # Skip "Digest "
+        if header_part.count('"') % 2 != 0:
+            raise ProtocolError("Malformed Digest auth header: unclosed quote")
+
+        for match in re.finditer(r'(\w+)=(?:"([^"]*)"|([^\s,]+))', auth_header):
+            key = match.group(1).lower()
+            value = match.group(2) if match.group(2) is not None else match.group(3)
+            # Strip any remaining quotes from unquoted values
+            if value and value.startswith('"'):
+                value = value[1:]
+            if value and value.endswith('"'):
+                value = value[:-1]
+            params[key] = value
+
+        nonce = params.get("nonce", "")
+
+        # Validate required fields
+        if not nonce:
+            raise ProtocolError("Malformed Digest auth header: missing required 'nonce' field")
+
+        # Reset nonce count if we get a new challenge (different nonce)
+        if self._challenge is None or self._challenge.get("nonce") != nonce:
+            self._nonce_count = 0
+
+        # Store challenge for subsequent requests
+        self._challenge = {
+            "realm": params.get("realm", ""),
+            "nonce": nonce,
+            "qop": params.get("qop", ""),
+            "opaque": params.get("opaque", ""),
+            "algorithm": params.get("algorithm", "MD5"),
+        }
+
+        # Copy cookies from response to request
+        if hasattr(response, 'cookies') and response.cookies:
+            cookie_header = "; ".join(f"{name}={value}" for name, value in response.cookies.items())
+            if cookie_header:
+                request.headers["Cookie"] = cookie_header
+
+        # Build auth header with new challenge
+        auth_header_value = self._build_auth_header(request, self._challenge)
+        request.headers["Authorization"] = auth_header_value
 
         yield request
 
@@ -3336,7 +3387,7 @@ class AsyncClient:
                 _LocalProtocolError, _RemoteProtocolError) as e:
             raise _convert_exception(e) from None
 
-    @contextlib.asynccontextmanager
+    @_contextlib.asynccontextmanager
     async def stream(self, method, url, *, content=None, data=None, files=None, json=None,
                      params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
                      follow_redirects=None, timeout=None):
@@ -3506,6 +3557,13 @@ class Client:
 
         # Extract and store follow_redirects from kwargs before passing to Rust
         self._follow_redirects = kwargs.pop('follow_redirects', False)
+
+        # Extract and store params from kwargs
+        params = kwargs.pop('params', None)
+        if params is not None:
+            self._params = QueryParams(params)
+        else:
+            self._params = QueryParams()
 
         # Always create Rust client with follow_redirects=False so Python handles redirects
         # This allows proper logging and history tracking
@@ -3760,6 +3818,19 @@ class Client:
         self._client.base_url = value
 
     @property
+    def params(self):
+        """Return the client's default query parameters."""
+        return self._params
+
+    @params.setter
+    def params(self, value):
+        """Set the client's default query parameters."""
+        if value is not None:
+            self._params = QueryParams(value)
+        else:
+            self._params = QueryParams()
+
+    @property
     def headers(self):
         # Create a new proxy each time to ensure it has the latest headers
         return _HeadersProxy(self)
@@ -3841,6 +3912,18 @@ class Client:
                 raise UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")
         # Handle URL merging with base_url
         merged_url = self._merge_url(url)
+
+        # Merge client params with request params
+        request_params = kwargs.get('params')
+        if self._params:
+            if request_params is not None:
+                # Merge: client params first, then request params
+                merged_params = QueryParams(self._params)
+                merged_params = merged_params.merge(QueryParams(request_params))
+                kwargs['params'] = merged_params
+            else:
+                kwargs['params'] = self._params
+
         rust_request = self._client.build_request(method, merged_url, **kwargs)
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         return _WrappedRequest(rust_request)
@@ -3976,7 +4059,7 @@ class Client:
         url_str = str(request_url) if request_url else ''
         status_code = response.status_code
         reason_phrase = response.reason_phrase or ''
-        logger.info(f'HTTP Request: {method} {url_str} "HTTP/1.1 {status_code} {reason_phrase}"')
+        _logger.info(f'HTTP Request: {method} {url_str} "HTTP/1.1 {status_code} {reason_phrase}"')
 
         return response
 
@@ -4436,7 +4519,7 @@ class Client:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
         return self._send_handling_redirects(request, follow_redirects=bool(actual_follow))
 
-    @contextlib.contextmanager
+    @_contextlib.contextmanager
     def stream(self, method, url, *, content=None, data=None, files=None, json=None,
                params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
                follow_redirects=None, timeout=None):
@@ -4554,16 +4637,16 @@ def create_ssl_context(
     return context
 
 
-__all__ = [
+__all__ = sorted([
     "__description__",
     "__title__",
     "__version__",
+    "ASGITransport",
+    "AsyncBaseTransport",
     "AsyncByteStream",
     "AsyncClient",
-    "AsyncBaseTransport",
     "AsyncHTTPTransport",
     "AsyncMockTransport",
-    "ASGITransport",
     "Auth",
     "BaseTransport",
     "BasicAuth",
@@ -4625,4 +4708,4 @@ __all__ = [
     "WriteError",
     "WriteTimeout",
     "WSGITransport",
-]
+], key=str.casefold)
