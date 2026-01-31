@@ -92,62 +92,60 @@ pub fn build_multipart_body_with_boundary(
         };
 
         for (field_name, value) in file_items {
+            // Files can be:
+            // - file-like object (has read() method)
+            // - tuple: (filename, file-content)
+            // - tuple: (filename, file-content, content-type)
+            // - tuple: (filename, file-content, content-type, headers)
+            let (filename, content, content_type, extra_headers) = parse_file_value(py, &value, &field_name)?;
 
-                // Files can be:
-                // - file-like object (has read() method)
-                // - tuple: (filename, file-content)
-                // - tuple: (filename, file-content, content-type)
-                // - tuple: (filename, file-content, content-type, headers)
-                let (filename, content, content_type, extra_headers) = parse_file_value(py, &value, &field_name)?;
+            body.extend_from_slice(b"--");
+            body.extend_from_slice(boundary_bytes);
+            body.extend_from_slice(b"\r\n");
 
-                body.extend_from_slice(b"--");
-                body.extend_from_slice(boundary_bytes);
-                body.extend_from_slice(b"\r\n");
-
-                // Build Content-Disposition header with escaped filename
-                if let Some(ref fname) = filename {
-                    let escaped_fname = escape_filename(fname);
-                    body.extend_from_slice(format!(
-                        "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                        field_name, escaped_fname
-                    ).as_bytes());
-                } else {
-                    // No filename - just field name
-                    body.extend_from_slice(format!(
-                        "Content-Disposition: form-data; name=\"{}\"\r\n",
-                        field_name
-                    ).as_bytes());
-                }
-
-                // Add extra headers first (before Content-Type), but skip Content-Type if in headers
-                let mut has_content_type_header = false;
-                for (hk, hv) in &extra_headers {
-                    if hk.to_lowercase() == "content-type" {
-                        has_content_type_header = true;
-                    } else {
-                        body.extend_from_slice(format!("{}: {}\r\n", hk, hv).as_bytes());
-                    }
-                }
-
-                // Add content-type if we have a filename
-                if filename.is_some() {
-                    // Use Content-Type from extra_headers if provided, otherwise use guessed type
-                    if has_content_type_header {
-                        for (hk, hv) in &extra_headers {
-                            if hk.to_lowercase() == "content-type" {
-                                body.extend_from_slice(format!("Content-Type: {}\r\n", hv).as_bytes());
-                                break;
-                            }
-                        }
-                    } else {
-                        body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
-                    }
-                }
-
-                body.extend_from_slice(b"\r\n");
-                body.extend_from_slice(&content);
-                body.extend_from_slice(b"\r\n");
+            // Build Content-Disposition header with escaped filename
+            if let Some(ref fname) = filename {
+                let escaped_fname = escape_filename(fname);
+                body.extend_from_slice(format!(
+                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                    field_name, escaped_fname
+                ).as_bytes());
+            } else {
+                // No filename - just field name
+                body.extend_from_slice(format!(
+                    "Content-Disposition: form-data; name=\"{}\"\r\n",
+                    field_name
+                ).as_bytes());
             }
+
+            // Add extra headers first (before Content-Type), but skip Content-Type if in headers
+            let mut has_content_type_header = false;
+            for (hk, hv) in &extra_headers {
+                if hk.to_lowercase() == "content-type" {
+                    has_content_type_header = true;
+                } else {
+                    body.extend_from_slice(format!("{}: {}\r\n", hk, hv).as_bytes());
+                }
+            }
+
+            // Add content-type if we have a filename
+            if filename.is_some() {
+                // Use Content-Type from extra_headers if provided, otherwise use guessed type
+                if has_content_type_header {
+                    for (hk, hv) in &extra_headers {
+                        if hk.to_lowercase() == "content-type" {
+                            body.extend_from_slice(format!("Content-Type: {}\r\n", hv).as_bytes());
+                            break;
+                        }
+                    }
+                } else {
+                    body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
+                }
+            }
+
+            body.extend_from_slice(b"\r\n");
+            body.extend_from_slice(&content);
+            body.extend_from_slice(b"\r\n");
         }
     }
 

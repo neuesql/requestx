@@ -23,18 +23,27 @@ pub struct URL {
     empty_scheme: bool,
     /// Track if the URL has an empty host (like "http://")
     empty_host: bool,
+    /// Store original host for IDNA/IPv6 addresses (before normalization)
+    original_host: Option<String>,
+    /// Store original relative path for relative URLs (without leading /)
+    relative_path: Option<String>,
 }
 
 impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
         // Default to true since url crate always normalizes to have slash
-        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false }
+        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false, original_host: None, relative_path: None }
     }
 
     pub fn from_url_with_slash(url: Url, has_trailing_slash: bool) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false }
+        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host: None, relative_path: None }
+    }
+
+    pub fn from_url_with_host(url: Url, has_trailing_slash: bool, original_host: Option<String>) -> Self {
+        let fragment = url.fragment().unwrap_or("").to_string();
+        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host, relative_path: None }
     }
 
     pub fn inner(&self) -> &Url {
@@ -63,22 +72,114 @@ impl URL {
 
     /// Convert to string (preserving trailing slash based on original input)
     pub fn to_string(&self) -> String {
-        let s = self.inner.to_string();
-        // Only strip trailing slash if:
-        // 1. The URL ends with /
-        // 2. The path is exactly "/" (root path)
-        // 3. There's no query or fragment
-        // 4. The original URL did NOT have a trailing slash
-        if s.ends_with('/')
-            && self.inner.path() == "/"
-            && self.inner.query().is_none()
-            && self.inner.fragment().is_none()
-            && !self.has_trailing_slash
-        {
-            s[..s.len() - 1].to_string()
-        } else {
-            s
+        // For relative URLs, return just the path/query/fragment
+        if let Some(ref rel_path) = self.relative_path {
+            let mut result = rel_path.clone();
+            if let Some(query) = self.inner.query() {
+                if !query.is_empty() {
+                    result.push('?');
+                    result.push_str(query);
+                }
+            }
+            if !self.fragment.is_empty() {
+                result.push('#');
+                result.push_str(&self.fragment);
+            }
+            return result;
         }
+
+        // If we have an original_host for IPv6, we need to reconstruct the URL with it
+        // For IDNA, use the inner (punycode) format
+        let s = if let Some(ref orig_host) = self.original_host {
+            // Only reconstruct for IPv6 (contains :), not IDNA
+            if orig_host.contains(':') {
+                // Reconstruct URL with original host format
+                let mut result = String::new();
+
+                // Add scheme
+                let scheme = self.inner.scheme();
+                if scheme != "relative" {
+                    result.push_str(scheme);
+                    result.push_str("://");
+                }
+
+                // Add userinfo if present
+                let username = self.inner.username();
+                if !username.is_empty() {
+                    result.push_str(username);
+                    if let Some(password) = self.inner.password() {
+                        result.push(':');
+                        result.push_str(password);
+                    }
+                    result.push('@');
+                }
+
+                // Add host with original format (IPv6 needs brackets)
+                result.push('[');
+                result.push_str(orig_host);
+                result.push(']');
+
+                // Add port if present
+                if let Some(port) = self.inner.port() {
+                    result.push(':');
+                    result.push_str(&port.to_string());
+                }
+
+                // Add path
+                result.push_str(self.inner.path());
+
+                // Add query if present
+                if let Some(query) = self.inner.query() {
+                    result.push('?');
+                    result.push_str(query);
+                }
+
+                // Add fragment if present
+                if !self.fragment.is_empty() {
+                    result.push('#');
+                    result.push_str(&self.fragment);
+                }
+
+                result
+            } else {
+                // For IDNA, use the inner (punycode) format
+                self.inner.to_string()
+            }
+        } else {
+            self.inner.to_string()
+        };
+
+        // If the original URL didn't have an explicit trailing slash and path is just "/",
+        // we need to remove it for compatibility with httpx behavior
+        if !self.has_trailing_slash && self.inner.path() == "/" {
+            // Handle case: URL ends with / (no query/fragment)
+            if s.ends_with('/') && self.inner.query().is_none() && self.inner.fragment().is_none() {
+                return s[..s.len() - 1].to_string();
+            }
+
+            // Handle case: path is / but followed by query (e.g., "http://example.com/?a=1")
+            // Need to find and remove the "/" between host and "?"
+            if let Some(query) = self.inner.query() {
+                // Find the pattern /?
+                if let Some(pos) = s.find("/?") {
+                    // Remove the / before ?
+                    let mut result = s[..pos].to_string();
+                    result.push_str(&s[pos + 1..]);  // Skip the /
+                    return result;
+                }
+            }
+
+            // Handle case: path is / but followed by fragment (e.g., "http://example.com/#section")
+            if !self.fragment.is_empty() {
+                if let Some(pos) = s.find("/#") {
+                    let mut result = s[..pos].to_string();
+                    result.push_str(&s[pos + 1..]);  // Skip the /
+                    return result;
+                }
+            }
+        }
+
+        s
     }
 
     /// Convert to string with trailing slash (raw representation)
@@ -200,6 +301,52 @@ impl URL {
                 }
             }
 
+            // Check for invalid host addresses before parsing
+            if let Some(authority_start) = url_str.find("://") {
+                let after_scheme = &url_str[authority_start + 3..];
+                // Find the host portion
+                let host_start = if let Some(at_pos) = after_scheme.find('@') {
+                    at_pos + 1
+                } else {
+                    0
+                };
+                let host_part = &after_scheme[host_start..];
+
+                // Check for IPv6 address
+                if host_part.starts_with('[') {
+                    if let Some(bracket_end) = host_part.find(']') {
+                        let ipv6_addr = &host_part[..bracket_end + 1];
+                        let inner_addr = &host_part[1..bracket_end];
+                        // Check if it's a valid IPv6 address (basic validation)
+                        if !is_valid_ipv6(inner_addr) {
+                            return Err(crate::exceptions::InvalidURL::new_err(format!(
+                                "Invalid IPv6 address: '{}'", ipv6_addr
+                            )));
+                        }
+                    }
+                } else {
+                    // Find end of host
+                    let host_end = host_part.find(&[':', '/', '?', '#'][..]).unwrap_or(host_part.len());
+                    let host = &host_part[..host_end];
+
+                    // Check if it looks like an IPv4 address
+                    if looks_like_ipv4(host) && !is_valid_ipv4(host) {
+                        return Err(crate::exceptions::InvalidURL::new_err(format!(
+                            "Invalid IPv4 address: '{}'", host
+                        )));
+                    }
+
+                    // Check for invalid IDNA characters
+                    if !host.is_empty() && host.chars().any(|c| !c.is_ascii()) {
+                        if !is_valid_idna(host) {
+                            return Err(crate::exceptions::InvalidURL::new_err(format!(
+                                "Invalid IDNA hostname: '{}'", host
+                            )));
+                        }
+                    }
+                }
+            }
+
             // Handle special cases that the url crate doesn't support well
 
             // Case 1: Empty scheme like "://example.com"
@@ -223,6 +370,8 @@ impl URL {
                             has_trailing_slash,
                             empty_scheme: true,  // Mark as empty scheme
                             empty_host: false,
+                            original_host: None,
+                            relative_path: None,
                         });
                     }
                     Err(e) => {
@@ -259,6 +408,8 @@ impl URL {
                             has_trailing_slash,
                             empty_scheme: false,
                             empty_host: true,  // Mark as empty host
+                            original_host: None,
+                            relative_path: None,
                         });
                     }
                     Err(_) => {
@@ -271,6 +422,8 @@ impl URL {
                                 has_trailing_slash: true,
                                 empty_scheme: false,
                                 empty_host: true,
+                                original_host: None,
+                                relative_path: None,
                             });
                         }
                     }
@@ -290,10 +443,17 @@ impl URL {
 
             match parsed {
                 Ok(mut parsed_url) => {
-                    // Apply params if provided
+                    // Apply params if provided and not empty
                     if let Some(params_obj) = params {
                         let query_params = QueryParams::from_py(params_obj)?;
-                        parsed_url.set_query(Some(&query_params.to_query_string()));
+                        let query_string = query_params.to_query_string();
+                        // Only set query if params is not empty
+                        if !query_string.is_empty() {
+                            parsed_url.set_query(Some(&query_string));
+                        } else {
+                            // If empty params, also clear any existing query from URL
+                            parsed_url.set_query(None);
+                        }
                     }
 
                     // Track if original URL had a trailing slash
@@ -309,12 +469,16 @@ impl URL {
                     };
 
                     let frag = parsed_url.fragment().unwrap_or("").to_string();
+                    // Extract original host from URL string for IDNA/IPv6
+                    let original_host = extract_original_host(url_str);
                     return Ok(Self {
                         inner: parsed_url,
                         fragment: frag,
                         has_trailing_slash,
                         empty_scheme: false,
                         empty_host: false,
+                        original_host,
+                        relative_path: None,
                     });
                 }
                 Err(e) => {
@@ -327,8 +491,13 @@ impl URL {
         }
 
         // Build URL from components
-        let scheme = scheme.unwrap_or("http");
+        // Only default to "http" scheme if a host is provided
         let host = host.unwrap_or("");
+        let scheme = if host.is_empty() {
+            scheme.unwrap_or("")
+        } else {
+            scheme.unwrap_or("http")
+        };
 
         // Validate scheme
         if !scheme.is_empty() && !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
@@ -337,10 +506,24 @@ impl URL {
             ));
         }
 
+        // Check if host is IPv6 (contains : but is not a domain with port)
+        // Strip brackets if present
+        let host_clean = if host.starts_with('[') && host.ends_with(']') {
+            &host[1..host.len()-1]
+        } else {
+            host
+        };
+        let is_ipv6 = !host_clean.is_empty() && host_clean.contains(':');
+        let host_for_url = if is_ipv6 {
+            format!("[{}]", host_clean)
+        } else {
+            host.to_string()
+        };
+
         let mut url_string = if host.is_empty() && scheme.is_empty() {
             String::new()
         } else {
-            format!("{}://{}", scheme, host)
+            format!("{}://{}", scheme, host_for_url)
         };
 
         if let Some(p) = port {
@@ -392,12 +575,16 @@ impl URL {
             match dummy_base.join(&url_string) {
                 Ok(u) => {
                     let has_slash = u.path() != "/" || url_string.ends_with('/');
+                    // Store the original relative path (without leading /)
+                    let rel_path = Some(path.to_string());
                     Ok(Self {
                         inner: u,
                         fragment: frag,
                         has_trailing_slash: has_slash,
                         empty_scheme: false,
                         empty_host: false,
+                        original_host: None,
+                        relative_path: rel_path,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -406,6 +593,12 @@ impl URL {
                 ))),
             }
         } else {
+            // Store original host if it's an IDNA or IPv6 address (use cleaned version without brackets)
+            let orig_host = if is_ipv6 || host.chars().any(|c| !c.is_ascii()) {
+                Some(host_clean.to_string())
+            } else {
+                None
+            };
             match Url::parse(&url_string) {
                 Ok(u) => {
                     let has_slash = u.path() != "/" || url_string.ends_with('/');
@@ -415,6 +608,8 @@ impl URL {
                         has_trailing_slash: has_slash,
                         empty_scheme: false,
                         empty_host: false,
+                        original_host: orig_host,
+                        relative_path: None,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -424,6 +619,180 @@ impl URL {
             }
         }
     }
+}
+
+/// Extract original host from URL string (for IDNA and IPv6 addresses)
+fn extract_original_host(url_str: &str) -> Option<String> {
+    // Find the host portion of the URL
+    if let Some(authority_start) = url_str.find("://") {
+        let after_scheme = &url_str[authority_start + 3..];
+
+        // Skip userinfo if present
+        let host_start = if let Some(at_pos) = after_scheme.find('@') {
+            at_pos + 1
+        } else {
+            0
+        };
+        let host_part = &after_scheme[host_start..];
+
+        // Find end of host (port, path, query, or fragment)
+        let host_end = if host_part.starts_with('[') {
+            // IPv6 address - find closing bracket
+            if let Some(bracket_end) = host_part.find(']') {
+                bracket_end + 1
+            } else {
+                host_part.len()
+            }
+        } else {
+            // Regular host - find first delimiter
+            host_part.find(&[':', '/', '?', '#'][..]).unwrap_or(host_part.len())
+        };
+
+        let host = &host_part[..host_end];
+
+        // Strip brackets from IPv6
+        let host = if host.starts_with('[') && host.ends_with(']') {
+            &host[1..host.len()-1]
+        } else {
+            host
+        };
+
+        // Only store if it contains non-ASCII (IDNA) or is IPv6
+        if host.chars().any(|c| !c.is_ascii()) || host.contains(':') {
+            return Some(host.to_string());
+        }
+    }
+    None
+}
+
+/// Check if a string looks like an IPv4 address (all digits and dots)
+fn looks_like_ipv4(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+/// Check if a string is a valid IPv4 address
+fn is_valid_ipv4(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    for part in parts {
+        if part.is_empty() {
+            return false;
+        }
+        match part.parse::<u32>() {
+            Ok(n) if n <= 255 => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Check if a string is a valid IPv6 address (basic validation)
+fn is_valid_ipv6(s: &str) -> bool {
+    // Very basic IPv6 validation - check if it contains colons and valid hex digits
+    if s.is_empty() {
+        return false;
+    }
+
+    // IPv6 addresses must contain at least one colon (unless it's ::)
+    if !s.contains(':') {
+        return false;
+    }
+
+    // Check for valid characters: hex digits, colons, dots (for IPv4-mapped addresses)
+    for c in s.chars() {
+        if !c.is_ascii_hexdigit() && c != ':' && c != '.' {
+            return false;
+        }
+    }
+
+    // Check each group (simple validation)
+    let groups: Vec<&str> = s.split(':').collect();
+    let mut empty_group_count = 0;
+
+    for group in &groups {
+        if group.is_empty() {
+            empty_group_count += 1;
+            continue;
+        }
+        // Check if it's an IPv4 suffix (for IPv4-mapped addresses)
+        if group.contains('.') {
+            if !is_valid_ipv4(group) {
+                return false;
+            }
+        } else {
+            // IPv6 groups should be at most 4 hex digits
+            if group.len() > 4 {
+                return false;
+            }
+        }
+    }
+
+    // :: can only appear once (represented by more than one consecutive empty group)
+    // But we need to handle cases like "::1" (2 empty groups at start) and "1::" (2 at end)
+    // and "::" (3 empty groups)
+    true
+}
+
+/// Encode userinfo (username/password) for URL
+/// This encodes special characters but NOT percent signs (to avoid double-encoding)
+fn encode_userinfo(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            '@' => result.push_str("%40"),
+            ' ' => result.push_str("%20"),
+            ':' => result.push_str("%3A"),
+            '/' => result.push_str("%2F"),
+            '?' => result.push_str("%3F"),
+            '#' => result.push_str("%23"),
+            '[' => result.push_str("%5B"),
+            ']' => result.push_str("%5D"),
+            // Don't encode % - assume it's already encoded
+            '%' => result.push('%'),
+            // Allow unreserved characters
+            c if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~' => {
+                result.push(c);
+            }
+            // Encode other characters
+            c => {
+                for b in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Check if a hostname is a valid IDNA (basic validation)
+fn is_valid_idna(s: &str) -> bool {
+    // Check each label in the hostname
+    for label in s.split('.') {
+        if label.is_empty() {
+            continue;
+        }
+        // Check for invalid Unicode categories
+        for c in label.chars() {
+            // Disallow certain characters that are invalid in IDNA 2008
+            // This includes symbols, emojis (most), and certain combining marks
+            let cat = c as u32;
+
+            // Common invalid characters in IDNA:
+            // - Emoji (most in range 0x1F000-0x1FFFF or specific characters)
+            // - Symbols like ☃ (U+2603)
+            if cat >= 0x2600 && cat <= 0x26FF {
+                // Miscellaneous Symbols block - includes snowman (☃)
+                return false;
+            }
+            if cat >= 0x1F300 && cat <= 0x1FFFF {
+                // Emoji and symbols
+                return false;
+            }
+        }
+    }
+    true
 }
 
 #[pymethods]
@@ -465,6 +834,16 @@ impl URL {
         if self.empty_host {
             return String::new();
         }
+        // Return original host if available (for IDNA/IPv6 addresses)
+        if let Some(ref orig) = self.original_host {
+            // Strip brackets from IPv6 if present
+            let host = if orig.starts_with('[') && orig.ends_with(']') {
+                &orig[1..orig.len()-1]
+            } else {
+                orig.as_str()
+            };
+            return host.to_lowercase();
+        }
         let host = self.inner.host_str().unwrap_or("");
         // Strip brackets for IPv6 addresses - httpx returns host without brackets
         let host = if host.starts_with('[') && host.ends_with(']') {
@@ -481,8 +860,18 @@ impl URL {
     }
 
     #[getter]
-    fn path(&self) -> &str {
-        self.inner.path()
+    fn path(&self) -> String {
+        // For relative URLs, return the original relative path
+        if let Some(ref rel_path) = self.relative_path {
+            return urlencoding::decode(rel_path)
+                .unwrap_or_else(|_| rel_path.as_str().into())
+                .into_owned();
+        }
+        // Return decoded path (percent-decode)
+        let raw_path = self.inner.path();
+        urlencoding::decode(raw_path)
+            .unwrap_or_else(|_| raw_path.into())
+            .into_owned()
     }
 
     #[getter]
@@ -516,6 +905,14 @@ impl URL {
 
     #[getter]
     fn raw_host<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        // For IPv6 addresses with original_host, return the original format
+        // For IDNA, use the punycode-encoded form from inner
+        if let Some(ref orig) = self.original_host {
+            // Only use original_host for IPv6 (contains :), not IDNA
+            if orig.contains(':') {
+                return PyBytes::new(py, orig.as_bytes());
+            }
+        }
         let host = self.inner.host_str().unwrap_or("");
         // Strip brackets for IPv6 addresses - httpcore expects host without brackets
         let host = if host.starts_with('[') && host.ends_with(']') {
@@ -538,7 +935,19 @@ impl URL {
 
     #[getter]
     fn netloc<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        let host = self.inner.host_str().unwrap_or("");
+        // Use original host only for IPv6, use inner (punycode) for IDNA
+        let raw_host = self.inner.host_str().unwrap_or("");
+        let host = if let Some(ref orig) = self.original_host {
+            // Only use original_host for IPv6 (contains :), not IDNA
+            if orig.contains(':') {
+                format!("[{}]", orig)
+            } else {
+                // For IDNA, use the punycode-encoded form from inner
+                raw_host.to_string()
+            }
+        } else {
+            raw_host.to_string()
+        };
         let port = self.inner.port();
 
         let netloc = if let Some(p) = port {
@@ -597,7 +1006,37 @@ impl URL {
 
     fn join(&self, url: &str) -> PyResult<Self> {
         match self.inner.join(url) {
-            Ok(joined) => Ok(Self::from_url(joined)),
+            Ok(joined) => {
+                // Check if the joined URL should have a trailing slash
+                // Only preserve slash if the input URL had one at the end
+                let input_has_slash = url.ends_with('/');
+                let has_slash = if joined.path() == "/" {
+                    // For root path, check if original input ended with /
+                    input_has_slash || url == "/"
+                } else {
+                    input_has_slash
+                };
+
+                // If base URL is relative (has relative_path), result should also be relative
+                let rel_path = if self.relative_path.is_some() || self.inner.scheme() == "relative" {
+                    // For relative URLs, the path from joined is the relative path
+                    let path = joined.path();
+                    Some(path.to_string())
+                } else {
+                    None
+                };
+
+                let frag = joined.fragment().unwrap_or("").to_string();
+                Ok(Self {
+                    inner: joined,
+                    fragment: frag,
+                    has_trailing_slash: has_slash,
+                    empty_scheme: false,
+                    empty_host: false,
+                    original_host: None,
+                    relative_path: rel_path,
+                })
+            }
             Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
                 "Invalid URL for join: {}",
                 e
@@ -621,9 +1060,28 @@ impl URL {
                     }
                     "host" => {
                         let host: String = value.extract()?;
-                        new_url.inner.set_host(Some(&host)).map_err(|e| {
+                        // Strip brackets if present (user might pass [::1] or ::1)
+                        let host_clean = if host.starts_with('[') && host.ends_with(']') {
+                            &host[1..host.len()-1]
+                        } else {
+                            &host
+                        };
+                        // Check if this is an IPv6 address (contains : but not as port separator)
+                        let is_ipv6 = host_clean.contains(':') && !host_clean.contains('/');
+                        let host_to_set = if is_ipv6 {
+                            format!("[{}]", host_clean)
+                        } else {
+                            host_clean.to_string()
+                        };
+                        new_url.inner.set_host(Some(&host_to_set)).map_err(|e| {
                             crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e))
                         })?;
+                        // Store original host for IDNA/IPv6
+                        if is_ipv6 || host.chars().any(|c| !c.is_ascii()) {
+                            new_url.original_host = Some(host_clean.to_string());
+                        } else {
+                            new_url.original_host = None;
+                        }
                     }
                     "port" => {
                         // Handle port - allow large values in URL (will fail at connection time)
@@ -715,14 +1173,14 @@ impl URL {
                     }
                     "username" => {
                         let username: String = value.extract()?;
-                        let encoded = urlencoding::encode(&username);
+                        let encoded = encode_userinfo(&username);
                         new_url.inner.set_username(&encoded).map_err(|_| {
                             crate::exceptions::InvalidURL::new_err("Cannot set username")
                         })?;
                     }
                     "password" => {
                         let password: String = value.extract()?;
-                        let encoded = urlencoding::encode(&password);
+                        let encoded = encode_userinfo(&password);
                         new_url.inner.set_password(Some(&encoded)).map_err(|_| {
                             crate::exceptions::InvalidURL::new_err("Cannot set password")
                         })?;

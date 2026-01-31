@@ -234,13 +234,37 @@ impl MutableHeadersIter {
 }
 
 /// HTTP Request object
-#[pyclass(name = "Request", subclass)]
-#[derive(Clone)]
+#[pyclass(name = "Request", subclass, module = "requestx._core")]
 pub struct Request {
     method: String,
     url: URL,
     headers: Headers,
     content: Option<Vec<u8>>,
+    /// Whether content is from a stream (iterator/generator)
+    is_streaming: bool,
+    /// Whether the stream has been read (for streaming content)
+    is_stream_consumed: bool,
+    /// Whether aread() was called (for returning async stream)
+    was_async_read: bool,
+    /// Python stream object (for pickle/stream tracking)
+    stream_ref: Option<PyObject>,
+}
+
+impl Clone for Request {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| {
+            Self {
+                method: self.method.clone(),
+                url: self.url.clone(),
+                headers: self.headers.clone(),
+                content: self.content.clone(),
+                is_streaming: self.is_streaming,
+                is_stream_consumed: self.is_stream_consumed,
+                was_async_read: self.was_async_read,
+                stream_ref: self.stream_ref.as_ref().map(|obj| obj.clone_ref(py)),
+            }
+        })
+    }
 }
 
 impl Request {
@@ -250,6 +274,10 @@ impl Request {
             url,
             headers: Headers::new(),
             content: None,
+            is_streaming: false,
+            is_stream_consumed: false,
+            was_async_read: false,
+            stream_ref: None,
         }
     }
 
@@ -283,7 +311,7 @@ impl Request {
     #[new]
     #[pyo3(signature = (method, url, *, params=None, headers=None, cookies=None, content=None, data=None, files=None, json=None, stream=None, extensions=None))]
     fn py_new(
-        _py: Python<'_>,
+        py: Python<'_>,
         method: &str,
         url: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
@@ -312,6 +340,10 @@ impl Request {
             url: parsed_url,
             headers: Headers::new(),
             content: None,
+            is_streaming: false,
+            is_stream_consumed: false,
+            was_async_read: false,
+            stream_ref: None,
         };
 
         // Set headers
@@ -344,10 +376,24 @@ impl Request {
             } else if let Ok(s) = c.extract::<String>() {
                 request.content = Some(s.into_bytes());
             } else {
-                // Invalid content type - must be bytes or str
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    format!("'content' must be bytes or str, not {}", c.get_type().name()?)
-                ));
+                // Check if it's an iterator/generator (has __iter__ or __aiter__)
+                let has_iter = c.hasattr("__iter__")? || c.hasattr("__aiter__")?;
+                // Check if it's also an iterator (has __next__ or __anext__) - generators have these
+                let is_generator = c.hasattr("__next__")? || c.hasattr("__anext__")?;
+                // Also check for generator type or async generator type
+                let type_name = c.get_type().name()?.to_string();
+                let is_gen_type = type_name == "generator" || type_name == "async_generator";
+
+                if has_iter || is_generator || is_gen_type {
+                    // It's an iterator/generator - store as streaming content
+                    request.is_streaming = true;
+                    request.stream_ref = Some(c.clone().unbind());
+                } else {
+                    // Invalid content type - must be bytes, str, or iterator
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        format!("'content' must be bytes or str, not {}", c.get_type().name()?)
+                    ));
+                }
             }
         }
 
@@ -384,22 +430,22 @@ impl Request {
                     // Extract boundary from existing header and use it
                     let boundary_str = extract_boundary_from_content_type(ct);
                     if let Some(b) = boundary_str {
-                        let (body, _) = build_multipart_body_with_boundary(_py, data_dict, Some(f), &b)?;
+                        let (body, _) = build_multipart_body_with_boundary(py, data_dict, Some(f), &b)?;
                         (body, ct.clone())
                     } else {
                         // Invalid boundary format, use auto-generated
-                        let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                        let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                         (body, format!("multipart/form-data; boundary={}", boundary))
                     }
                 } else {
                     // Content-Type set but no boundary
-                    let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                    let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                     // Keep the existing content-type
                     (body, ct.clone())
                 }
             } else {
                 // No Content-Type set, use auto-generated boundary
-                let (body, boundary) = build_multipart_body(_py, data_dict, Some(f))?;
+                let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
                 (body, format!("multipart/form-data; boundary={}", boundary))
             };
 
@@ -435,19 +481,26 @@ impl Request {
             }
         }
 
-        // Set Content-Length header
-        // - If content was provided, set to actual length
-        // - For methods with body (POST, PUT, PATCH), set to 0 if no content
-        // - For other methods (GET, HEAD, etc.), don't set if no content
-        if let Some(ref content) = request.content {
+        // Set Content-Length or Transfer-Encoding header
+        // - If content was provided (non-streaming), set Content-Length to actual length
+        // - For streaming content, set Transfer-Encoding: chunked (unless Content-Length already set)
+        // - For methods with body (POST, PUT, PATCH) and no content, set Content-Length: 0
+        if request.is_streaming {
+            // Streaming content - set Transfer-Encoding: chunked unless Content-Length is already set
+            if !request.headers.contains("content-length") && !request.headers.contains("Content-Length") {
+                request.headers.set("Transfer-Encoding".to_string(), "chunked".to_string());
+            }
+        } else if let Some(ref content) = request.content {
             request.headers.set("Content-Length".to_string(), content.len().to_string());
         } else if matches!(request.method.as_str(), "POST" | "PUT" | "PATCH") {
             request.headers.set("Content-Length".to_string(), "0".to_string());
         }
 
-        // Set Host header
-        if let Some(host) = request.url.get_host() {
-            request.headers.set("Host".to_string(), host);
+        // Set Host header only if not already set by user
+        if !request.headers.contains("host") && !request.headers.contains("Host") {
+            if let Some(host) = request.url.get_host() {
+                request.headers.set("Host".to_string(), host);
+            }
         }
 
         Ok(request)
@@ -488,18 +541,41 @@ impl Request {
     }
 
     #[getter]
-    fn content<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+    fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        if self.is_streaming && !self.is_stream_consumed {
+            // Raise RequestNotRead for unread streaming content
+            let requestx = py.import("requestx")?;
+            let exc_type = requestx.getattr("RequestNotRead")?;
+            return Err(PyErr::from_value(exc_type.call0()?));
+        }
         match &self.content {
-            Some(c) => PyBytes::new(py, c),
-            None => PyBytes::new(py, b""),
+            Some(c) => Ok(PyBytes::new(py, c)),
+            None => Ok(PyBytes::new(py, b"")),
         }
     }
 
     #[getter]
-    fn stream(&self) -> SyncByteStream {
-        match &self.content {
-            Some(data) => SyncByteStream::from_data(data.clone()),
-            None => SyncByteStream::from_data(Vec::new()),
+    fn stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        use crate::types::AsyncByteStream;
+
+        // If content has been read, return a stream from the content
+        // The stream needs to support both sync and async iteration based on how it was read
+        if self.is_stream_consumed || !self.is_streaming {
+            let data = self.content.clone().unwrap_or_default();
+            // Return AsyncByteStream if aread was called, SyncByteStream otherwise
+            // Both types support both sync and async iteration, so this works either way
+            let stream = SyncByteStream::from_data(data);
+            let stream_obj = Py::new(py, stream)?;
+            Ok(stream_obj.into_bound(py).into_any())
+        } else {
+            // Return the original stream reference if not consumed
+            if let Some(ref stream_ref) = self.stream_ref {
+                Ok(stream_ref.bind(py).clone())
+            } else {
+                let stream = SyncByteStream::from_data(Vec::new());
+                let stream_obj = Py::new(py, stream)?;
+                Ok(stream_obj.into_bound(py).into_any())
+            }
         }
     }
 
@@ -508,8 +584,124 @@ impl Request {
         std::collections::HashMap::new()
     }
 
-    fn read(&mut self) -> Vec<u8> {
-        self.content.clone().unwrap_or_default()
+    fn read(&mut self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        if self.is_streaming && !self.is_stream_consumed {
+            // Check if stream is closed (None after unpickling without read)
+            if self.stream_ref.is_none() {
+                let requestx = py.import("requestx")?;
+                let exc_type = requestx.getattr("StreamClosed")?;
+                return Err(PyErr::from_value(exc_type.call0()?));
+            }
+
+            // Consume the stream
+            let stream_obj = self.stream_ref.as_ref().unwrap().bind(py);
+            let mut result: Vec<u8> = Vec::new();
+
+            // Check if it's async iterator (has __anext__) - can't consume sync
+            if stream_obj.hasattr("__anext__")? {
+                // For async iterators, we can't consume them in sync read
+                // This is a special case - mark as consumed but leave empty
+                self.is_stream_consumed = true;
+                self.content = Some(result.clone());
+                return Ok(result);
+            }
+
+            // Try to iterate over the stream using Python iteration protocol
+            let iter_obj = stream_obj.call_method0("__iter__")?;
+            loop {
+                match iter_obj.call_method0("__next__") {
+                    Ok(chunk) => {
+                        if let Ok(bytes) = chunk.extract::<Vec<u8>>() {
+                            result.extend(bytes);
+                        } else if let Ok(s) = chunk.extract::<String>() {
+                            result.extend(s.into_bytes());
+                        }
+                    }
+                    Err(e) => {
+                        if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                            break;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+
+            self.content = Some(result.clone());
+            self.is_stream_consumed = true;
+            self.stream_ref = None;  // Clear the stream reference
+            Ok(result)
+        } else {
+            Ok(self.content.clone().unwrap_or_default())
+        }
+    }
+
+    /// Async read method - reads streaming content asynchronously
+    fn aread<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Mark that async read was called - affects stream getter
+        self.was_async_read = true;
+
+        // Create an async coroutine that reads the stream
+        let is_streaming = self.is_streaming;
+        let is_stream_consumed = self.is_stream_consumed;
+        let stream_ref = self.stream_ref.as_ref().map(|s| s.clone_ref(py));
+        let content = self.content.clone();
+
+        if is_streaming && !is_stream_consumed {
+            // Check if stream is closed
+            if stream_ref.is_none() {
+                let requestx = py.import("requestx")?;
+                let exc_type = requestx.getattr("StreamClosed")?;
+                return Err(PyErr::from_value(exc_type.call0()?));
+            }
+
+            // We need to consume the async iterator
+            // Create a coroutine that does this
+            let code = r#"
+async def _aread(stream):
+    result = b""
+    async for chunk in stream:
+        if isinstance(chunk, bytes):
+            result += chunk
+        else:
+            result += chunk.encode()
+    return result
+"#;
+            let builtins = py.import("builtins")?;
+            let exec_fn = builtins.getattr("exec")?;
+            let globals = PyDict::new(py);
+            exec_fn.call1((code, &globals))?;
+            let aread_func = globals.get_item("_aread")?.unwrap();
+            let stream = stream_ref.unwrap();
+            let coro = aread_func.call1((stream,))?;
+
+            // Mark as consumed
+            self.is_stream_consumed = true;
+            self.stream_ref = None;
+
+            Ok(coro)
+        } else {
+            // Return completed future with content
+            let content_bytes = content.unwrap_or_default();
+
+            // Create a coroutine that returns the content immediately
+            let code = r#"
+async def _return_bytes(data):
+    return data
+"#;
+            let builtins = py.import("builtins")?;
+            let exec_fn = builtins.getattr("exec")?;
+            let globals = PyDict::new(py);
+            exec_fn.call1((code, &globals))?;
+            let return_func = globals.get_item("_return_bytes")?.unwrap();
+            let coro = return_func.call1((PyBytes::new(py, &content_bytes),))?;
+            Ok(coro)
+        }
+    }
+
+    /// Set the content from Python (used by aread wrapper)
+    fn _set_content_from_aread(&mut self, content: Vec<u8>) {
+        self.content = Some(content);
+        self.is_stream_consumed = true;
     }
 
     /// Set a single header on the request
@@ -528,6 +720,63 @@ impl Request {
 
     fn __eq__(&self, other: &Request) -> bool {
         self.method == other.method && self.url.to_string() == other.url.to_string()
+    }
+
+    /// Pickle support - get state
+    fn __getstate__(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let state = PyDict::new(py);
+        state.set_item("method", &self.method)?;
+        state.set_item("url", self.url.to_string())?;
+        state.set_item("headers", self.headers.inner())?;
+        state.set_item("content", self.content.as_ref().map(|c| PyBytes::new(py, c)))?;
+        state.set_item("is_streaming", self.is_streaming)?;
+        state.set_item("is_stream_consumed", self.is_stream_consumed)?;
+        state.set_item("was_async_read", self.was_async_read)?;
+        // Don't pickle the actual stream, just mark that there was one
+        state.set_item("had_stream", self.stream_ref.is_some())?;
+        Ok(state.into())
+    }
+
+    /// Pickle support - restore state
+    fn __setstate__(&mut self, py: Python<'_>, state: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.method = state.get_item("method")?.unwrap().extract()?;
+        let url_str: String = state.get_item("url")?.unwrap().extract()?;
+        self.url = URL::new_impl(Some(&url_str), None, None, None, None, None, None, None, None, None, None, None)?;
+
+        // Restore headers
+        self.headers = Headers::new();
+        let headers_list: Vec<(String, String)> = state.get_item("headers")?.unwrap().extract()?;
+        for (k, v) in headers_list {
+            self.headers.set(k, v);
+        }
+
+        // Restore content
+        self.content = if let Some(content_item) = state.get_item("content")? {
+            if content_item.is_none() {
+                None
+            } else if let Ok(bytes) = content_item.extract::<Vec<u8>>() {
+                Some(bytes)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.is_streaming = state.get_item("is_streaming")?.unwrap().extract()?;
+        self.is_stream_consumed = state.get_item("is_stream_consumed")?.unwrap().extract()?;
+        self.was_async_read = state.get_item("was_async_read")?.map(|v| v.extract().unwrap_or(false)).unwrap_or(false);
+
+        // Stream reference is not pickled - it's gone after unpickling
+        // If it was streaming and not consumed, it will raise StreamClosed on read attempts
+        self.stream_ref = None;
+
+        Ok(())
+    }
+
+    /// Reduce for pickle - use __getnewargs__ to provide required args
+    fn __getnewargs__(&self) -> (&str, String) {
+        (&self.method, self.url.to_string())
     }
 }
 

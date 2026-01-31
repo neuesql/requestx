@@ -264,7 +264,8 @@ impl Response {
                     format!("'content' must be bytes, str, or iterable, not {}", c.get_type().name()?)
                 ));
             }
-            if !response.headers.contains("content-length") {
+            // Don't set content-length if transfer-encoding is set (chunked transfer)
+            if !response.headers.contains("content-length") && !response.headers.contains("transfer-encoding") {
                 response.headers.set(
                     "Content-Length".to_string(),
                     response.content.len().to_string(),
@@ -388,7 +389,14 @@ impl Response {
 
     #[getter]
     fn url(&self) -> Option<URL> {
-        self.url.clone()
+        // If URL is set, return it; otherwise fall back to request's URL
+        if let Some(ref url) = self.url {
+            Some(url.clone())
+        } else if let Some(ref req) = self.request {
+            Some(req.url_ref().clone())
+        } else {
+            None
+        }
     }
 
     #[getter]
@@ -981,6 +989,18 @@ impl Response {
     ) -> bool {
         self.close();
         false
+    }
+
+    /// Set content from Python (used by aread wrapper)
+    fn _set_content(&mut self, content: Vec<u8>) {
+        self.content = content;
+        self.is_stream_consumed = true;
+        self.is_closed = true;
+    }
+
+    /// Set content without closing the response (for iter_bytes)
+    fn _set_content_only(&mut self, content: Vec<u8>) {
+        self.content = content;
     }
 }
 

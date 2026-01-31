@@ -1054,30 +1054,40 @@ impl Client {
                 }
             }
         } else if let Some(d) = data {
-            // Handle form data (no files)
-            let mut form_data = Vec::new();
-            for (key, value) in d.iter() {
-                let k: String = key.extract()?;
-                // Handle lists - create multiple key=value pairs
-                if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
-                    for item in list.iter() {
-                        let v = py_value_to_form_str(&item)?;
+            // Handle form data (no files) - only if not empty
+            if !d.is_empty() {
+                let mut form_data = Vec::new();
+                for (key, value) in d.iter() {
+                    let k: String = key.extract()?;
+                    // Handle lists - create multiple key=value pairs
+                    if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+                        for item in list.iter() {
+                            let v = py_value_to_form_str(&item)?;
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    } else {
+                        let v = py_value_to_form_str(&value)?;
                         form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
                     }
-                } else {
-                    let v = py_value_to_form_str(&value)?;
-                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                }
+                let body = form_data.join("&").into_bytes();
+                let content_len = body.len();
+                request.set_content(body);
+                let mut headers_mut = request.headers_ref().clone();
+                headers_mut.set("content-length".to_string(), content_len.to_string());
+                if !headers_mut.contains("content-type") {
+                    headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+                }
+                request.set_headers(headers_mut);
+            } else {
+                // Empty data dict - set Content-Length: 0 for body methods
+                let method_upper = method.to_uppercase();
+                if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
+                    let mut headers_mut = request.headers_ref().clone();
+                    headers_mut.set("content-length".to_string(), "0".to_string());
+                    request.set_headers(headers_mut);
                 }
             }
-            let body = form_data.join("&").into_bytes();
-            let content_len = body.len();
-            request.set_content(body);
-            let mut headers_mut = request.headers_ref().clone();
-            headers_mut.set("content-length".to_string(), content_len.to_string());
-            if !headers_mut.contains("content-type") {
-                headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
-            }
-            request.set_headers(headers_mut);
         } else {
             // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
             let method_upper = method.to_uppercase();
