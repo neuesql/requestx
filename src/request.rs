@@ -233,6 +233,17 @@ impl MutableHeadersIter {
     }
 }
 
+/// Stream mode for content
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StreamMode {
+    /// Bytes content - supports both sync and async iteration
+    Dual,
+    /// Sync-only content (BytesIO, sync iterator)
+    SyncOnly,
+    /// Async-only content (async iterator, async file-like)
+    AsyncOnly,
+}
+
 /// HTTP Request object
 #[pyclass(name = "Request", subclass, module = "requestx._core")]
 pub struct Request {
@@ -248,6 +259,8 @@ pub struct Request {
     was_async_read: bool,
     /// Python stream object (for pickle/stream tracking)
     stream_ref: Option<PyObject>,
+    /// Stream mode (dual, sync-only, or async-only)
+    stream_mode: StreamMode,
 }
 
 impl Clone for Request {
@@ -262,6 +275,7 @@ impl Clone for Request {
                 is_stream_consumed: self.is_stream_consumed,
                 was_async_read: self.was_async_read,
                 stream_ref: self.stream_ref.as_ref().map(|obj| obj.clone_ref(py)),
+                stream_mode: self.stream_mode,
             }
         })
     }
@@ -278,6 +292,7 @@ impl Request {
             is_stream_consumed: false,
             was_async_read: false,
             stream_ref: None,
+            stream_mode: StreamMode::Dual,
         }
     }
 
@@ -344,6 +359,7 @@ impl Request {
             is_stream_consumed: false,
             was_async_read: false,
             stream_ref: None,
+            stream_mode: StreamMode::Dual,
         };
 
         // Set headers
@@ -373,25 +389,82 @@ impl Request {
         if let Some(c) = content {
             if let Ok(bytes) = c.extract::<Vec<u8>>() {
                 request.content = Some(bytes);
+                request.stream_mode = StreamMode::Dual;  // bytes supports both sync and async
             } else if let Ok(s) = c.extract::<String>() {
                 request.content = Some(s.into_bytes());
+                request.stream_mode = StreamMode::Dual;  // str supports both sync and async
             } else {
-                // Check if it's an iterator/generator (has __iter__ or __aiter__)
-                let has_iter = c.hasattr("__iter__")? || c.hasattr("__aiter__")?;
-                // Check if it's also an iterator (has __next__ or __anext__) - generators have these
-                let is_generator = c.hasattr("__next__")? || c.hasattr("__anext__")?;
-                // Also check for generator type or async generator type
+                // Check for invalid types first - int, float, dict should be rejected
                 let type_name = c.get_type().name()?.to_string();
-                let is_gen_type = type_name == "generator" || type_name == "async_generator";
+                if type_name == "int" || type_name == "float" || type_name == "dict" {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        format!("Invalid type for content: {}", type_name)
+                    ));
+                }
 
-                if has_iter || is_generator || is_gen_type {
-                    // It's an iterator/generator - store as streaming content
+                // Check if it's an async iterator/generator (has __aiter__ and __anext__)
+                let has_aiter = c.hasattr("__aiter__")?;
+                let has_anext = c.hasattr("__anext__")?;
+                let is_async = has_aiter && has_anext;
+
+                // Check if it's a sync iterator (has __iter__ but not async)
+                let has_iter = c.hasattr("__iter__")?;
+                let has_next = c.hasattr("__next__")?;
+
+                // Check if it's a file-like object (has read and seek methods)
+                let has_read = c.hasattr("read")?;
+                let has_seek = c.hasattr("seek")?;
+                let has_aread = c.hasattr("aread")?;
+
+                // Also check for generator type or async generator type
+                let is_gen_type = type_name == "generator";
+                let is_async_gen_type = type_name == "async_generator";
+
+                // Check if it's a sync file-like object (has read() AND seek() - distinguishes from generators)
+                // BytesIO, file objects, etc. - we can read content immediately
+                // Use seek() as discriminator since file-like objects have it but generators don't
+                let is_sync_file_like = has_read && has_seek && !is_gen_type;
+
+                if is_async || is_async_gen_type {
+                    // Async iterator/generator - treat as streaming
                     request.is_streaming = true;
                     request.stream_ref = Some(c.clone().unbind());
+                    request.stream_mode = StreamMode::AsyncOnly;
+                } else if has_aread && !has_anext && !is_async_gen_type {
+                    // Async file-like object (has aread but not __anext__)
+                    // Treat as async streaming
+                    request.is_streaming = true;
+                    request.stream_ref = Some(c.clone().unbind());
+                    request.stream_mode = StreamMode::AsyncOnly;
+                } else if is_sync_file_like {
+                    // Sync file-like object (BytesIO, etc.) - read content immediately
+                    let read_method = c.getattr("read")?;
+                    let content_obj = read_method.call0()?;
+                    if let Ok(bytes) = content_obj.extract::<Vec<u8>>() {
+                        request.content = Some(bytes);
+                        request.stream_mode = StreamMode::SyncOnly;
+                    } else if let Ok(s) = content_obj.extract::<String>() {
+                        request.content = Some(s.into_bytes());
+                        request.stream_mode = StreamMode::SyncOnly;
+                    } else {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(
+                            "File-like object read() must return bytes or str"
+                        ));
+                    }
+                } else if has_next || is_gen_type {
+                    // Sync iterator/generator - treat as streaming
+                    request.is_streaming = true;
+                    request.stream_ref = Some(c.clone().unbind());
+                    request.stream_mode = StreamMode::SyncOnly;
+                } else if has_iter {
+                    // Generic iterable - wrap and treat as streaming
+                    request.is_streaming = true;
+                    request.stream_ref = Some(c.clone().unbind());
+                    request.stream_mode = StreamMode::SyncOnly;
                 } else {
                     // Invalid content type - must be bytes, str, or iterator
                     return Err(pyo3::exceptions::PyTypeError::new_err(
-                        format!("'content' must be bytes or str, not {}", c.get_type().name()?)
+                        format!("Invalid type for content: {}", type_name)
                     ));
                 }
             }
@@ -478,6 +551,44 @@ impl Request {
                         );
                     }
                 }
+            } else {
+                // data is not a dict - treat as content with DeprecationWarning
+                // This is for compatibility with requests library
+                emit_deprecation_warning(py, "Use 'content=...' instead of 'data=...' for raw bytes or iterator content.")?;
+
+                // Handle the same way as content parameter
+                if let Ok(bytes) = d.extract::<Vec<u8>>() {
+                    request.content = Some(bytes);
+                    request.stream_mode = StreamMode::Dual;
+                } else if let Ok(s) = d.extract::<String>() {
+                    request.content = Some(s.into_bytes());
+                    request.stream_mode = StreamMode::Dual;
+                } else {
+                    // Check for iterator/generator/async iterator
+                    let type_name = d.get_type().name()?.to_string();
+
+                    let has_aiter = d.hasattr("__aiter__")?;
+                    let has_anext = d.hasattr("__anext__")?;
+                    let is_async = has_aiter && has_anext;
+
+                    let has_iter = d.hasattr("__iter__")?;
+                    let has_next = d.hasattr("__next__")?;
+                    let has_read = d.hasattr("read")?;
+                    let has_aread = d.hasattr("aread")?;
+
+                    let is_gen_type = type_name == "generator";
+                    let is_async_gen_type = type_name == "async_generator";
+
+                    if is_async || is_async_gen_type || has_aread {
+                        request.is_streaming = true;
+                        request.stream_ref = Some(d.clone().unbind());
+                        request.stream_mode = StreamMode::AsyncOnly;
+                    } else if has_iter || has_next || is_gen_type || has_read {
+                        request.is_streaming = true;
+                        request.stream_ref = Some(d.clone().unbind());
+                        request.stream_mode = StreamMode::SyncOnly;
+                    }
+                }
             }
         }
 
@@ -514,6 +625,28 @@ impl Request {
     #[getter]
     fn url(&self) -> URL {
         self.url.clone()
+    }
+
+    /// Get the stream mode: "dual", "sync", or "async"
+    #[getter]
+    fn stream_mode(&self) -> &str {
+        match self.stream_mode {
+            StreamMode::Dual => "dual",
+            StreamMode::SyncOnly => "sync",
+            StreamMode::AsyncOnly => "async",
+        }
+    }
+
+    /// Get the stream reference (for iterators/generators)
+    #[getter]
+    fn stream_ref(&self, py: Python<'_>) -> Option<PyObject> {
+        self.stream_ref.as_ref().map(|obj| obj.clone_ref(py))
+    }
+
+    /// Check if this is a streaming request
+    #[getter]
+    fn is_streaming(&self) -> bool {
+        self.is_streaming
     }
 
     #[getter]
@@ -849,4 +982,12 @@ fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
     Err(pyo3::exceptions::PyTypeError::new_err(
         "Unsupported type for JSON serialization",
     ))
+}
+
+/// Emit a DeprecationWarning from Python
+fn emit_deprecation_warning(py: Python<'_>, message: &str) -> PyResult<()> {
+    let warnings = py.import("warnings")?;
+    let deprecation_warning = py.get_type::<pyo3::exceptions::PyDeprecationWarning>();
+    warnings.call_method1("warn", (message, deprecation_warning, 2i32))?;
+    Ok(())
 }

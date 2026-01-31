@@ -745,6 +745,249 @@ class ByteStream(SyncByteStream, AsyncByteStream):
         return "<ByteStream>"
 
 
+class _SyncIteratorStream:
+    """Sync-only stream wrapper for iterators."""
+
+    def __init__(self, iterator, owner=None):
+        self._iterator = iterator
+        self._owner = owner
+        self._consumed = False
+        self._started = False
+
+    def __iter__(self):
+        # Check if owner's stream was already consumed
+        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+            raise StreamConsumed()
+        if self._consumed:
+            raise StreamConsumed()
+        self._started = True
+        return self
+
+    def __next__(self):
+        if self._consumed:
+            raise StopIteration
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            self._consumed = True
+            if self._owner is not None:
+                object.__setattr__(self._owner, '_py_stream_consumed', True)
+            raise
+
+    def read(self):
+        """Read all bytes."""
+        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+            raise StreamConsumed()
+        if self._consumed:
+            raise StreamConsumed()
+        result = b"".join(self)
+        return result
+
+    def close(self):
+        pass
+
+    def __repr__(self):
+        return "<SyncIteratorStream>"
+
+
+class _AsyncIteratorStream:
+    """Async-only stream wrapper for async iterators and async file-like objects."""
+
+    def __init__(self, iterator, owner=None):
+        self._iterator = iterator
+        self._owner = owner
+        self._consumed = False
+        # Check if this is an async file-like object (has aread but no __anext__)
+        self._is_file_like = hasattr(iterator, 'aread') and not hasattr(iterator, '__anext__')
+        # For file-like objects, we need to track if we got the aiter
+        self._aiter = None
+
+    def __aiter__(self):
+        # Check if owner's stream was already consumed
+        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+            raise StreamConsumed()
+        if self._consumed:
+            raise StreamConsumed()
+        return self
+
+    async def __anext__(self):
+        if self._consumed:
+            raise StopAsyncIteration
+        try:
+            if self._is_file_like:
+                # For async file-like objects, use __aiter__ if available
+                if self._aiter is None:
+                    if hasattr(self._iterator, '__aiter__'):
+                        self._aiter = self._iterator.__aiter__()
+                    else:
+                        # Fall back to reading all at once
+                        content = await self._iterator.aread(65536)
+                        if not content:
+                            self._consumed = True
+                            if self._owner is not None:
+                                object.__setattr__(self._owner, '_py_stream_consumed', True)
+                            raise StopAsyncIteration
+                        return content
+                return await self._aiter.__anext__()
+            else:
+                return await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._consumed = True
+            if self._owner is not None:
+                object.__setattr__(self._owner, '_py_stream_consumed', True)
+            raise
+
+    async def aread(self):
+        """Read all bytes asynchronously."""
+        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+            raise StreamConsumed()
+        if self._consumed:
+            raise StreamConsumed()
+        result = b"".join([part async for part in self])
+        return result
+
+    async def aclose(self):
+        pass
+
+    def __repr__(self):
+        return "<AsyncIteratorStream>"
+
+
+class _DualIteratorStream:
+    """Dual-mode stream wrapper for bytes content."""
+
+    def __init__(self, data, owner=None):
+        self._data = data
+        self._owner = owner
+        self._sync_consumed = False
+        self._async_consumed = False
+
+    def __iter__(self):
+        self._sync_consumed = False
+        return self
+
+    def __next__(self):
+        if self._sync_consumed:
+            raise StopIteration
+        if isinstance(self._data, bytes):
+            self._sync_consumed = True
+            if self._data:
+                return self._data
+        raise StopIteration
+
+    def __aiter__(self):
+        self._async_consumed = False
+        return self
+
+    async def __anext__(self):
+        if self._async_consumed:
+            raise StopAsyncIteration
+        if isinstance(self._data, bytes):
+            self._async_consumed = True
+            if self._data:
+                return self._data
+        raise StopAsyncIteration
+
+    def read(self):
+        """Read all bytes."""
+        if isinstance(self._data, bytes):
+            return self._data
+        return b""
+
+    async def aread(self):
+        """Read all bytes asynchronously."""
+        if isinstance(self._data, bytes):
+            return self._data
+        return b""
+
+    def close(self):
+        pass
+
+    async def aclose(self):
+        pass
+
+    def __repr__(self):
+        return "<DualIteratorStream>"
+
+
+class _ResponseSyncIteratorStream:
+    """Sync-only stream wrapper for Response iterators that tracks consumption."""
+
+    def __init__(self, iterator, owner):
+        # Handle iterables that aren't iterators
+        if hasattr(iterator, '__iter__') and not hasattr(iterator, '__next__'):
+            self._iterator = iter(iterator)
+        else:
+            self._iterator = iterator
+        self._owner = owner
+        self._consumed = False
+
+    def __iter__(self):
+        if self._consumed or self._owner._stream_consumed:
+            raise StreamConsumed()
+        return self
+
+    def __next__(self):
+        if self._consumed:
+            raise StopIteration
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            self._consumed = True
+            self._owner._stream_consumed = True
+            raise
+
+    def read(self):
+        """Read all bytes."""
+        if self._consumed or self._owner._stream_consumed:
+            raise StreamConsumed()
+        result = b"".join(self)
+        return result
+
+    def close(self):
+        pass
+
+    def __repr__(self):
+        return "<ResponseSyncIteratorStream>"
+
+
+class _ResponseAsyncIteratorStream:
+    """Async-only stream wrapper for Response async iterators that tracks consumption."""
+
+    def __init__(self, iterator, owner):
+        self._iterator = iterator
+        self._owner = owner
+        self._consumed = False
+
+    def __aiter__(self):
+        if self._consumed or self._owner._stream_consumed:
+            raise StreamConsumed()
+        return self
+
+    async def __anext__(self):
+        if self._consumed:
+            raise StopAsyncIteration
+        try:
+            return await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._consumed = True
+            self._owner._stream_consumed = True
+            raise
+
+    async def aread(self):
+        """Read all bytes asynchronously."""
+        if self._consumed or self._owner._stream_consumed:
+            raise StreamConsumed()
+        result = b"".join([part async for part in self])
+        return result
+
+    async def aclose(self):
+        pass
+
+    def __repr__(self):
+        return "<ResponseAsyncIteratorStream>"
+
+
 # ============================================================================
 # Request wrapper with proper stream property
 # ============================================================================
@@ -935,18 +1178,46 @@ class Request(_Request):
     # Instance attribute to store async content - set lazily
     _py_async_content = None
     _py_was_async_read = False
+    _py_stream_consumed = False
 
     @property
     def stream(self):
-        """Get the request body as a ByteStream (dual-mode)."""
+        """Get the request body as a ByteStream based on content type."""
+        # Get stream mode from Rust
+        mode = super().stream_mode
+
+        # For streaming content (iterators/generators), return appropriate stream wrapper
+        stream_ref = super().stream_ref
+        if stream_ref is not None:
+            if mode == "async":
+                return _AsyncIteratorStream(stream_ref, self)
+            elif mode == "sync":
+                return _SyncIteratorStream(stream_ref, self)
+            else:
+                return _DualIteratorStream(stream_ref, self)
+
         # If async-read was done, return an async-compatible stream
         if getattr(self, '_py_was_async_read', False):
             content = getattr(self, '_py_async_content', None)
             if content is not None:
                 return AsyncByteStream(content)
-            return AsyncByteStream(super().content)
-        content = super().content
-        return ByteStream(content)
+            try:
+                return AsyncByteStream(super().content)
+            except RequestNotRead:
+                return AsyncByteStream(b"")
+
+        # Return stream based on mode
+        try:
+            content = super().content
+        except RequestNotRead:
+            content = b""
+
+        if mode == "async":
+            return AsyncByteStream(content)
+        elif mode == "sync":
+            return SyncByteStream(content)
+        else:
+            return ByteStream(content)
 
     @property
     def content(self):
@@ -1166,7 +1437,18 @@ class Response:
 
     @property
     def stream(self):
-        """Get the response body as a ByteStream (dual-mode)."""
+        """Get the response body as a stream based on content type."""
+        # Check if stream was already consumed
+        if self._stream_consumed:
+            raise StreamConsumed()
+
+        # Check if this is a sync iterator stream
+        if self._sync_stream_content is not None:
+            return _ResponseSyncIteratorStream(self._sync_stream_content, self)
+        # Check if this is an async iterator stream
+        if self._stream_content is not None:
+            return _ResponseAsyncIteratorStream(self._stream_content, self)
+        # Regular content - return dual-mode stream
         content = self._response.content
         return ByteStream(content)
 
