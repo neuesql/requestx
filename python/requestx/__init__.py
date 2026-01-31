@@ -2526,6 +2526,10 @@ class AsyncClient:
         # Call transport's __aenter__ if it exists
         if self._custom_transport is not None and hasattr(self._custom_transport, '__aenter__'):
             await self._custom_transport.__aenter__()
+        # Call __aenter__ on all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, '__aenter__'):
+                await transport.__aenter__()
         await self._client.__aenter__()
         return self
 
@@ -2534,6 +2538,10 @@ class AsyncClient:
         # Call transport's __aexit__ if it exists
         if self._custom_transport is not None and hasattr(self._custom_transport, '__aexit__'):
             await self._custom_transport.__aexit__(exc_type, exc_val, exc_tb)
+        # Call __aexit__ on all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, '__aexit__'):
+                await transport.__aexit__(exc_type, exc_val, exc_tb)
         self._is_closed = True
         return result
 
@@ -2543,6 +2551,10 @@ class AsyncClient:
             await self._client.aclose()
         if self._custom_transport is not None and hasattr(self._custom_transport, 'aclose'):
             await self._custom_transport.aclose()
+        # Close all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, 'aclose'):
+                await transport.aclose()
         self._is_closed = True
 
     @property
@@ -2666,6 +2678,29 @@ class AsyncClient:
 
     def build_request(self, method, url, **kwargs):
         """Build a Request object - wrap result in Python Request class."""
+        # Check for sync iterator/generator in content (AsyncClient can't handle these)
+        import inspect
+        content = kwargs.get('content')
+        if content is not None:
+            if inspect.isgenerator(content):
+                raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
+            # Also check for sync iterator protocol (but not strings/bytes which have __iter__)
+            if hasattr(content, '__next__') and hasattr(content, '__iter__') and not isinstance(content, (str, bytes, bytearray)):
+                raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
+        # Validate URL before processing
+        url_str = str(url)
+        # Check for empty scheme (like '://example.org')
+        if url_str.startswith('://'):
+            raise UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")
+        # Check for missing host (like 'http://' or 'http:///path')
+        if url_str.startswith('http://') or url_str.startswith('https://'):
+            # Extract the part after scheme
+            after_scheme = url_str.split('://', 1)[1] if '://' in url_str else ''
+            # Empty host or starts with / means no host
+            if not after_scheme or after_scheme.startswith('/'):
+                raise UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")
+        # Handle URL merging with base_url
+        merged_url = self._merge_url(url)
         # Filter to only parameters supported by Rust build_request
         supported_kwargs = {}
         if 'content' in kwargs and kwargs['content'] is not None:
@@ -2694,9 +2729,68 @@ class AsyncClient:
                     supported_kwargs['headers'] = {**supported_kwargs['headers'], 'content-type': 'application/x-www-form-urlencoded'}
             elif isinstance(data, (bytes, str)):
                 supported_kwargs['content'] = data if isinstance(data, bytes) else data.encode('utf-8')
-        rust_request = self._client.build_request(method, url, **supported_kwargs)
+        rust_request = self._client.build_request(method, merged_url, **supported_kwargs)
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         return _WrappedRequest(rust_request)
+
+    def _merge_url(self, url):
+        """Merge a URL with the base_url.
+
+        Unlike RFC 3986 URL resolution, this concatenates paths when the
+        relative URL starts with '/'.
+        """
+        if isinstance(url, URL):
+            url_str = str(url)
+        else:
+            url_str = str(url)
+
+        # If URL is absolute (has scheme), return as-is
+        if '://' in url_str:
+            return url_str
+
+        # Get base_url from client
+        base_url = self.base_url
+        if base_url is None:
+            return url_str
+
+        base_url_str = str(base_url)
+
+        # If base_url ends with '/', remove it for concatenation
+        if base_url_str.endswith('/'):
+            base_url_str = base_url_str[:-1]
+
+        # Handle relative URLs
+        if url_str.startswith('/'):
+            # URL like '/testing/123' - append to base path
+            return base_url_str + url_str
+        elif url_str.startswith('../'):
+            # URL like '../testing/123' - handle relative path navigation
+            # Parse base URL to get components
+            base = URL(base_url_str)
+            base_path = base.path or ''
+            # Remove trailing component from base path
+            if base_path.endswith('/'):
+                base_path = base_path[:-1]
+            path_parts = base_path.split('/')
+            # Process ../ in relative URL
+            rel_parts = url_str.split('/')
+            while rel_parts and rel_parts[0] == '..':
+                rel_parts.pop(0)
+                if path_parts:
+                    path_parts.pop()
+            new_path = '/'.join(path_parts + rel_parts)
+            # Rebuild URL with new path
+            result = f"{base.scheme}://{base.host}"
+            if base.port:
+                result += f":{base.port}"
+            if new_path:
+                if not new_path.startswith('/'):
+                    new_path = '/' + new_path
+                result += new_path
+            return result
+        else:
+            # URL like 'testing/123' - append to base path
+            return base_url_str + '/' + url_str
 
     async def send(self, request, **kwargs):
         """Send a Request object."""
@@ -2713,20 +2807,35 @@ class AsyncClient:
         # Get the Rust request object
         if isinstance(request, _WrappedRequest):
             rust_request = request._rust_request
+            request_url = request.url
         elif hasattr(request, '_rust_request'):
             rust_request = request._rust_request
+            request_url = request.url if hasattr(request, 'url') else None
         else:
             rust_request = request
+            request_url = request.url if hasattr(request, 'url') else None
 
-        # If we have a custom transport, use it directly
-        if self._custom_transport is not None:
+        # Get the appropriate transport for this URL
+        # First check if there's a mounted transport for this URL
+        transport = self._transport_for_url(request_url)
+
+        # Check if we need to use a custom transport (mounted or user-provided)
+        # Mounted transports take precedence over the custom transport
+        use_custom = transport is not self._default_transport
+        if not use_custom and self._custom_transport is not None:
+            # No mount matched, use the custom transport
+            transport = self._custom_transport
+            use_custom = True
+
+        # If we have a custom/mounted transport, use it directly
+        if use_custom and transport is not None:
             # Check for async handle method
-            if hasattr(self._custom_transport, 'handle_async_request'):
-                result = await self._custom_transport.handle_async_request(rust_request)
-            elif hasattr(self._custom_transport, 'handle_request'):
-                result = self._custom_transport.handle_request(rust_request)
-            elif callable(self._custom_transport):
-                result = self._custom_transport(rust_request)
+            if hasattr(transport, 'handle_async_request'):
+                result = await transport.handle_async_request(rust_request)
+            elif hasattr(transport, 'handle_request'):
+                result = transport.handle_request(rust_request)
+            elif callable(transport):
+                result = transport(rust_request)
             else:
                 raise TypeError("Transport must have handle_async_request or handle_request method")
 
@@ -2758,8 +2867,32 @@ class AsyncClient:
             return response
         else:
             # Use the Rust client's send
-            result = await self._client.send(rust_request)
-            return Response(result)
+            try:
+                result = await self._client.send(rust_request)
+                response = Response(result)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+
+            # Set URL and request on response
+            if response._url is None and hasattr(rust_request, 'url'):
+                response._url = rust_request.url
+            if response._request is None:
+                if isinstance(request, _WrappedRequest):
+                    response._request = request
+                else:
+                    response._request = _WrappedRequest(rust_request) if hasattr(rust_request, 'url') else request
+
+            # Build next_request if this is a redirect
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get('location')
+                if location:
+                    response._next_request = self._build_redirect_request(request, response)
+
+            return response
 
     async def _send_with_auth(self, request, auth):
         """Send a request with async auth flow handling."""
@@ -2858,9 +2991,16 @@ class AsyncClient:
             result = await self._handle_auth("GET", url, actual_auth, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.get(url, params=params, headers=headers, cookies=cookies,
-                                      auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.get(url, params=params, headers=headers, cookies=cookies,
+                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     def _build_redirect_request(self, request, response):
         """Build the next request for following a redirect."""
@@ -2986,6 +3126,13 @@ class AsyncClient:
                    follow_redirects=None, timeout=None):
         """HTTP POST with proper auth sentinel handling."""
         self._check_closed()
+        # Check for sync iterator/generator in content (AsyncClient can't handle these)
+        import inspect
+        if content is not None:
+            if inspect.isgenerator(content):
+                raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
+            if hasattr(content, '__next__') and hasattr(content, '__iter__') and not isinstance(content, (str, bytes, bytearray)):
+                raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
 
         # If we have a custom transport, route through _send_single_request
@@ -3000,10 +3147,17 @@ class AsyncClient:
             result = await self._handle_auth("POST", url, actual_auth, content=content, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.post(url, content=content, data=data, files=files, json=json,
-                                       params=params, headers=headers, cookies=cookies,
-                                       auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.post(url, content=content, data=data, files=files, json=json,
+                                           params=params, headers=headers, cookies=cookies,
+                                           auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def put(self, url, *, content=None, data=None, files=None, json=None,
                   params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
@@ -3024,10 +3178,17 @@ class AsyncClient:
             result = await self._handle_auth("PUT", url, actual_auth, content=content, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.put(url, content=content, data=data, files=files, json=json,
-                                      params=params, headers=headers, cookies=cookies,
-                                      auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.put(url, content=content, data=data, files=files, json=json,
+                                          params=params, headers=headers, cookies=cookies,
+                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def patch(self, url, *, content=None, data=None, files=None, json=None,
                     params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
@@ -3048,10 +3209,17 @@ class AsyncClient:
             result = await self._handle_auth("PATCH", url, actual_auth, content=content, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.patch(url, content=content, data=data, files=files, json=json,
-                                        params=params, headers=headers, cookies=cookies,
-                                        auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.patch(url, content=content, data=data, files=files, json=json,
+                                            params=params, headers=headers, cookies=cookies,
+                                            auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def delete(self, url, *, params=None, headers=None, cookies=None,
                      auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
@@ -3070,9 +3238,16 @@ class AsyncClient:
             result = await self._handle_auth("DELETE", url, actual_auth, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.delete(url, params=params, headers=headers, cookies=cookies,
-                                         auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.delete(url, params=params, headers=headers, cookies=cookies,
+                                             auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def head(self, url, *, params=None, headers=None, cookies=None,
                    auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
@@ -3091,9 +3266,16 @@ class AsyncClient:
             result = await self._handle_auth("HEAD", url, actual_auth, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.head(url, params=params, headers=headers, cookies=cookies,
-                                       auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.head(url, params=params, headers=headers, cookies=cookies,
+                                           auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def options(self, url, *, params=None, headers=None, cookies=None,
                       auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
@@ -3112,9 +3294,16 @@ class AsyncClient:
             result = await self._handle_auth("OPTIONS", url, actual_auth, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.options(url, params=params, headers=headers, cookies=cookies,
-                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.options(url, params=params, headers=headers, cookies=cookies,
+                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     async def request(self, method, url, *, content=None, data=None, files=None, json=None,
                       params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
@@ -3135,10 +3324,17 @@ class AsyncClient:
             result = await self._handle_auth(method, url, actual_auth, content=content, params=params, headers=headers)
             if result is not None:
                 return result
-        response = await self._client.request(method, url, content=content, data=data, files=files,
-                                          json=json, params=params, headers=headers, cookies=cookies,
-                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-        return Response(response)
+        try:
+            response = await self._client.request(method, url, content=content, data=data, files=files,
+                                              json=json, params=params, headers=headers, cookies=cookies,
+                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+            return Response(response)
+        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                _LocalProtocolError, _RemoteProtocolError) as e:
+            raise _convert_exception(e) from None
 
     @contextlib.asynccontextmanager
     async def stream(self, method, url, *, content=None, data=None, files=None, json=None,
@@ -3519,6 +3715,10 @@ class Client:
         # Call transport's __enter__ if it exists
         if self._transport is not None and hasattr(self._transport, '__enter__'):
             self._transport.__enter__()
+        # Call __enter__ on all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, '__enter__'):
+                transport.__enter__()
         self._client.__enter__()
         return self
 
@@ -3527,6 +3727,10 @@ class Client:
         # Call transport's __exit__ if it exists
         if self._transport is not None and hasattr(self._transport, '__exit__'):
             self._transport.__exit__(exc_type, exc_val, exc_tb)
+        # Call __exit__ on all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, '__exit__'):
+                transport.__exit__(exc_type, exc_val, exc_tb)
         self._is_closed = True
         return result
 
@@ -3536,6 +3740,10 @@ class Client:
             self._client.close()
         if self._transport is not None and hasattr(self._transport, 'close'):
             self._transport.close()
+        # Close all mounted transports
+        for transport in self._mounts.values():
+            if hasattr(transport, 'close'):
+                transport.close()
         self._is_closed = True
 
     @property
@@ -3610,9 +3818,91 @@ class Client:
 
     def build_request(self, method, url, **kwargs):
         """Build a Request object - wrap result in Python Request class."""
-        rust_request = self._client.build_request(method, url, **kwargs)
+        # Check for async iterator/generator in content (sync Client can't handle these)
+        import inspect
+        content = kwargs.get('content')
+        if content is not None:
+            if inspect.isasyncgen(content) or inspect.iscoroutine(content):
+                raise RuntimeError("Attempted to send an async request with a sync Client instance.")
+            # Also check for async iterator protocol
+            if hasattr(content, '__anext__') or hasattr(content, '__aiter__'):
+                raise RuntimeError("Attempted to send an async request with a sync Client instance.")
+        # Validate URL before processing
+        url_str = str(url)
+        # Check for empty scheme (like '://example.org')
+        if url_str.startswith('://'):
+            raise UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")
+        # Check for missing host (like 'http://' or 'http:///path')
+        if url_str.startswith('http://') or url_str.startswith('https://'):
+            # Extract the part after scheme
+            after_scheme = url_str.split('://', 1)[1] if '://' in url_str else ''
+            # Empty host or starts with / means no host
+            if not after_scheme or after_scheme.startswith('/'):
+                raise UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")
+        # Handle URL merging with base_url
+        merged_url = self._merge_url(url)
+        rust_request = self._client.build_request(method, merged_url, **kwargs)
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         return _WrappedRequest(rust_request)
+
+    def _merge_url(self, url):
+        """Merge a URL with the base_url.
+
+        Unlike RFC 3986 URL resolution, this concatenates paths when the
+        relative URL starts with '/'.
+        """
+        if isinstance(url, URL):
+            url_str = str(url)
+        else:
+            url_str = str(url)
+
+        # If URL is absolute (has scheme), return as-is
+        if '://' in url_str:
+            return url_str
+
+        # Get base_url from client
+        base_url = self.base_url
+        if base_url is None:
+            return url_str
+
+        base_url_str = str(base_url)
+
+        # If base_url ends with '/', remove it for concatenation
+        if base_url_str.endswith('/'):
+            base_url_str = base_url_str[:-1]
+
+        # Handle relative URLs
+        if url_str.startswith('/'):
+            # URL like '/testing/123' - append to base path
+            return base_url_str + url_str
+        elif url_str.startswith('../'):
+            # URL like '../testing/123' - handle relative path navigation
+            # Parse base URL to get components
+            base = URL(base_url_str)
+            base_path = base.path or ''
+            # Remove trailing component from base path
+            if base_path.endswith('/'):
+                base_path = base_path[:-1]
+            path_parts = base_path.split('/')
+            # Process ../ in relative URL
+            rel_parts = url_str.split('/')
+            while rel_parts and rel_parts[0] == '..':
+                rel_parts.pop(0)
+                if path_parts:
+                    path_parts.pop()
+            new_path = '/'.join(path_parts + rel_parts)
+            # Rebuild URL with new path
+            result = f"{base.scheme}://{base.host}"
+            if base.port:
+                result += f":{base.port}"
+            if new_path:
+                if not new_path.startswith('/'):
+                    new_path = '/' + new_path
+                result += new_path
+            return result
+        else:
+            # URL like 'testing/123' - append to base path
+            return base_url_str + '/' + url_str
 
     def _wrap_response(self, rust_response):
         """Wrap a Rust response in a Python Response."""
@@ -3633,11 +3923,23 @@ class Client:
             rust_request = request
             request_url = url or (request.url if hasattr(request, 'url') else None)
 
-        if self._custom_transport is not None:
-            if hasattr(self._custom_transport, 'handle_request'):
-                result = self._custom_transport.handle_request(rust_request)
-            elif callable(self._custom_transport):
-                result = self._custom_transport(rust_request)
+        # Get the appropriate transport for this URL
+        # First check if there's a mounted transport for this URL
+        transport = self._transport_for_url(request_url)
+
+        # Check if we need to use a custom transport (mounted or user-provided)
+        # Mounted transports take precedence over the custom transport
+        use_custom = transport is not self._default_transport
+        if not use_custom and self._custom_transport is not None:
+            # No mount matched, use the custom transport
+            transport = self._custom_transport
+            use_custom = True
+
+        if use_custom and transport is not None:
+            if hasattr(transport, 'handle_request'):
+                result = transport.handle_request(rust_request)
+            elif callable(transport):
+                result = transport(rust_request)
             else:
                 raise TypeError("Transport must have handle_request method")
             # Wrap result in Response if needed
@@ -3648,8 +3950,15 @@ class Client:
             else:
                 response = Response(result)
         else:
-            result = self._client.send(rust_request)
-            response = Response(result)
+            try:
+                result = self._client.send(rust_request)
+                response = Response(result)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
 
         # Set URL and request on response
         if request_url is not None:
