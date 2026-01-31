@@ -150,9 +150,10 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 340 failed / 1066 passed / 1 skipped (Total: 1407)
+## Test Status: 238 failed / 1168 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **Response async streaming** (33 more tests passing): `aiter_raw`, `aiter_bytes`, `aiter_lines` implemented in Python wrapper
 - Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY)
 - URL: Added `raw_scheme` property, fixed `raw_host` IPv6 bracket handling
 - Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
@@ -168,43 +169,54 @@ pytest tests_requestx/ -v  # ALL PASSED
 - AsyncClient/Client context manager calls transport lifecycle methods
 - MutableHeaders.raw property for raw header bytes
 - Content-length: 0 header for POST/PUT/PATCH without body
+- ASGI transport working (24/24 tests passing)
+- Decoders working (40/40 tests passing)
+- Utils working (40/40 tests passing)
+- Redirects mostly working (26/31 tests passing)
 
 | ID | Test File | Tests (F/P) | Features | Status | Priority |
 |----|-----------|-------------|----------|--------|----------|
-| 1 | client/test_auth.py | 13/66 | Basic/Digest auth, custom auth | 🟡 Partial | P0 |
-| 2 | models/test_responses.py | 60/46 | Response streaming, encoding | 🟡 Partial | P0 |
-| 3 | models/test_url.py | 48/42 | RFC3986 compliance, IDNA | 🔴 Failing | P0 |
-| 4 | test_content.py | 18/25 | Stream markers, async iterators | 🟡 Partial | P0 |
-| 5 | client/test_proxies.py | 0/69 | Proxy env vars (HTTP_PROXY, NO_PROXY) | ✅ Done | - |
-| 6 | client/test_redirects.py | 30/1 | history, next_request | 🔴 Failing | P1 |
-| 7 | client/test_async_client.py | 20/32 | Async streaming, build_request | 🟡 Partial | P1 |
-| 8 | test_decoders.py | 26/14 | gzip/brotli/zstd/deflate | 🔴 Failing | P1 |
-| 9 | test_asgi.py | 24/0 | ASGITransport | 🔴 Failing | P2 |
-| 10 | client/test_client.py | 14/21 | build_request, transport | 🟡 Partial | P1 |
-| 11 | client/test_headers.py | 15/2 | Header encoding | 🔴 Failing | P1 |
-| 12 | models/test_headers.py | 2/25 | parse_header_links | 🟢 Mostly | P1 |
-| 13 | test_multipart.py | 15/23 | Key/value validation | 🟡 Partial | P1 |
-| 14 | test_utils.py | 14/26 | guess_json_utf, BOM | 🟡 Partial | P2 |
-| 15 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - |
-| 16 | models/test_requests.py | 15/9 | Request.stream, pickle | 🟡 Partial | P1 |
-| 17 | test_config.py | 1/27 | create_ssl_context | 🟢 Mostly | P0 |
-| 18 | test_auth.py | 4/4 | Auth module exports | 🟡 Partial | P1 |
-| 19 | test_timeouts.py | 8/2 | Timeout edge cases | 🟡 Partial | P2 |
-| 20 | client/test_event_hooks.py | 6/3 | Hooks on redirects | 🟡 Partial | P2 |
-| 21 | client/test_cookies.py | 6/1 | Cookie persistence | 🔴 Failing | P2 |
-| 22 | models/test_cookies.py | 4/3 | Domain/path support | 🟡 Partial | P2 |
-| 23 | client/test_queryparams.py | 3/0 | Client query params | 🔴 Failing | P2 |
-| 24 | test_api.py | 2/10 | Iterator content | 🟢 Mostly | P1 |
-| 25 | test_exceptions.py | 1/2 | Exception hierarchy | 🟡 Partial | P2 |
-| 26 | client/test_properties.py | 0/8 | Client properties | ✅ Done | - |
-| 27 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - |
-| 28 | test_exported_members.py | 0/1 | Module exports | ✅ Done | - |
-| 29 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - |
-| 30 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - |
+| 1 | models/test_responses.py | 27/79 | Response streaming, encoding, async iter | 🟡 Partial | P0 |
+| 2 | models/test_url.py | 48/42 | RFC3986 compliance, IDNA, IPv6 | 🟡 Partial | P0 |
+| 3 | test_multipart.py | 28/10 | Boundary parsing, file tuples, validation | 🔴 Failing | P0 |
+| 4 | client/test_async_client.py | 22/30 | Async streaming, build_request, transport | 🟡 Partial | P0 |
+| 5 | client/test_auth.py | 21/58 | Basic/Digest auth, custom auth, netrc | 🟡 Partial | P0 |
+| 6 | test_content.py | 18/25 | Stream markers, async iterators, bytesio | 🟡 Partial | P0 |
+| 7 | models/test_requests.py | 15/9 | Request.stream, pickle, generators | 🟡 Partial | P1 |
+| 8 | client/test_client.py | 14/21 | build_request, transport, URL merge | 🟡 Partial | P1 |
+| 9 | test_timeouts.py | 10/0 | Read/write/connect/pool timeout | 🔴 Failing | P1 |
+| 10 | client/test_cookies.py | 7/0 | Cookie jar, persistence | 🔴 Failing | P1 |
+| 11 | client/test_event_hooks.py | 6/3 | Hooks on redirects | 🟡 Partial | P2 |
+| 12 | client/test_redirects.py | 5/26 | history, next_request, streaming body | 🟢 Mostly | P1 |
+| 13 | models/test_cookies.py | 4/3 | Domain/path support, repr | 🟡 Partial | P2 |
+| 14 | test_auth.py | 4/4 | Digest auth nonce, RFC 7616 | 🟡 Partial | P1 |
+| 15 | client/test_queryparams.py | 3/0 | Client query params | 🔴 Failing | P2 |
+| 16 | models/test_headers.py | 2/25 | Header encoding, repr | 🟢 Mostly | P2 |
+| 17 | client/test_headers.py | 2/15 | Host header with port | 🟢 Mostly | P2 |
+| 18 | test_api.py | 2/10 | Iterator content | 🟢 Mostly | P2 |
+| 19 | test_config.py | 1/27 | SSLContext with request | 🟢 Mostly | P2 |
+| 20 | client/test_properties.py | 1/7 | Client headers | 🟢 Mostly | P2 |
+| 21 | test_exported_members.py | 1/0 | Module exports | 🔴 Failing | P2 |
+| 22 | test_exceptions.py | 0/3 | Exception hierarchy | ✅ Done | - |
+| 23 | client/test_proxies.py | 0/69 | Proxy env vars | ✅ Done | - |
+| 24 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - |
+| 25 | test_decoders.py | 0/40 | gzip/brotli/zstd/deflate | ✅ Done | - |
+| 26 | test_utils.py | 0/40 | guess_json_utf, BOM | ✅ Done | - |
+| 27 | test_asgi.py | 0/24 | ASGITransport | ✅ Done | - |
+| 28 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - |
+| 29 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - |
+| 30 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - |
+
+### Top Failing Categories
+1. **URL edge cases** (48 failures): Empty scheme, IPv6, IDNA encoding, path encoding
+2. **Multipart** (28 failures): Boundary parsing, file tuples, content-type handling
+3. **Response streaming** (27 failures): Sync streaming, encoding fallback, pickling
+4. **Async client** (22 failures): Build request, streaming, transport mounting
+5. **Auth flows** (21 failures): Basic auth assertion, digest nonce counting, netrc
 
 ### Known Issues (Priority Order)
-1. **Header case preservation**: Headers are lowercased, tests expect original case
-2. **URL scheme handling**: Empty scheme URLs (e.g., "://example.com") not fully supported
-3. **Digest auth**: Full RFC 2069/7616 implementation needed
-4. **Redirect handling**: Need manual redirect handling for history tracking
-5. **UTF-16/32 encoding**: JSON decoding for non-UTF-8 encodings
+1. **URL scheme handling**: Empty scheme URLs (e.g., "://example.com") not fully supported
+2. **Multipart boundary**: Boundary extraction from content-type header
+3. **Response encoding**: Fallback encoding detection, explicit encoding setting
+4. **Timeout exceptions**: Need to raise correct exception types (ReadTimeout, ConnectTimeout, etc.)
+5. **Cookie jar integration**: Cookie persistence across requests

@@ -1,7 +1,7 @@
 //! HTTP Response implementation
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::time::Duration;
 
 use crate::cookies::Cookies;
@@ -11,7 +11,6 @@ use crate::url::URL;
 
 /// HTTP Response object
 #[pyclass(name = "Response", subclass)]
-#[derive(Clone)]
 pub struct Response {
     status_code: u16,
     headers: Headers,
@@ -26,6 +25,32 @@ pub struct Response {
     explicit_encoding: Option<String>,
     text_accessed: bool,
     elapsed: Duration,
+    /// The original stream object (async or sync iterator)
+    stream: Option<PyObject>,
+    /// Whether the stream is async (true) or sync (false)
+    is_async_stream: bool,
+}
+
+impl Clone for Response {
+    fn clone(&self) -> Self {
+        Self {
+            status_code: self.status_code,
+            headers: self.headers.clone(),
+            content: self.content.clone(),
+            url: self.url.clone(),
+            request: self.request.clone(),
+            http_version: self.http_version.clone(),
+            history: self.history.clone(),
+            is_closed: self.is_closed,
+            is_stream_consumed: self.is_stream_consumed,
+            default_encoding: self.default_encoding.clone(),
+            explicit_encoding: self.explicit_encoding.clone(),
+            text_accessed: self.text_accessed,
+            elapsed: self.elapsed,
+            stream: self.stream.as_ref().map(|s| Python::with_gil(|py| s.clone_ref(py))),
+            is_async_stream: self.is_async_stream,
+        }
+    }
 }
 
 impl Response {
@@ -44,6 +69,8 @@ impl Response {
             explicit_encoding: None,
             text_accessed: false,
             elapsed: Duration::ZERO,
+            stream: None,
+            is_async_stream: false,
         }
     }
 
@@ -88,6 +115,8 @@ impl Response {
             explicit_encoding: None,
             text_accessed: false,
             elapsed: Duration::ZERO,
+            stream: None,
+            is_async_stream: false,
         })
     }
 
@@ -122,6 +151,8 @@ impl Response {
             explicit_encoding: None,
             text_accessed: false,
             elapsed: Duration::ZERO,
+            stream: None,
+            is_async_stream: false,
         })
     }
 }
@@ -161,6 +192,31 @@ impl Response {
                     let v: String = value.extract()?;
                     response.headers.set(k, v);
                 }
+            } else if let Ok(list) = h.downcast::<PyList>() {
+                // Handle list of tuples [(key, value), ...]
+                for item in list.iter() {
+                    if let Ok(tuple) = item.downcast::<PyTuple>() {
+                        if tuple.len() == 2 {
+                            // Extract key and value, handling both bytes and string
+                            let key_item = tuple.get_item(0)?;
+                            let val_item = tuple.get_item(1)?;
+
+                            let k = if let Ok(bytes) = key_item.extract::<Vec<u8>>() {
+                                String::from_utf8_lossy(&bytes).into_owned()
+                            } else {
+                                key_item.extract::<String>()?
+                            };
+
+                            let v = if let Ok(bytes) = val_item.extract::<Vec<u8>>() {
+                                String::from_utf8_lossy(&bytes).into_owned()
+                            } else {
+                                val_item.extract::<String>()?
+                            };
+
+                            response.headers.append(k, v);
+                        }
+                    }
+                }
             }
         }
 
@@ -192,78 +248,16 @@ impl Response {
                     }
                 }
                 response.content = content_bytes;
-            } else if c.hasattr("__iter__")? || c.hasattr("__aiter__")? {
-                // Try to treat as an iterator (generator, etc.)
-                let mut content_bytes = Vec::new();
-
-                // Check if it's an async iterator first
-                if c.hasattr("__aiter__")? {
-                    // Define helper to collect async iterator
-                    let globals = PyDict::new(c.py());
-                    c.py().run(
-                        c"
-import asyncio
-
-async def _collect_async(it):
-    result = b''
-    async for chunk in it:
-        result += chunk
-    return result
-
-def collect_async_iter(it):
-    coro = _collect_async(it)
-    try:
-        loop = asyncio.get_running_loop()
-        # If we're in a running loop, use nest_asyncio or just collect synchronously
-        # For simplicity, wrap it manually
-        import sys
-        if 'nest_asyncio' in sys.modules:
-            import nest_asyncio
-            nest_asyncio.apply()
-            return asyncio.run(coro)
-        else:
-            # Try to run in existing loop - won't work, so collect manually
-            raise RuntimeError('Cannot collect async iterator from sync context in running event loop')
-    except RuntimeError:
-        # No running loop, safe to use asyncio.run
-        return asyncio.run(coro)
-",
-                        Some(&globals),
-                        None
-                    )?;
-                    let collect_func = globals.get_item("collect_async_iter")?.unwrap();
-                    match collect_func.call1((c,)) {
-                        Ok(result) => {
-                            response.content = result.extract::<Vec<u8>>()?;
-                        }
-                        Err(_) => {
-                            // If we can't collect the async iterator, leave content empty
-                            // The async iteration methods will handle it
-                            response.content = Vec::new();
-                        }
-                    }
-                } else {
-                    // Try sync iterator
-                    let iter_result = c.call_method0("__iter__");
-                    if let Ok(iter) = iter_result {
-                        loop {
-                            match iter.call_method0("__next__") {
-                                Ok(item) => {
-                                    if let Ok(chunk) = item.extract::<Vec<u8>>() {
-                                        content_bytes.extend_from_slice(&chunk);
-                                    } else if let Ok(s) = item.extract::<String>() {
-                                        content_bytes.extend_from_slice(s.as_bytes());
-                                    }
-                                }
-                                Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(c.py()) => {
-                                    break;
-                                }
-                                Err(e) => return Err(e),
-                            }
-                        }
-                        response.content = content_bytes;
-                    }
-                }
+            } else if c.hasattr("__aiter__")? {
+                // Async iterator - store it for later async iteration
+                response.stream = Some(c.clone().unbind());
+                response.is_async_stream = true;
+                // Don't set content-length for streaming responses
+            } else if c.hasattr("__iter__")? {
+                // Sync iterator - store it for later iteration
+                response.stream = Some(c.clone().unbind());
+                response.is_async_stream = false;
+                // Don't set content-length for streaming responses
             } else {
                 // Invalid content type
                 return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -643,45 +637,92 @@ def collect_async_iter(it):
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn iter_raw<'py>(&mut self, _py: Python<'py>, chunk_size: Option<usize>) -> PyResult<RawIterator> {
+    fn iter_raw<'py>(&mut self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        // Check if this is an async stream - if so, raise RuntimeError
+        if self.stream.is_some() && self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call a sync iterator method on an async stream.",
+            ));
+        }
+
         // Allow iteration if we have content (even if stream was previously consumed)
         // Only block if we have no content AND stream was consumed
-        if self.is_stream_consumed && self.content.is_empty() {
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
+
+        // If we have a sync stream, return an iterator that wraps it
+        if let Some(ref stream) = self.stream {
+            self.is_stream_consumed = true;
+            let stream_obj = stream.clone_ref(py);
+            self.stream = None; // Consume the stream
+            return Ok(SyncStreamRawIterator {
+                stream: Some(stream_obj),
+                chunk_size: chunk_size.unwrap_or(65536),
+                buffer: Vec::new(),
+            }.into_pyobject(py)?.into_any().unbind());
+        }
+
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(RawIterator {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        })
+        }.into_pyobject(py)?.into_any().unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn iter_bytes(&mut self, chunk_size: Option<usize>) -> PyResult<BytesIterator> {
+    fn iter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        // Check if this is an async stream - if so, raise RuntimeError
+        if self.stream.is_some() && self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call a sync iterator method on an async stream.",
+            ));
+        }
+
         // Allow iteration if we have content (even if stream was previously consumed)
         // Only block if we have no content AND stream was consumed
-        if self.is_stream_consumed && self.content.is_empty() {
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
+
+        // If we have a sync stream, return an iterator that wraps it
+        if let Some(ref stream) = self.stream {
+            self.is_stream_consumed = true;
+            let stream_obj = stream.clone_ref(py);
+            self.stream = None; // Consume the stream
+            return Ok(SyncStreamBytesIterator {
+                stream: Some(stream_obj),
+                chunk_size: chunk_size.unwrap_or(65536),
+                buffer: Vec::new(),
+            }.into_pyobject(py)?.into_any().unbind());
+        }
+
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(BytesIterator {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        })
+        }.into_pyobject(py)?.into_any().unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn iter_text(&mut self, chunk_size: Option<usize>) -> PyResult<TextIterator> {
+        // Check if this is an async stream - if so, raise RuntimeError
+        if self.stream.is_some() && self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call a sync iterator method on an async stream.",
+            ));
+        }
+
         // Allow iteration if we have content (even if stream was previously consumed)
-        if self.is_stream_consumed && self.content.is_empty() {
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -699,8 +740,15 @@ def collect_async_iter(it):
     }
 
     fn iter_lines(&mut self) -> PyResult<LinesIterator> {
+        // Check if this is an async stream - if so, raise RuntimeError
+        if self.stream.is_some() && self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call a sync iterator method on an async stream.",
+            ));
+        }
+
         // Allow iteration if we have content (even if stream was previously consumed)
-        if self.is_stream_consumed && self.content.is_empty() {
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -753,40 +801,89 @@ def collect_async_iter(it):
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn aiter_raw(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncRawIterator> {
-        if self.is_stream_consumed {
+    fn aiter_raw(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        // Check if this is a sync stream - if so, raise RuntimeError
+        if self.stream.is_some() && !self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call an async iterator method on a sync stream.",
+            ));
+        }
+
+        if self.is_stream_consumed && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
+
+        // If we have an async stream, return an iterator that wraps it
+        if let Some(ref stream) = self.stream {
+            self.is_stream_consumed = true;
+            let stream_obj = stream.clone_ref(py);
+            self.stream = None; // Consume the stream
+            return Ok(AsyncStreamRawIterator {
+                stream: Some(stream_obj),
+                aiter: None,
+                chunk_size: chunk_size.unwrap_or(65536),
+                buffer: Vec::new(),
+            }.into_pyobject(py)?.into_any().unbind());
+        }
+
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(AsyncRawIterator {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        })
+        }.into_pyobject(py)?.into_any().unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn aiter_bytes(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncBytesIterator> {
-        if self.is_stream_consumed {
+    fn aiter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+        // Check if this is a sync stream - if so, raise RuntimeError
+        if self.stream.is_some() && !self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call an async iterator method on a sync stream.",
+            ));
+        }
+
+        if self.is_stream_consumed && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
+
+        // If we have an async stream, return an iterator that wraps it
+        if let Some(ref stream) = self.stream {
+            self.is_stream_consumed = true;
+            let stream_obj = stream.clone_ref(py);
+            self.stream = None; // Consume the stream
+            return Ok(AsyncStreamBytesIterator {
+                stream: Some(stream_obj),
+                aiter: None,
+                chunk_size: chunk_size.unwrap_or(65536),
+                buffer: Vec::new(),
+            }.into_pyobject(py)?.into_any().unbind());
+        }
+
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(AsyncBytesIterator {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        })
+        }.into_pyobject(py)?.into_any().unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn aiter_text(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncTextIterator> {
-        if self.is_stream_consumed {
+        // Check if this is a sync stream - if so, raise RuntimeError
+        if self.stream.is_some() && !self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call an async iterator method on a sync stream.",
+            ));
+        }
+
+        if self.is_stream_consumed && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -804,7 +901,14 @@ def collect_async_iter(it):
     }
 
     fn aiter_lines(&mut self) -> PyResult<AsyncLinesIterator> {
-        if self.is_stream_consumed {
+        // Check if this is a sync stream - if so, raise RuntimeError
+        if self.stream.is_some() && !self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call an async iterator method on a sync stream.",
+            ));
+        }
+
+        if self.is_stream_consumed && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -846,6 +950,13 @@ def collect_async_iter(it):
     }
 
     fn aclose<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // Check if this is a sync stream - if so, raise RuntimeError
+        if self.stream.is_some() && !self.is_async_stream {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Attempted to call an async method on a sync stream.",
+            ));
+        }
+
         self.is_closed = true;
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
     }
@@ -1125,6 +1236,174 @@ impl AsyncLinesIterator {
             let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(line) })?;
             Ok(Some(fut))
         }
+    }
+}
+
+/// Sync iterator that wraps a Python sync stream for raw bytes
+#[pyclass]
+pub struct SyncStreamRawIterator {
+    stream: Option<PyObject>,
+    chunk_size: usize,
+    buffer: Vec<u8>,
+}
+
+#[pymethods]
+impl SyncStreamRawIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        // If we have buffered data, return a chunk from it
+        if !self.buffer.is_empty() {
+            let end = std::cmp::min(self.chunk_size, self.buffer.len());
+            let chunk: Vec<u8> = self.buffer.drain(..end).collect();
+            return Ok(Some(PyBytes::new(py, &chunk)));
+        }
+
+        // Get next chunk from the stream
+        if let Some(ref stream) = self.stream {
+            let iter = stream.call_method0(py, "__iter__")?;
+            loop {
+                match iter.call_method0(py, "__next__") {
+                    Ok(item) => {
+                        let chunk: Vec<u8> = item.extract(py)?;
+                        if chunk.is_empty() {
+                            continue; // Skip empty chunks
+                        }
+                        if chunk.len() <= self.chunk_size {
+                            return Ok(Some(PyBytes::new(py, &chunk)));
+                        } else {
+                            // Buffer excess and return chunk_size
+                            self.buffer.extend_from_slice(&chunk[self.chunk_size..]);
+                            return Ok(Some(PyBytes::new(py, &chunk[..self.chunk_size])));
+                        }
+                    }
+                    Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => {
+                        self.stream = None;
+                        return Ok(None);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Sync iterator that wraps a Python sync stream for decoded bytes
+#[pyclass]
+pub struct SyncStreamBytesIterator {
+    stream: Option<PyObject>,
+    chunk_size: usize,
+    buffer: Vec<u8>,
+}
+
+#[pymethods]
+impl SyncStreamBytesIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
+        // If we have buffered data, return a chunk from it
+        if !self.buffer.is_empty() {
+            let end = std::cmp::min(self.chunk_size, self.buffer.len());
+            let chunk: Vec<u8> = self.buffer.drain(..end).collect();
+            return Ok(Some(chunk));
+        }
+
+        // Get next chunk from the stream
+        if let Some(ref stream) = self.stream {
+            let iter = stream.call_method0(py, "__iter__")?;
+            loop {
+                match iter.call_method0(py, "__next__") {
+                    Ok(item) => {
+                        let chunk: Vec<u8> = item.extract(py)?;
+                        if chunk.is_empty() {
+                            continue; // Skip empty chunks
+                        }
+                        if chunk.len() <= self.chunk_size {
+                            return Ok(Some(chunk));
+                        } else {
+                            // Buffer excess and return chunk_size
+                            self.buffer.extend_from_slice(&chunk[self.chunk_size..]);
+                            return Ok(Some(chunk[..self.chunk_size].to_vec()));
+                        }
+                    }
+                    Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => {
+                        self.stream = None;
+                        return Ok(None);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Async iterator that wraps a Python async stream for raw bytes
+#[pyclass]
+pub struct AsyncStreamRawIterator {
+    stream: Option<PyObject>,  // The original async generator/iterator
+    aiter: Option<PyObject>,   // The __aiter__ result (stored after first call)
+    chunk_size: usize,
+    buffer: Vec<u8>,
+}
+
+#[pymethods]
+impl AsyncStreamRawIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        // Initialize aiter if needed
+        if self.aiter.is_none() {
+            if let Some(ref stream) = self.stream {
+                let aiter = stream.call_method0(py, "__aiter__")?;
+                self.aiter = Some(aiter);
+            }
+        }
+
+        // Get next chunk from the async iterator
+        if let Some(ref aiter) = self.aiter {
+            let anext = aiter.call_method0(py, "__anext__")?;
+            return Ok(Some(anext.into_bound(py)));
+        }
+        Ok(None)
+    }
+}
+
+/// Async iterator that wraps a Python async stream for decoded bytes
+#[pyclass]
+pub struct AsyncStreamBytesIterator {
+    stream: Option<PyObject>,
+    aiter: Option<PyObject>,
+    chunk_size: usize,
+    buffer: Vec<u8>,
+}
+
+#[pymethods]
+impl AsyncStreamBytesIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.aiter.is_none() {
+            if let Some(ref stream) = self.stream {
+                let aiter = stream.call_method0(py, "__aiter__")?;
+                self.aiter = Some(aiter);
+            }
+        }
+
+        if let Some(ref aiter) = self.aiter {
+            let anext = aiter.call_method0(py, "__anext__")?;
+            return Ok(Some(anext.into_bound(py)));
+        }
+        Ok(None)
     }
 }
 

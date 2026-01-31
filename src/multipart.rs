@@ -51,6 +51,13 @@ pub fn build_multipart_body_with_boundary(
     // Add data fields first
     if let Some(d) = data {
         for (key, value) in d.iter() {
+            // Validate key type - must be str
+            if !key.is_instance_of::<pyo3::types::PyString>() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Invalid type for name {}. Expected str.",
+                    key.repr()?.to_str()?
+                )));
+            }
             let k: String = key.extract()?;
             // Handle different value types
             add_data_field(py, &mut body, boundary_bytes, &k, &value)?;
@@ -59,9 +66,32 @@ pub fn build_multipart_body_with_boundary(
 
     // Add file fields
     if let Some(f) = files {
-        if let Ok(dict) = f.downcast::<PyDict>() {
-            for (key, value) in dict.iter() {
-                let field_name: String = key.extract()?;
+        // Handle both dict and list of tuples
+        let file_items: Vec<(String, Bound<'_, PyAny>)> = if let Ok(dict) = f.downcast::<PyDict>() {
+            dict.iter()
+                .map(|(k, v)| (k.extract::<String>().unwrap_or_default(), v))
+                .collect()
+        } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
+            list.iter()
+                .filter_map(|item| {
+                    if let Ok(tuple) = item.downcast::<PyTuple>() {
+                        if tuple.len() >= 2 {
+                            let name = tuple.get_item(0).ok()?.extract::<String>().ok()?;
+                            let value = tuple.get_item(1).ok()?;
+                            Some((name, value))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        for (field_name, value) in file_items {
 
                 // Files can be:
                 // - file-like object (has read() method)
@@ -74,11 +104,12 @@ pub fn build_multipart_body_with_boundary(
                 body.extend_from_slice(boundary_bytes);
                 body.extend_from_slice(b"\r\n");
 
-                // Build Content-Disposition header
+                // Build Content-Disposition header with escaped filename
                 if let Some(ref fname) = filename {
+                    let escaped_fname = escape_filename(fname);
                     body.extend_from_slice(format!(
                         "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                        field_name, fname
+                        field_name, escaped_fname
                     ).as_bytes());
                 } else {
                     // No filename - just field name
@@ -88,14 +119,29 @@ pub fn build_multipart_body_with_boundary(
                     ).as_bytes());
                 }
 
-                // Add content-type if we have a filename
-                if filename.is_some() {
-                    body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
+                // Add extra headers first (before Content-Type), but skip Content-Type if in headers
+                let mut has_content_type_header = false;
+                for (hk, hv) in &extra_headers {
+                    if hk.to_lowercase() == "content-type" {
+                        has_content_type_header = true;
+                    } else {
+                        body.extend_from_slice(format!("{}: {}\r\n", hk, hv).as_bytes());
+                    }
                 }
 
-                // Add extra headers if any
-                for (hk, hv) in extra_headers {
-                    body.extend_from_slice(format!("{}: {}\r\n", hk, hv).as_bytes());
+                // Add content-type if we have a filename
+                if filename.is_some() {
+                    // Use Content-Type from extra_headers if provided, otherwise use guessed type
+                    if has_content_type_header {
+                        for (hk, hv) in &extra_headers {
+                            if hk.to_lowercase() == "content-type" {
+                                body.extend_from_slice(format!("Content-Type: {}\r\n", hv).as_bytes());
+                                break;
+                            }
+                        }
+                    } else {
+                        body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
+                    }
                 }
 
                 body.extend_from_slice(b"\r\n");
@@ -141,13 +187,25 @@ fn add_single_data_field(
     key: &str,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
+    use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyBytes as PyBytesType};
+
+    // Validate value type - must be str, bytes, int, float, bool, or None
+    // Check for dict explicitly to give proper error message
+    if value.downcast::<PyDict>().is_ok() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Invalid type for value: {}. Expected str.",
+            value.get_type().name()?
+        )));
+    }
+
     // Handle different value types
     let v_bytes: Vec<u8> = if let Ok(s) = value.extract::<String>() {
         s.into_bytes()
     } else if let Ok(b) = value.extract::<Vec<u8>>() {
         b
-    } else if let Ok(b) = value.extract::<bool>() {
-        // Convert boolean to lowercase string
+    } else if value.downcast::<PyBool>().is_ok() {
+        // Check bool before int (since bool is subclass of int in Python)
+        let b: bool = value.extract()?;
         if b { b"true".to_vec() } else { b"false".to_vec() }
     } else if let Ok(i) = value.extract::<i64>() {
         i.to_string().into_bytes()
@@ -155,8 +213,16 @@ fn add_single_data_field(
         f.to_string().into_bytes()
     } else if value.is_none() {
         b"".to_vec()
-    } else {
+    } else if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytesType>()
+           || value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>()
+           || value.is_instance_of::<PyBool>() {
         value.str()?.to_string().into_bytes()
+    } else {
+        // Invalid type - raise TypeError
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Invalid type for value: {}. Expected str.",
+            value.get_type().name()?
+        )));
     };
 
     body.extend_from_slice(b"--");
@@ -243,20 +309,65 @@ pub fn read_file_content(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<V
         return Ok(s.into_bytes());
     }
 
+    // Check if it's a StringIO (text mode) - should raise TypeError
+    let io_mod = py.import("io")?;
+    let string_io_type = io_mod.getattr("StringIO")?;
+    if value.is_instance(&string_io_type)? {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Multipart file uploads require 'io.IOBase', not 'io.StringIO'."
+        ));
+    }
+
+    // Check if it's a text mode file (TextIOWrapper)
+    let text_io_wrapper_type = io_mod.getattr("TextIOWrapper")?;
+    if value.is_instance(&text_io_wrapper_type)? {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Attempted to upload a file-like object without 'rb' mode. Make sure to open the file with 'rb' mode."
+        ));
+    }
+
     // Try to call read() method (file-like object)
     if let Ok(read_method) = value.getattr("read") {
+        // Rewind file if possible (seek to beginning)
+        if let Ok(seek_method) = value.getattr("seek") {
+            let _ = seek_method.call1((0i64,));
+        }
+
         let content = read_method.call0()?;
         if let Ok(bytes) = content.extract::<Vec<u8>>() {
             return Ok(bytes);
         }
-        if let Ok(s) = content.extract::<String>() {
-            return Ok(s.into_bytes());
+        // If read() returns string, it's text mode - raise TypeError
+        if content.extract::<String>().is_ok() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Multipart file uploads must be opened in binary mode."
+            ));
         }
     }
 
     Err(pyo3::exceptions::PyTypeError::new_err(
         "File content must be bytes, str, or a file-like object with read() method"
     ))
+}
+
+/// Escape filename for Content-Disposition header (HTML5/RFC 5987)
+/// - Backslash is escaped as \\
+/// - Quote is percent-encoded as %22
+/// - Control characters (except 0x1B escape) are percent-encoded
+fn escape_filename(filename: &str) -> String {
+    let mut result = String::new();
+    for c in filename.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("%22"),
+            // Control characters: 0x00-0x1F except 0x1B (escape)
+            c if (c as u32) < 0x20 && c != '\x1B' => {
+                result.push_str(&format!("%{:02X}", c as u32));
+            }
+            _ => result.push(c),
+        }
+    }
+    result
 }
 
 /// Guess content type from filename

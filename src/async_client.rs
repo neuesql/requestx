@@ -486,6 +486,30 @@ impl AsyncClient {
         let url_str = extract_url_string(url)?;
         let resolved_url = self.resolve_url(&url_str)?;
         let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
+
+        // Extract Host header info before moving parsed_url
+        let host_header_value: Option<String> = if let Some(host) = parsed_url.inner().host_str() {
+            let host_value = if let Some(port) = parsed_url.inner().port() {
+                // Include non-default port in Host header
+                let scheme = parsed_url.inner().scheme();
+                let default_port: u16 = match scheme {
+                    "http" => 80,
+                    "https" => 443,
+                    _ => 0,
+                };
+                if port != default_port {
+                    format!("{}:{}", host, port)
+                } else {
+                    host.to_string()
+                }
+            } else {
+                host.to_string()
+            };
+            Some(host_value)
+        } else {
+            None
+        };
+
         let mut request = Request::new(method, parsed_url);
 
         // Add headers
@@ -495,13 +519,45 @@ impl AsyncClient {
                 for (k, v) in headers_obj.inner() {
                     all_headers.set(k.clone(), v.clone());
                 }
+            } else if let Ok(dict) = h.downcast::<pyo3::types::PyDict>() {
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        all_headers.set(k, v);
+                    }
+                }
+            } else if let Ok(list) = h.downcast::<pyo3::types::PyList>() {
+                for item in list.iter() {
+                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                        if tuple.len() == 2 {
+                            if let (Ok(k), Ok(v)) = (
+                                tuple.get_item(0).and_then(|i| i.extract::<String>()),
+                                tuple.get_item(1).and_then(|i| i.extract::<String>())
+                            ) {
+                                all_headers.append(k, v);
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        // Add Host header from URL if not already set
+        if !all_headers.contains("host") && !all_headers.contains("Host") {
+            if let Some(host_value) = host_header_value {
+                all_headers.set("host".to_string(), host_value);
+            }
+        }
+
         request.set_headers(all_headers);
 
         // Add content
         if let Some(c) = content {
+            // Set Content-Length header for the content
+            let content_len = c.len();
             request.set_content(c);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("content-length".to_string(), content_len.to_string());
+            request.set_headers(headers_mut);
         } else {
             // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
             let method_upper = method.to_uppercase();

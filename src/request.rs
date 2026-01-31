@@ -10,7 +10,7 @@ use crate::types::SyncByteStream;
 use crate::url::URL;
 
 /// Convert a Python value to a string for form encoding (handles int, float, bool, str, None)
-fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+pub fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
     if obj.is_none() {
         return Ok(String::new());
     }
@@ -43,8 +43,10 @@ pub struct MutableHeaders {
 
 #[pymethods]
 impl MutableHeaders {
-    fn __getitem__(&self, key: &str) -> Option<String> {
-        self.headers.get(key, None)
+    fn __getitem__(&self, key: &str) -> PyResult<String> {
+        self.headers.get(key, None).ok_or_else(|| {
+            pyo3::exceptions::PyKeyError::new_err(key.to_string())
+        })
     }
 
     fn __setitem__(&mut self, key: &str, value: &str) {
@@ -359,7 +361,19 @@ impl Request {
         }
 
         // Handle multipart (files provided)
-        if let Some(f) = files {
+        // Check if files is not empty (dict or list)
+        let files_not_empty = files.map(|f| {
+            if let Ok(dict) = f.downcast::<PyDict>() {
+                !dict.is_empty()
+            } else if let Ok(list) = f.downcast::<PyList>() {
+                !list.is_empty()
+            } else {
+                true  // Unknown type, assume not empty
+            }
+        }).unwrap_or(false);
+
+        if files_not_empty {
+            let f = files.unwrap();
             // Check if boundary was already set in headers BEFORE reading files
             let existing_ct = request.headers.get("content-type", None);
             // Get data dict if provided
@@ -394,26 +408,29 @@ impl Request {
         } else if let Some(d) = data {
             // Handle form data (no files)
             if let Ok(dict) = d.downcast::<PyDict>() {
-                let mut form_data = Vec::new();
-                for (key, value) in dict.iter() {
-                    let k: String = key.extract()?;
-                    // Handle lists - create multiple key=value pairs
-                    if let Ok(list) = value.downcast::<PyList>() {
-                        for item in list.iter() {
-                            let v = py_value_to_form_str(&item)?;
+                // Only process if dict is not empty
+                if !dict.is_empty() {
+                    let mut form_data = Vec::new();
+                    for (key, value) in dict.iter() {
+                        let k: String = key.extract()?;
+                        // Handle lists - create multiple key=value pairs
+                        if let Ok(list) = value.downcast::<PyList>() {
+                            for item in list.iter() {
+                                let v = py_value_to_form_str(&item)?;
+                                form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                            }
+                        } else {
+                            let v = py_value_to_form_str(&value)?;
                             form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
                         }
-                    } else {
-                        let v = py_value_to_form_str(&value)?;
-                        form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
                     }
-                }
-                request.content = Some(form_data.join("&").into_bytes());
-                if !request.headers.contains("content-type") {
-                    request.headers.set(
-                        "Content-Type".to_string(),
-                        "application/x-www-form-urlencoded".to_string(),
-                    );
+                    request.content = Some(form_data.join("&").into_bytes());
+                    if !request.headers.contains("content-type") {
+                        request.headers.set(
+                            "Content-Type".to_string(),
+                            "application/x-www-form-urlencoded".to_string(),
+                        );
+                    }
                 }
             }
         }

@@ -385,6 +385,65 @@ def get_encoding_from_content_type(content_type: str) -> typing.Optional[str]:
     return params.get("charset")
 
 
+def guess_json_utf(data: bytes) -> typing.Optional[str]:
+    """
+    Detect the encoding of JSON data based on BOM or null byte patterns.
+
+    JSON can be encoded in UTF-8, UTF-16 (BE/LE), or UTF-32 (BE/LE).
+    This function detects the encoding by looking at the byte order mark (BOM)
+    or the pattern of null bytes in the first few characters.
+
+    Returns the encoding name suitable for Python's decode(), or None if
+    the data appears to be plain UTF-8 (no BOM needed).
+    """
+    if len(data) < 2:
+        return None
+
+    # Check for BOM (Byte Order Mark)
+    # UTF-32 BOMs must be checked before UTF-16 since UTF-32 LE starts with FF FE 00 00
+    if data[:4] == b'\x00\x00\xfe\xff':
+        return 'utf-32-be'
+    if data[:4] == b'\xff\xfe\x00\x00':
+        return 'utf-32-le'
+    if data[:2] == b'\xfe\xff':
+        return 'utf-16-be'
+    if data[:2] == b'\xff\xfe':
+        return 'utf-16-le'
+    if data[:3] == b'\xef\xbb\xbf':
+        return 'utf-8-sig'
+
+    # No BOM found, detect by null byte patterns
+    # JSON must start with ASCII character: { [ " or whitespace
+    # Look at the pattern of null bytes in the first 4 bytes
+
+    if len(data) >= 4:
+        null_count = sum(1 for b in data[:4] if b == 0)
+
+        # UTF-32: 3 null bytes per character
+        if null_count == 3:
+            if data[0] == 0 and data[1] == 0 and data[2] == 0:
+                return 'utf-32-be'
+            if data[1] == 0 and data[2] == 0 and data[3] == 0:
+                return 'utf-32-le'
+
+        # UTF-16: 1 null byte per character (for ASCII range)
+        if null_count >= 1:
+            if data[0] == 0 and data[2] == 0:
+                return 'utf-16-be'
+            if data[1] == 0 and data[3] == 0:
+                return 'utf-16-le'
+
+    elif len(data) >= 2:
+        # For shorter data, check UTF-16 patterns
+        if data[0] == 0:
+            return 'utf-16-be'
+        if data[1] == 0:
+            return 'utf-16-le'
+
+    # Default to UTF-8 (no special encoding needed)
+    return None
+
+
 # Re-export at module level for direct access
 __all__ = [
     "URLPattern",
@@ -397,4 +456,5 @@ __all__ = [
     "normalize_header_value",
     "parse_content_type",
     "get_encoding_from_content_type",
+    "guess_json_utf",
 ]

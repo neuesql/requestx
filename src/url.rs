@@ -19,18 +19,22 @@ pub struct URL {
     fragment: String,
     /// Track if the original URL had an explicit trailing slash for root path
     has_trailing_slash: bool,
+    /// Track if the URL has an empty scheme (like "://example.com")
+    empty_scheme: bool,
+    /// Track if the URL has an empty host (like "http://")
+    empty_host: bool,
 }
 
 impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
         // Default to true since url crate always normalizes to have slash
-        Self { inner: url, fragment, has_trailing_slash: true }
+        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false }
     }
 
     pub fn from_url_with_slash(url: Url, has_trailing_slash: bool) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash }
+        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false }
     }
 
     pub fn inner(&self) -> &Url {
@@ -84,7 +88,15 @@ impl URL {
 
     /// Get the host (public Rust API)
     pub fn get_host(&self) -> Option<String> {
-        self.inner.host_str().map(|s| s.to_lowercase())
+        self.inner.host_str().map(|s| {
+            // Strip brackets for IPv6 addresses
+            let host = if s.starts_with('[') && s.ends_with(']') {
+                &s[1..s.len()-1]
+            } else {
+                s
+            };
+            host.to_lowercase()
+        })
     }
 
     /// Get the scheme (public Rust API)
@@ -99,7 +111,14 @@ impl URL {
 
     /// Get the host as string (public Rust API)
     pub fn get_host_str(&self) -> String {
-        self.inner.host_str().unwrap_or("").to_lowercase()
+        let host = self.inner.host_str().unwrap_or("");
+        // Strip brackets for IPv6 addresses
+        let host = if host.starts_with('[') && host.ends_with(']') {
+            &host[1..host.len()-1]
+        } else {
+            host
+        };
+        host.to_lowercase()
     }
 
     /// Get the port (public Rust API)
@@ -154,24 +173,119 @@ impl URL {
                 }
             }
 
-            let parsed = Url::parse(url_str).or_else(|_| {
-                // Try as relative URL
-                Url::parse(&format!("http://example.com{}", url_str))
-                    .map(|mut u| {
-                        u.set_scheme("").ok();
-                        u
-                    })
-                    .or_else(|_| {
-                        // Handle scheme-relative URLs like "://example.com"
-                        if url_str.starts_with("://") {
-                            Url::parse(&format!("http{}", url_str)).map(|mut u| {
-                                u.set_scheme("").ok();
-                                u
-                            })
-                        } else {
-                            Url::parse(&format!("relative:{}", url_str))
+            // Check for invalid port before parsing
+            // Look for pattern like :abc/ or :abc? or :abc# or :abc at end
+            if let Some(authority_start) = url_str.find("://") {
+                let after_scheme = &url_str[authority_start + 3..];
+                // Find the end of authority (first / ? or #, or end of string)
+                let authority_end = after_scheme.find('/').unwrap_or(after_scheme.len());
+                let authority_end = authority_end.min(after_scheme.find('?').unwrap_or(after_scheme.len()));
+                let authority_end = authority_end.min(after_scheme.find('#').unwrap_or(after_scheme.len()));
+                let authority = &after_scheme[..authority_end];
+
+                // Check for port in authority (after last : that's not part of IPv6)
+                if !authority.starts_with('[') {  // Not IPv6
+                    if let Some(colon_pos) = authority.rfind(':') {
+                        // Check if there's an @ (userinfo) after this colon
+                        let after_colon = &authority[colon_pos + 1..];
+                        if !after_colon.contains('@') {
+                            // This should be a port
+                            if !after_colon.is_empty() && !after_colon.chars().all(|c| c.is_ascii_digit()) {
+                                return Err(crate::exceptions::InvalidURL::new_err(format!(
+                                    "Invalid port: '{}'", after_colon
+                                )));
+                            }
                         }
-                    })
+                    }
+                }
+            }
+
+            // Handle special cases that the url crate doesn't support well
+
+            // Case 1: Empty scheme like "://example.com"
+            if url_str.starts_with("://") {
+                let rest = &url_str[3..];  // Remove "://"
+                // Parse the rest as if it had http scheme, then mark as empty scheme
+                let temp_url = format!("http://{}", rest);
+                match Url::parse(&temp_url) {
+                    Ok(mut parsed_url) => {
+                        // Apply params if provided
+                        if let Some(params_obj) = params {
+                            let query_params = QueryParams::from_py(params_obj)?;
+                            parsed_url.set_query(Some(&query_params.to_query_string()));
+                        }
+                        let has_trailing_slash = url_str.split('?').next().unwrap_or(url_str)
+                            .split('#').next().unwrap_or(url_str).ends_with('/');
+                        let frag = parsed_url.fragment().unwrap_or("").to_string();
+                        return Ok(Self {
+                            inner: parsed_url,
+                            fragment: frag,
+                            has_trailing_slash,
+                            empty_scheme: true,  // Mark as empty scheme
+                            empty_host: false,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(crate::exceptions::InvalidURL::new_err(format!(
+                            "Invalid URL: {}", e
+                        )));
+                    }
+                }
+            }
+
+            // Case 2: Scheme with empty authority like "http://"
+            if url_str.ends_with("://") || (url_str.contains("://") && {
+                let after = url_str.split("://").nth(1).unwrap_or("");
+                after.is_empty() || after == "/"
+            }) {
+                // Extract the scheme
+                let scheme_end = url_str.find("://").unwrap();
+                let scheme = &url_str[..scheme_end];
+                let rest = &url_str[scheme_end + 3..];
+                // Build a URL with dummy host
+                let temp_url = format!("{}://placeholder.invalid/{}", scheme, rest.trim_start_matches('/'));
+                match Url::parse(&temp_url) {
+                    Ok(mut parsed_url) => {
+                        // Apply params if provided
+                        if let Some(params_obj) = params {
+                            let query_params = QueryParams::from_py(params_obj)?;
+                            parsed_url.set_query(Some(&query_params.to_query_string()));
+                        }
+                        let has_trailing_slash = rest.ends_with('/') || rest.is_empty();
+                        let frag = parsed_url.fragment().unwrap_or("").to_string();
+                        return Ok(Self {
+                            inner: parsed_url,
+                            fragment: frag,
+                            has_trailing_slash,
+                            empty_scheme: false,
+                            empty_host: true,  // Mark as empty host
+                        });
+                    }
+                    Err(_) => {
+                        // Fallback: create minimal URL
+                        let base = format!("{}://placeholder.invalid/", scheme);
+                        if let Ok(parsed_url) = Url::parse(&base) {
+                            return Ok(Self {
+                                inner: parsed_url,
+                                fragment: String::new(),
+                                has_trailing_slash: true,
+                                empty_scheme: false,
+                                empty_host: true,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Normal URL parsing
+            let parsed = Url::parse(url_str).or_else(|_| {
+                // Try as relative URL with a base
+                if !url_str.contains("://") {
+                    // This is a relative URL
+                    Url::parse(&format!("relative:{}", url_str))
+                } else {
+                    Err(url::ParseError::InvalidDomainCharacter)
+                }
             });
 
             match parsed {
@@ -199,6 +313,8 @@ impl URL {
                         inner: parsed_url,
                         fragment: frag,
                         has_trailing_slash,
+                        empty_scheme: false,
+                        empty_host: false,
                     });
                 }
                 Err(e) => {
@@ -280,6 +396,8 @@ impl URL {
                         inner: u,
                         fragment: frag,
                         has_trailing_slash: has_slash,
+                        empty_scheme: false,
+                        empty_host: false,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -295,6 +413,8 @@ impl URL {
                         inner: u,
                         fragment: frag,
                         has_trailing_slash: has_slash,
+                        empty_scheme: false,
+                        empty_host: false,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -329,6 +449,9 @@ impl URL {
 
     #[getter]
     fn scheme(&self) -> &str {
+        if self.empty_scheme {
+            return "";
+        }
         let s = self.inner.scheme();
         if s == "relative" {
             ""
@@ -339,7 +462,17 @@ impl URL {
 
     #[getter]
     fn host(&self) -> String {
-        self.inner.host_str().unwrap_or("").to_lowercase()
+        if self.empty_host {
+            return String::new();
+        }
+        let host = self.inner.host_str().unwrap_or("");
+        // Strip brackets for IPv6 addresses - httpx returns host without brackets
+        let host = if host.starts_with('[') && host.ends_with(']') {
+            &host[1..host.len()-1]
+        } else {
+            host
+        };
+        host.to_lowercase()
     }
 
     #[getter]

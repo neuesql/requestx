@@ -98,6 +98,10 @@ impl QueryParams {
             params.inner = qp.inner;
         } else if let Ok(s) = obj.extract::<String>() {
             params = Self::from_query_string(&s);
+        } else if let Ok(bytes) = obj.downcast::<pyo3::types::PyBytes>() {
+            // Handle bytes input - decode as UTF-8
+            let s = String::from_utf8_lossy(bytes.as_bytes());
+            params = Self::from_query_string(&s);
         }
 
         Ok(params)

@@ -76,12 +76,12 @@ pub fn register_exceptions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Convert reqwest error to appropriate Python exception
 pub fn convert_reqwest_error(e: reqwest::Error) -> PyErr {
     let error_str = format!("{}", e);
+    let lower_error = error_str.to_lowercase();
 
     // Check for unsupported protocol/scheme errors
     if e.is_builder() {
         // Builder errors often indicate URL scheme issues
-        let lower = error_str.to_lowercase();
-        if lower.contains("url") || lower.contains("scheme") || lower.contains("builder error") {
+        if lower_error.contains("url") || lower_error.contains("scheme") || lower_error.contains("builder error") {
             // Check if it's a scheme/protocol issue by looking at the URL
             if let Some(url) = e.url() {
                 let scheme = url.scheme();
@@ -99,11 +99,20 @@ pub fn convert_reqwest_error(e: reqwest::Error) -> PyErr {
     }
 
     if e.is_timeout() {
+        // Determine timeout type based on reqwest's error flags
+        // reqwest distinguishes connect timeouts reliably via is_connect()
         if e.is_connect() {
-            ConnectTimeout::new_err(error_str)
-        } else {
-            ReadTimeout::new_err(error_str)
+            return ConnectTimeout::new_err(error_str);
         }
+
+        // Check for write-related indicators - only if explicitly body-related
+        // is_body() returns true when error occurred during body transfer
+        if e.is_body() {
+            return WriteTimeout::new_err(error_str);
+        }
+
+        // Default to read timeout for other timeout errors
+        ReadTimeout::new_err(error_str)
     } else if e.is_connect() {
         ConnectError::new_err(error_str)
     } else if e.is_request() {

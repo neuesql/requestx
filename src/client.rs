@@ -8,7 +8,7 @@ use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
-use crate::request::Request;
+use crate::request::{Request, py_value_to_form_str};
 use crate::response::Response;
 use crate::timeout::Timeout;
 use crate::types::BasicAuth;
@@ -528,7 +528,43 @@ impl Client {
         };
 
         let cookies_obj = if let Some(c) = cookies {
-            c.extract::<Cookies>().ok()
+            // Try to extract as Cookies first
+            if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                Some(cookies_obj)
+            } else if let Ok(dict) = c.downcast::<PyDict>() {
+                // Handle Python dict
+                let mut cookies = Cookies::new();
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        cookies.set(&k, &v);
+                    }
+                }
+                Some(cookies)
+            } else {
+                // Try iterating over CookieJar (has __iter__ that yields Cookie objects)
+                let mut cookies = Cookies::new();
+                let mut found_any = false;
+                if let Ok(py_iter) = c.try_iter() {
+                    for item in py_iter {
+                        if let Ok(cookie) = item {
+                            // Cookie object has name and value attributes
+                            if let Ok(name) = cookie.getattr("name") {
+                                if let Ok(value) = cookie.getattr("value") {
+                                    if let (Ok(n), Ok(v)) = (name.extract::<String>(), value.extract::<String>()) {
+                                        cookies.set(&n, &v);
+                                        found_any = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if found_any {
+                    Some(cookies)
+                } else {
+                    None
+                }
+            }
         } else {
             None
         };
@@ -836,6 +872,30 @@ impl Client {
         let url_str = Self::url_to_string(url)?;
         let resolved_url = self.resolve_url(&url_str)?;
         let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
+
+        // Extract Host header info before moving parsed_url
+        let host_header_value: Option<String> = if let Some(host) = parsed_url.inner().host_str() {
+            let host_value = if let Some(port) = parsed_url.inner().port() {
+                // Include non-default port in Host header
+                let scheme = parsed_url.inner().scheme();
+                let default_port: u16 = match scheme {
+                    "http" => 80,
+                    "https" => 443,
+                    _ => 0,
+                };
+                if port != default_port {
+                    format!("{}:{}", host, port)
+                } else {
+                    host.to_string()
+                }
+            } else {
+                host.to_string()
+            };
+            Some(host_value)
+        } else {
+            None
+        };
+
         let mut request = Request::new(method, parsed_url);
 
         // Add headers
@@ -845,13 +905,179 @@ impl Client {
                 for (k, v) in headers_obj.inner() {
                     all_headers.set(k.clone(), v.clone());
                 }
+            } else if let Ok(dict) = h.downcast::<pyo3::types::PyDict>() {
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        all_headers.set(k, v);
+                    }
+                }
+            } else if let Ok(list) = h.downcast::<pyo3::types::PyList>() {
+                for item in list.iter() {
+                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                        if tuple.len() == 2 {
+                            if let (Ok(k), Ok(v)) = (
+                                tuple.get_item(0).and_then(|i| i.extract::<String>()),
+                                tuple.get_item(1).and_then(|i| i.extract::<String>())
+                            ) {
+                                all_headers.append(k, v);
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        // Add Host header from URL if not already set
+        if !all_headers.contains("host") && !all_headers.contains("Host") {
+            if let Some(host_value) = host_header_value {
+                all_headers.set("host".to_string(), host_value);
+            }
+        }
+
+        // Add cookies to headers
+        let mut all_cookies = self.cookies.clone();
+        if let Some(c) = cookies {
+            if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                for (k, v) in cookies_obj.inner() {
+                    all_cookies.set(k, v);
+                }
+            } else if let Ok(dict) = c.downcast::<pyo3::types::PyDict>() {
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        all_cookies.set(&k, &v);
+                    }
+                }
+            }
+        }
+        let cookie_header = all_cookies.to_header_value();
+        if !cookie_header.is_empty() {
+            all_headers.set("cookie".to_string(), cookie_header);
+        }
+
         request.set_headers(all_headers);
 
-        // Add content
+        // Handle content
         if let Some(c) = content {
+            // Set Content-Length header for the content
+            let content_len = c.len();
             request.set_content(c);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("content-length".to_string(), content_len.to_string());
+            request.set_headers(headers_mut);
+        } else if let Some(j) = json {
+            // Handle JSON body
+            let py = j.py();
+            let json_mod = py.import("json")?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("ensure_ascii", false)?;
+            kwargs.set_item("allow_nan", false)?;
+            let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
+            kwargs.set_item("separators", separators)?;
+            let json_str: String = json_mod.call_method("dumps", (j,), Some(&kwargs))?.extract()?;
+            let json_bytes = json_str.into_bytes();
+            let content_len = json_bytes.len();
+            request.set_content(json_bytes);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("content-length".to_string(), content_len.to_string());
+            if !headers_mut.contains("content-type") {
+                headers_mut.set("content-type".to_string(), "application/json".to_string());
+            }
+            request.set_headers(headers_mut);
+        } else if files.is_some() {
+            // Check if files is not empty
+            let f = files.unwrap();
+            let files_not_empty = if let Ok(dict) = f.downcast::<pyo3::types::PyDict>() {
+                !dict.is_empty()
+            } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
+                !list.is_empty()
+            } else {
+                true  // Unknown type, assume not empty
+            };
+
+            if files_not_empty {
+                // Handle multipart files (and data)
+                let py = f.py();
+                let mut headers_mut = request.headers_ref().clone();
+
+                // Check if boundary was already set in headers
+                let existing_ct = headers_mut.get("content-type", None);
+                let (body, content_type) = if let Some(ref ct) = existing_ct {
+                    if ct.contains("boundary=") {
+                        let boundary = crate::multipart::extract_boundary_from_content_type(ct);
+                        if let Some(b) = boundary {
+                            let (body, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(&f), &b)?;
+                            (body, ct.clone())
+                        } else {
+                            let (body, boundary) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                            (body, format!("multipart/form-data; boundary={}", boundary))
+                        }
+                    } else {
+                        // Content-Type set but no boundary - preserve the original
+                        let (body, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                        (body, ct.clone())
+                    }
+                } else {
+                    let (body, boundary) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                    (body, format!("multipart/form-data; boundary={}", boundary))
+                };
+
+                let content_len = body.len();
+                request.set_content(body);
+                headers_mut.set("content-length".to_string(), content_len.to_string());
+                headers_mut.set("content-type".to_string(), content_type);
+                request.set_headers(headers_mut);
+            } else if let Some(d) = data {
+                // files was empty, but data might not be - handle form data
+                if !d.is_empty() {
+                    let mut form_data = Vec::new();
+                    for (key, value) in d.iter() {
+                        let k: String = key.extract()?;
+                        if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+                            for item in list.iter() {
+                                let v = py_value_to_form_str(&item)?;
+                                form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                            }
+                        } else {
+                            let v = py_value_to_form_str(&value)?;
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    }
+                    let body = form_data.join("&").into_bytes();
+                    let content_len = body.len();
+                    request.set_content(body);
+                    let mut headers_mut = request.headers_ref().clone();
+                    headers_mut.set("content-length".to_string(), content_len.to_string());
+                    if !headers_mut.contains("content-type") {
+                        headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+                    }
+                    request.set_headers(headers_mut);
+                }
+            }
+        } else if let Some(d) = data {
+            // Handle form data (no files)
+            let mut form_data = Vec::new();
+            for (key, value) in d.iter() {
+                let k: String = key.extract()?;
+                // Handle lists - create multiple key=value pairs
+                if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+                    for item in list.iter() {
+                        let v = py_value_to_form_str(&item)?;
+                        form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                    }
+                } else {
+                    let v = py_value_to_form_str(&value)?;
+                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                }
+            }
+            let body = form_data.join("&").into_bytes();
+            let content_len = body.len();
+            request.set_content(body);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("content-length".to_string(), content_len.to_string());
+            if !headers_mut.contains("content-type") {
+                headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+            }
+            request.set_headers(headers_mut);
         } else {
             // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
             let method_upper = method.to_uppercase();
