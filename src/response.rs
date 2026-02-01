@@ -129,6 +129,14 @@ impl Response {
         response: reqwest::Response,
         request: Option<Request>,
     ) -> PyResult<Self> {
+        Self::from_reqwest_async_with_context(response, request, None).await
+    }
+
+    pub async fn from_reqwest_async_with_context(
+        response: reqwest::Response,
+        request: Option<Request>,
+        timeout_context: Option<&str>,
+    ) -> PyResult<Self> {
         let status_code = response.status().as_u16();
         let headers = Headers::from_reqwest(response.headers());
         let url = URL::parse(response.url().as_str()).ok();
@@ -136,7 +144,13 @@ impl Response {
 
         let content = response.bytes().await.map_err(|e| {
             if e.is_timeout() {
-                crate::exceptions::ReadTimeout::new_err(format!("Read timeout: {}", e))
+                // Use timeout context if available, otherwise default to ReadTimeout
+                match timeout_context {
+                    Some("write") => crate::exceptions::WriteTimeout::new_err(format!("Write timeout: {}", e)),
+                    Some("connect") => crate::exceptions::ConnectTimeout::new_err(format!("Connect timeout: {}", e)),
+                    Some("pool") => crate::exceptions::PoolTimeout::new_err(format!("Pool timeout: {}", e)),
+                    _ => crate::exceptions::ReadTimeout::new_err(format!("Read timeout: {}", e)),
+                }
             } else {
                 crate::exceptions::ReadError::new_err(format!("Failed to read response: {}", e))
             }

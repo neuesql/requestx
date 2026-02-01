@@ -150,9 +150,12 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 50 failed / 1356 passed / 1 skipped (Total: 1407)
+## Test Status: 44 failed / 1362 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **Timeout exception types** (10/10 tests passing): ConnectTimeout, WriteTimeout, ReadTimeout now properly classified using timeout context
+- **URL fragment decoding**: Fragments are now properly percent-decoded when returned
+- **Limits support**: AsyncClient now accepts `limits` parameter for connection pool configuration
 - **Exception request attribute**: All exceptions now have `request` property that raises RuntimeError when not set
 - **Client headers isinstance**: `_HeadersProxy` now inherits from Headers, passing isinstance checks
 - **Top-level API iterators**: `post()`, `put()`, `patch()` now consume generators/iterators before passing to Rust
@@ -177,7 +180,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 | 1 | client/test_auth.py | 11 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
 | 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
 | 3 | models/test_url.py | 7 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
-| 4 | test_timeouts.py | 6 | Write/connect/pool timeout exception types | 🟡 Partial | P1 | L |
+| 4 | test_timeouts.py | 0 | Write/connect/pool timeout exception types | ✅ Done | - | - |
 | 5 | client/test_event_hooks.py | 6 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
 | 6 | client/test_redirects.py | 5 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
 | 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
@@ -209,15 +212,13 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ### Top Failing Categories
 1. **Client auth** (11 failures): Basic auth in URL, custom auth, netrc, digest trio edge cases
-2. **URL edge cases** (7 failures): Query/fragment encoding, percent escaping, component validation
-3. **Timeouts** (6 failures): Write/connect/pool timeout exception type mapping
-4. **Event hooks** (6 failures): Hooks not firing on redirect responses
-5. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
-6. **Cookies** (4 failures): Domain/path support, repr formatting
+2. **URL edge cases** (6 failures): Query encoding, percent escape host, validation
+3. **Event hooks** (6 failures): Hooks not firing on redirect responses
+4. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
+5. **Cookies** (4 failures): Domain/path support, repr formatting
 
 ### Known Issues (Priority Order)
-1. **Timeout exceptions**: Map Rust timeout errors to ConnectTimeout/WriteTimeout/PoolTimeout (L)
-2. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
+1. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
 3. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
 4. **URL auth extraction**: Parse and strip basic auth credentials from URL (M)
 5. **Netrc support**: Parse netrc file for auth credentials (M)

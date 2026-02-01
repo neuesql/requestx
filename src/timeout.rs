@@ -75,6 +75,40 @@ impl Timeout {
     pub fn read_duration(&self) -> Option<Duration> {
         self.read.map(Duration::from_secs_f64)
     }
+
+    pub fn write_duration(&self) -> Option<Duration> {
+        self.write.map(Duration::from_secs_f64)
+    }
+
+    pub fn pool_duration(&self) -> Option<Duration> {
+        self.pool.map(Duration::from_secs_f64)
+    }
+
+    /// Determine which timeout type triggered (when only one is set and active)
+    /// Returns: "connect", "write", "read", "pool", or None if multiple or none set
+    pub fn timeout_context(&self) -> Option<&'static str> {
+        let set_count = [self.connect, self.write, self.read, self.pool]
+            .iter()
+            .filter(|t| t.is_some())
+            .count();
+
+        // Only return specific context if exactly one timeout is set
+        if set_count == 1 {
+            if self.connect.is_some() {
+                return Some("connect");
+            }
+            if self.write.is_some() {
+                return Some("write");
+            }
+            if self.read.is_some() {
+                return Some("read");
+            }
+            if self.pool.is_some() {
+                return Some("pool");
+            }
+        }
+        None
+    }
 }
 
 #[pymethods]

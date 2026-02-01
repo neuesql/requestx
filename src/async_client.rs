@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cookies::Cookies;
-use crate::exceptions::convert_reqwest_error;
+use crate::exceptions::{convert_reqwest_error, convert_reqwest_error_with_context};
 use crate::headers::Headers;
 use crate::request::Request;
 use crate::response::Response;
-use crate::timeout::Timeout;
+use crate::timeout::{Limits, Timeout};
 use crate::types::BasicAuth;
 use crate::url::URL;
 
@@ -57,7 +57,7 @@ pub struct AsyncClient {
 
 impl Default for AsyncClient {
     fn default() -> Self {
-        Self::new_impl(None, None, None, None, None, None, None).unwrap()
+        Self::new_impl(None, None, None, None, None, None, None, None).unwrap()
     }
 }
 
@@ -67,11 +67,13 @@ impl AsyncClient {
         headers: Option<Headers>,
         cookies: Option<Cookies>,
         timeout: Option<Timeout>,
+        limits: Option<Limits>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<URL>,
     ) -> PyResult<Self> {
         let timeout = timeout.unwrap_or_default();
+        let limits = limits.unwrap_or_default();
         let follow_redirects = follow_redirects.unwrap_or(true);
         let max_redirects = max_redirects.unwrap_or(20);
 
@@ -82,12 +84,31 @@ impl AsyncClient {
                 reqwest::redirect::Policy::none()
             });
 
+        // Configure timeouts properly based on what's set
+        // Connect timeout is specific to connection establishment
+        if let Some(connect_dur) = timeout.connect_duration() {
+            builder = builder.connect_timeout(connect_dur);
+        }
+
+        // Read timeout for per-read operations
+        if let Some(read_dur) = timeout.read_duration() {
+            builder = builder.read_timeout(read_dur);
+        }
+
+        // Use the overall timeout (minimum of all) for total request time
+        // This captures write timeout when only write is set
         if let Some(dur) = timeout.to_duration() {
             builder = builder.timeout(dur);
         }
 
-        if let Some(connect_dur) = timeout.connect_duration() {
-            builder = builder.connect_timeout(connect_dur);
+        // Configure pool limits
+        if let Some(max_conn) = limits.max_connections {
+            builder = builder.pool_max_idle_per_host(max_conn);
+        }
+
+        // Configure pool idle timeout
+        if let Some(keepalive) = limits.keepalive_expiry {
+            builder = builder.pool_idle_timeout(std::time::Duration::from_secs_f64(keepalive));
         }
 
         let client = builder.build().map_err(|e| {
@@ -143,13 +164,14 @@ impl AsyncClient {
 #[pymethods]
 impl AsyncClient {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
+        limits: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<&Bound<'_, PyAny>>,
@@ -208,6 +230,12 @@ impl AsyncClient {
             None
         };
 
+        let limits_obj = if let Some(l) = limits {
+            l.extract::<Limits>().ok()
+        } else {
+            None
+        };
+
         let base_url_obj = if let Some(url) = base_url {
             if let Ok(url_obj) = url.extract::<URL>() {
                 Some(url_obj)
@@ -227,6 +255,7 @@ impl AsyncClient {
             headers_obj,
             cookies_obj,
             timeout_obj,
+            limits_obj,
             follow_redirects,
             max_redirects,
             base_url_obj,
@@ -604,6 +633,7 @@ impl AsyncClient {
         let inner = self.inner.clone();
         let headers = request.headers_ref().clone();
         let content = request.content_bytes().map(|b| b.to_vec());
+        let timeout_context = self.timeout.timeout_context().map(|s| s.to_string());
 
         future_into_py(py, async move {
             // Build the reqwest request
@@ -630,14 +660,18 @@ impl AsyncClient {
                 req_builder = req_builder.body(body);
             }
 
-            let response = req_builder.send().await.map_err(convert_reqwest_error)?;
+            let response = req_builder.send().await.map_err(|e| {
+                convert_reqwest_error_with_context(e, timeout_context.as_deref())
+            })?;
             let (status, response_headers, version) = (
                 response.status().as_u16(),
                 response.headers().clone(),
                 format!("{:?}", response.version()),
             );
             let url_str = response.url().to_string();
-            let content = response.bytes().await.map_err(convert_reqwest_error)?;
+            let content = response.bytes().await.map_err(|e| {
+                convert_reqwest_error_with_context(e, timeout_context.as_deref())
+            })?;
 
             // Build response
             let mut resp = Response::new(status);
@@ -1082,6 +1116,7 @@ impl AsyncClient {
         let client = self.inner.clone();
         let method_clone = method.clone();
         let url_clone = final_url.clone();
+        let timeout_context = self.timeout.timeout_context().map(|s| s.to_string());
 
         // Convert Headers to reqwest::header::HeaderMap
         let mut all_headers = reqwest::header::HeaderMap::new();
@@ -1106,11 +1141,17 @@ impl AsyncClient {
             }
 
             let start = std::time::Instant::now();
-            let response = builder.send().await.map_err(convert_reqwest_error)?;
+            let response = builder.send().await.map_err(|e| {
+                convert_reqwest_error_with_context(e, timeout_context.as_deref())
+            })?;
             let elapsed = start.elapsed();
 
             let request = Request::new(method.as_str(), URL::parse(&url_clone)?);
-            let mut result = Response::from_reqwest_async(response, Some(request)).await?;
+            let mut result = Response::from_reqwest_async_with_context(
+                response,
+                Some(request),
+                timeout_context.as_deref(),
+            ).await?;
             result.set_elapsed(elapsed);
             Ok(result)
         })

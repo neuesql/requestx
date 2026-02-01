@@ -1,5 +1,6 @@
 //! URL type implementation
 
+use percent_encoding::percent_decode_str;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -10,6 +11,14 @@ use crate::queryparams::QueryParams;
 
 /// Maximum URL length (same as httpx)
 const MAX_URL_LENGTH: usize = 65536;
+
+/// Decode a percent-encoded fragment string
+fn decode_fragment(encoded: &str) -> String {
+    percent_decode_str(encoded)
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| encoded.to_string())
+}
 
 /// URL parsing and manipulation
 #[pyclass(name = "URL")]
@@ -363,7 +372,7 @@ impl URL {
                         }
                         let has_trailing_slash = url_str.split('?').next().unwrap_or(url_str)
                             .split('#').next().unwrap_or(url_str).ends_with('/');
-                        let frag = parsed_url.fragment().unwrap_or("").to_string();
+                        let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
                         return Ok(Self {
                             inner: parsed_url,
                             fragment: frag,
@@ -401,7 +410,7 @@ impl URL {
                             parsed_url.set_query(Some(&query_params.to_query_string()));
                         }
                         let has_trailing_slash = rest.ends_with('/') || rest.is_empty();
-                        let frag = parsed_url.fragment().unwrap_or("").to_string();
+                        let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
                         return Ok(Self {
                             inner: parsed_url,
                             fragment: frag,
@@ -468,7 +477,7 @@ impl URL {
                         true
                     };
 
-                    let frag = parsed_url.fragment().unwrap_or("").to_string();
+                    let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
                     // Extract original host from URL string for IDNA/IPv6
                     let original_host = extract_original_host(url_str);
                     return Ok(Self {
