@@ -150,7 +150,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 49 failed / 1357 passed / 1 skipped (Total: 1407)
+## Test Status: 50 failed / 1356 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
 - **Exception request attribute**: All exceptions now have `request` property that raises RuntimeError when not set
@@ -174,7 +174,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 | ID | Test File | Failed | Features | Status | Priority | Effort |
 |----|-----------|--------|----------|--------|----------|--------|
-| 1 | client/test_auth.py | 13 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
+| 1 | client/test_auth.py | 11 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
 | 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
 | 3 | models/test_url.py | 7 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
 | 4 | test_timeouts.py | 6 | Write/connect/pool timeout exception types | 🟡 Partial | P1 | L |
@@ -208,21 +208,18 @@ pytest tests_requestx/ -v  # ALL PASSED
 **Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
 ### Top Failing Categories
-1. **Client auth** (13 failures): Basic auth in URL, custom auth, netrc, digest trio edge cases
-2. **Async client** (8 failures): ResponseNotRead on streamed, async iterator streaming, http_version
-3. **URL edge cases** (7 failures): Query/fragment encoding, percent escaping, component validation
-4. **Timeouts** (6 failures): Write/connect/pool timeout exception type mapping
-5. **Event hooks** (6 failures): Hooks not firing on redirect responses
-6. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
+1. **Client auth** (11 failures): Basic auth in URL, custom auth, netrc, digest trio edge cases
+2. **URL edge cases** (7 failures): Query/fragment encoding, percent escaping, component validation
+3. **Timeouts** (6 failures): Write/connect/pool timeout exception type mapping
+4. **Event hooks** (6 failures): Hooks not firing on redirect responses
+5. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
+6. **Cookies** (4 failures): Domain/path support, repr formatting
 
 ### Known Issues (Priority Order)
-1. **ResponseNotRead**: Need to raise when accessing `.content` on streamed response (M)
-2. **Async iterator streaming**: Support async iterator content in requests (M)
-3. **Server extensions**: `http_version` extension missing from response (L)
-4. **Timeout exceptions**: Map Rust timeout errors to ConnectTimeout/WriteTimeout/PoolTimeout (L)
-5. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
-6. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
-7. **URL auth extraction**: Parse and strip basic auth credentials from URL (M)
-8. **Netrc support**: Parse netrc file for auth credentials (M)
-9. **Custom auth**: Auth generator protocol needs proper response body access (M)
-10. **Header case**: Preserve original header case in some contexts (L)
+1. **Timeout exceptions**: Map Rust timeout errors to ConnectTimeout/WriteTimeout/PoolTimeout (L)
+2. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
+3. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+4. **URL auth extraction**: Parse and strip basic auth credentials from URL (M)
+5. **Netrc support**: Parse netrc file for auth credentials (M)
+6. **Custom auth**: Auth generator protocol needs proper response body access (M)
+7. **Headers explicit encoding**: Lazy re-decode when encoding property is changed (M)
