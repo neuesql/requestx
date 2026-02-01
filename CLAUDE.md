@@ -150,9 +150,11 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 64 failed / 1342 passed / 1 skipped (Total: 1407)
+## Test Status: 54 failed / 1352 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **AsyncClient streaming** (52/52 tests passing): ResponseNotRead, StreamClosed, async iterator content, MockTransport, http_version extensions
+- **Response pickling** (106/106 tests passing): Streaming responses correctly raise StreamClosed after unpickling
 - **Client params**: Client now supports `params` constructor argument with proper QueryParams merging
 - **Module exports**: Fixed `__all__` to be case-insensitively sorted, hidden internal imports
 - **DigestAuth** (8/8 tests passing): Full RFC 2069/7616 compliance, nonce counting, cookie preservation
@@ -166,38 +168,38 @@ pytest tests_requestx/ -v  # ALL PASSED
 - Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars
 - Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
 
-| ID | Test File | Tests (F/P) | Features | Status | Priority | Effort |
-|----|-----------|-------------|----------|--------|----------|--------|
-| 1 | client/test_auth.py | 13/66 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
-| 2 | client/test_async_client.py | 8/44 | ResponseNotRead, async iterator, http_version | 🟡 Partial | P0 | M |
-| 3 | models/test_url.py | 7/83 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
-| 4 | test_timeouts.py | 6/4 | Write/connect/pool timeout exception types | 🟡 Partial | P1 | L |
-| 5 | client/test_event_hooks.py | 6/3 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
-| 6 | client/test_redirects.py | 5/26 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
-| 7 | client/test_client.py | 4/31 | Raw header, server extensions, autodetect encoding | 🟡 Partial | P0 | M |
-| 8 | models/test_cookies.py | 4/3 | Domain/path support, repr | 🟡 Partial | P2 | M |
-| 9 | test_api.py | 2/10 | Iterator content in top-level API | 🟢 Mostly | P2 | L |
-| 10 | models/test_headers.py | 2/25 | Encoding in repr, explicit decode | 🟢 Mostly | P2 | L |
-| 11 | client/test_headers.py | 2/15 | Host header with port | 🟢 Mostly | P2 | L |
-| 12 | test_multipart.py | 1/37 | Non-seekable file-like | 🟢 Mostly | P2 | M |
-| 13 | models/test_responses.py | 1/105 | Response pickling | 🟢 Mostly | P2 | M |
-| 14 | test_config.py | 1/27 | SSLContext with request | 🟢 Mostly | P2 | M |
-| 15 | client/test_properties.py | 1/7 | Client headers case | 🟢 Mostly | P2 | L |
-| 16 | test_exceptions.py | 1/2 | Request attribute on exception | 🟢 Mostly | P2 | L |
-| 17 | test_auth.py | 0/8 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - | - |
-| 18 | client/test_queryparams.py | 0/3 | Client query params | ✅ Done | - | - |
-| 19 | test_exported_members.py | 0/1 | Module exports | ✅ Done | - | - |
-| 20 | test_content.py | 0/43 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
-| 21 | models/test_requests.py | 0/24 | Request.stream, pickle, generators | ✅ Done | - | - |
-| 22 | client/test_proxies.py | 0/69 | Proxy env vars | ✅ Done | - | - |
-| 23 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - | - |
-| 24 | test_decoders.py | 0/40 | gzip/brotli/zstd/deflate | ✅ Done | - | - |
-| 25 | test_utils.py | 0/40 | guess_json_utf, BOM | ✅ Done | - | - |
-| 26 | test_asgi.py | 0/24 | ASGITransport | ✅ Done | - | - |
-| 27 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - | - |
-| 28 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - | - |
-| 29 | client/test_cookies.py | 0/7 | Cookie jar, persistence | ✅ Done | - | - |
-| 30 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - | - |
+| ID | Test File | Failed | Features | Status | Priority | Effort |
+|----|-----------|--------|----------|--------|----------|--------|
+| 1 | client/test_auth.py | 13 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
+| 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
+| 3 | models/test_url.py | 7 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
+| 4 | test_timeouts.py | 6 | Write/connect/pool timeout exception types | 🟡 Partial | P1 | L |
+| 5 | client/test_event_hooks.py | 6 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
+| 6 | client/test_redirects.py | 5 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
+| 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
+| 8 | models/test_cookies.py | 4 | Domain/path support, repr | 🟡 Partial | P2 | M |
+| 9 | test_api.py | 2 | Iterator content in top-level API | 🟢 Mostly | P2 | L |
+| 10 | models/test_headers.py | 2 | Encoding in repr, explicit decode | 🟢 Mostly | P2 | L |
+| 11 | client/test_headers.py | 2 | Host header with port | 🟢 Mostly | P2 | L |
+| 12 | test_multipart.py | 1 | Non-seekable file-like | 🟢 Mostly | P2 | M |
+| 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
+| 14 | test_config.py | 1 | SSLContext with request | 🟢 Mostly | P2 | M |
+| 15 | client/test_properties.py | 1 | Client headers case | 🟢 Mostly | P2 | L |
+| 16 | test_exceptions.py | 1 | Request attribute on exception | 🟢 Mostly | P2 | L |
+| 17 | test_auth.py | 0 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - | - |
+| 18 | client/test_queryparams.py | 0 | Client query params | ✅ Done | - | - |
+| 19 | test_exported_members.py | 0 | Module exports | ✅ Done | - | - |
+| 20 | test_content.py | 0 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
+| 21 | models/test_requests.py | 0 | Request.stream, pickle, generators | ✅ Done | - | - |
+| 22 | client/test_proxies.py | 0 | Proxy env vars | ✅ Done | - | - |
+| 23 | models/test_whatwg.py | 0 | WHATWG URL parsing | ✅ Done | - | - |
+| 24 | test_decoders.py | 0 | gzip/brotli/zstd/deflate | ✅ Done | - | - |
+| 25 | test_utils.py | 0 | guess_json_utf, BOM | ✅ Done | - | - |
+| 26 | test_asgi.py | 0 | ASGITransport | ✅ Done | - | - |
+| 27 | models/test_queryparams.py | 0 | set(), add(), remove() | ✅ Done | - | - |
+| 28 | test_wsgi.py | 0 | WSGI transport | ✅ Done | - | - |
+| 29 | client/test_cookies.py | 0 | Cookie jar, persistence | ✅ Done | - | - |
+| 30 | test_status_codes.py | 0 | Status codes | ✅ Done | - | - |
 
 **Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 

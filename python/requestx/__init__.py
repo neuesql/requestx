@@ -66,8 +66,8 @@ from ._core import (
     Auth as _Auth,
     FunctionAuth as _FunctionAuth,
     # Transport types
-    MockTransport,
-    AsyncMockTransport,
+    MockTransport as _RustMockTransport,
+    AsyncMockTransport as _RustAsyncMockTransport,
     HTTPTransport,
     AsyncHTTPTransport,
     WSGITransport,
@@ -397,6 +397,50 @@ class AsyncBaseTransport:
 
     async def handle_async_request(self, request):
         raise NotImplementedError("Subclasses must implement handle_async_request()")
+
+
+class MockTransport(AsyncBaseTransport):
+    """Mock transport for testing - calls a handler function to generate responses.
+
+    This is a Python wrapper around the Rust MockTransport that properly preserves
+    Response objects with streams.
+    """
+
+    def __init__(self, handler=None):
+        self._handler = handler
+        self._rust_transport = _RustMockTransport(handler)
+
+    def handle_request(self, request):
+        """Handle a sync request by calling the handler."""
+        if self._handler is None:
+            return Response(200)
+        result = self._handler(request)
+        if isinstance(result, Response):
+            return result
+        elif isinstance(result, _Response):
+            return Response(result)
+        return Response(result)
+
+    async def handle_async_request(self, request):
+        """Handle an async request by calling the handler."""
+        import inspect
+        if self._handler is None:
+            return Response(200)
+        result = self._handler(request)
+        if inspect.iscoroutine(result):
+            result = await result
+        if isinstance(result, Response):
+            return result
+        elif isinstance(result, _Response):
+            return Response(result)
+        return Response(result)
+
+    def __repr__(self):
+        return "<MockTransport>"
+
+
+# AsyncMockTransport is an alias for MockTransport (it handles both sync and async)
+AsyncMockTransport = MockTransport
 
 
 class ASGITransport(AsyncBaseTransport):
@@ -1309,6 +1353,8 @@ class Response:
         self._is_stream = False  # Track if this is a streaming response
         self._unpickled_stream_not_read = False  # Track if unpickled from unread stream
         self._text_accessed = False  # Track if .text was accessed
+        self._stream_not_read = False  # Track if streaming response needs aread() before accessing content
+        self._stream_object = None  # Reference to stream object for aclose()
 
         # Handle status_code as keyword argument
         if status_code is not None and status_code_or_response is None:
@@ -1325,6 +1371,33 @@ class Response:
         if isinstance(status_code_or_response, _Response):
             self._response = status_code_or_response
         else:
+            # Handle stream parameter (AsyncByteStream or similar)
+            # If stream is provided, it takes precedence over content
+            if stream is not None and content is None:
+                # Check if stream is an async iterator
+                if hasattr(stream, '__aiter__'):
+                    self._stream_content = stream
+                    self._is_stream = True
+                    self._stream_object = stream  # Keep reference for aclose()
+                    self._response = _Response(
+                        status_code_or_response,
+                        content=b'',
+                        headers=headers,
+                        request=rust_request,
+                    )
+                    return
+                elif hasattr(stream, '__iter__'):
+                    self._sync_stream_content = stream
+                    self._is_stream = True
+                    self._stream_object = stream  # Keep reference for close()
+                    self._response = _Response(
+                        status_code_or_response,
+                        content=b'',
+                        headers=headers,
+                        request=rust_request,
+                    )
+                    return
+
             # Check if content is an async iterator or sync iterator
             is_async_iter = hasattr(content, '__aiter__') and hasattr(content, '__anext__')
             # Check for sync iterator/iterable (has __iter__ but not a built-in type)
@@ -1445,18 +1518,18 @@ class Response:
     @property
     def stream(self):
         """Get the response body as a stream based on content type."""
-        # Check if stream was already consumed
-        if self._stream_consumed:
-            raise StreamConsumed()
-
         # Check if this is a sync iterator stream
         if self._sync_stream_content is not None:
             return _ResponseSyncIteratorStream(self._sync_stream_content, self)
         # Check if this is an async iterator stream
         if self._stream_content is not None:
             return _ResponseAsyncIteratorStream(self._stream_content, self)
+        # Check if stream was already consumed (but content is not available)
+        # If content is available, we can still return a ByteStream
+        if self._stream_consumed and self._raw_content is None and not self._response.content:
+            raise StreamConsumed()
         # Regular content - return dual-mode stream
-        content = self._response.content
+        content = self._raw_content if self._raw_content is not None else self._response.content
         return ByteStream(content)
 
     @property
@@ -1486,6 +1559,9 @@ class Response:
     def content(self):
         # If this was unpickled from an unread async stream, raise ResponseNotRead
         if self._unpickled_stream_not_read:
+            raise ResponseNotRead()
+        # If this is a streaming response that hasn't been read via aread(), raise ResponseNotRead
+        if self._stream_not_read:
             raise ResponseNotRead()
         if self._decoded_content is not None:
             return self._decoded_content
@@ -1766,6 +1842,7 @@ class Response:
         self._num_bytes_downloaded = 0
         self._sync_stream_content = None  # Initialize sync stream content
         self._text_accessed = False  # Text hasn't been accessed after unpickling
+        self._stream_not_read = False  # Not a live stream after unpickling
         # Track if this was an async stream that wasn't read before pickling
         self._unpickled_stream_not_read = state.get('has_stream_content') and not state['content']
         # Mark Rust response as closed/consumed (since we have the content)
@@ -1795,12 +1872,17 @@ class Response:
 
     async def aread(self):
         """Async read and return the response body."""
-        # Check if response is closed before we can read
-        if self._is_stream and self.is_closed:
-            raise StreamClosed()
         # Check if stream was already consumed via iteration
         if self._is_stream and self._stream_consumed:
             raise StreamConsumed()
+        # Check if this is an unpickled stream that wasn't read - stream is lost
+        if self._unpickled_stream_not_read:
+            raise StreamClosed()
+        # Check if response is closed before we can read (only for true async streams)
+        if self._stream_content is not None and self.is_closed:
+            raise StreamClosed()
+        # Clear the stream_not_read flag since we're reading now
+        self._stream_not_read = False
         # If we have a pending async stream, consume it
         if self._stream_content is not None:
             chunks = []
@@ -2915,6 +2997,24 @@ class AsyncClient:
                     # Build the redirect request
                     response._next_request = self._build_redirect_request(request, response)
 
+            # If response has a stream that hasn't been read, read it now
+            # This ensures exceptions during iteration are raised and stream is closed
+            if response._stream_content is not None:
+                stream_obj = getattr(response, '_stream_object', None)
+                try:
+                    chunks = []
+                    async for chunk in response._stream_content:
+                        chunks.append(chunk)
+                    response._raw_content = b''.join(chunks)
+                    response._stream_content = None
+                    response._stream_consumed = True
+                    response._response._set_content(response._raw_content)
+                except BaseException:
+                    # Close the stream on any exception (including KeyboardInterrupt)
+                    if stream_obj is not None and hasattr(stream_obj, 'aclose'):
+                        await stream_obj.aclose()
+                    raise
+
             return response
         else:
             # Use the Rust client's send
@@ -3184,6 +3284,12 @@ class AsyncClient:
                 raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
             if hasattr(content, '__next__') and hasattr(content, '__iter__') and not isinstance(content, (str, bytes, bytearray)):
                 raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
+            # Handle async iterators/generators - consume them to bytes
+            if inspect.isasyncgen(content) or (hasattr(content, '__aiter__') and hasattr(content, '__anext__')):
+                chunks = []
+                async for chunk in content:
+                    chunks.append(chunk)
+                content = b''.join(chunks)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
 
         # If we have a custom transport, route through _send_single_request
@@ -3419,6 +3525,9 @@ class AsyncClient:
                 response = await self.request(method, url, content=content, data=data, files=files,
                                             json=json, params=params, headers=headers, cookies=cookies,
                                             auth=auth, follow_redirects=follow_redirects, timeout=timeout)
+            # Mark as a streaming response that requires aread() before content access
+            response._stream_not_read = True
+            response._is_stream = True
             yield response
         finally:
             # Cleanup if needed

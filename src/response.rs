@@ -18,6 +18,8 @@ pub struct Response {
     url: Option<URL>,
     request: Option<Request>,
     http_version: String,
+    /// Whether http_version was set from a real HTTP response (vs default)
+    has_real_http_version: bool,
     history: Vec<Response>,
     is_closed: bool,
     is_stream_consumed: bool,
@@ -40,6 +42,7 @@ impl Clone for Response {
             url: self.url.clone(),
             request: self.request.clone(),
             http_version: self.http_version.clone(),
+            has_real_http_version: self.has_real_http_version,
             history: self.history.clone(),
             is_closed: self.is_closed,
             is_stream_consumed: self.is_stream_consumed,
@@ -62,6 +65,7 @@ impl Response {
             url: None,
             request: None,
             http_version: "HTTP/1.1".to_string(),
+            has_real_http_version: false,
             history: Vec::new(),
             is_closed: false,
             is_stream_consumed: false,
@@ -108,6 +112,7 @@ impl Response {
             url,
             request,
             http_version,
+            has_real_http_version: true,
             history: Vec::new(),
             is_closed: true,
             is_stream_consumed: true,
@@ -144,6 +149,7 @@ impl Response {
             url,
             request,
             http_version,
+            has_real_http_version: true,
             history: Vec::new(),
             is_closed: true,
             is_stream_consumed: true,
@@ -508,8 +514,17 @@ impl Response {
     }
 
     #[getter]
-    fn extensions(&self) -> std::collections::HashMap<String, PyObject> {
-        std::collections::HashMap::new()
+    fn extensions(&self, py: Python<'_>) -> std::collections::HashMap<String, PyObject> {
+        let mut extensions = std::collections::HashMap::new();
+        // Only add http_version if it was set from a real HTTP response
+        if self.has_real_http_version {
+            let version_bytes = self.http_version.as_bytes().to_vec();
+            extensions.insert(
+                "http_version".to_string(),
+                PyBytes::new(py, &version_bytes).into_any().unbind(),
+            );
+        }
+        extensions
     }
 
     /// Parse Link headers and return a dict of link relations
