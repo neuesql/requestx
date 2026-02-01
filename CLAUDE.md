@@ -150,7 +150,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 65 failed / 1341 passed / 1 skipped (Total: 1407)
+## Test Status: 64 failed / 1342 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
 - **Client params**: Client now supports `params` constructor argument with proper QueryParams merging
@@ -166,51 +166,57 @@ pytest tests_requestx/ -v  # ALL PASSED
 - Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars
 - Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
 
-| ID | Test File | Tests (F/P) | Features | Status | Priority |
-|----|-----------|-------------|----------|--------|----------|
-| 1 | client/test_async_client.py | 8/44 | Async streaming, build_request, transport | 🟡 Partial | P0 |
-| 2 | client/test_auth.py | 12/67 | Basic/Digest auth, custom auth, netrc | 🟡 Partial | P0 |
-| 3 | client/test_client.py | 4/31 | build_request, transport, URL merge | 🟡 Partial | P0 |
-| 4 | models/test_url.py | 7/83 | RFC3986 compliance, IDNA, IPv6 | 🟢 Mostly | P1 |
-| 5 | test_timeouts.py | 6/4 | Read/write/connect/pool timeout | 🟡 Partial | P1 |
-| 6 | client/test_event_hooks.py | 6/3 | Hooks on redirects | 🟡 Partial | P2 |
-| 7 | client/test_redirects.py | 5/26 | history, next_request, streaming body | 🟢 Mostly | P1 |
-| 8 | models/test_cookies.py | 4/3 | Domain/path support, repr | 🟡 Partial | P2 |
-| 9 | test_auth.py | 0/8 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - |
-| 10 | client/test_queryparams.py | 0/3 | Client query params | ✅ Done | - |
-| 11 | test_api.py | 2/10 | Iterator content | 🟢 Mostly | P2 |
-| 12 | models/test_headers.py | 2/25 | Header encoding, repr | 🟢 Mostly | P2 |
-| 13 | client/test_headers.py | 2/15 | Host header with port | 🟢 Mostly | P2 |
-| 14 | test_multipart.py | 1/37 | Non-seekable file-like | 🟢 Mostly | P2 |
-| 15 | models/test_responses.py | 1/105 | Response pickling | 🟢 Mostly | P2 |
-| 16 | test_config.py | 1/27 | SSLContext with request | 🟢 Mostly | P2 |
-| 17 | client/test_properties.py | 1/7 | Client headers | 🟢 Mostly | P2 |
-| 18 | test_exported_members.py | 0/1 | Module exports | ✅ Done | - |
-| 19 | test_exceptions.py | 1/2 | Request attribute | 🟢 Mostly | P2 |
-| 20 | test_content.py | 0/43 | Stream markers, async iterators, bytesio | ✅ Done | - |
-| 21 | models/test_requests.py | 0/24 | Request.stream, pickle, generators | ✅ Done | - |
-| 22 | client/test_proxies.py | 0/69 | Proxy env vars | ✅ Done | - |
-| 23 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - |
-| 24 | test_decoders.py | 0/40 | gzip/brotli/zstd/deflate | ✅ Done | - |
-| 25 | test_utils.py | 0/40 | guess_json_utf, BOM | ✅ Done | - |
-| 26 | test_asgi.py | 0/24 | ASGITransport | ✅ Done | - |
-| 27 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - |
-| 28 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - |
-| 29 | client/test_cookies.py | 0/7 | Cookie jar, persistence | ✅ Done | - |
-| 30 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - |
+| ID | Test File | Tests (F/P) | Features | Status | Priority | Effort |
+|----|-----------|-------------|----------|--------|----------|--------|
+| 1 | client/test_auth.py | 13/66 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
+| 2 | client/test_async_client.py | 8/44 | ResponseNotRead, async iterator, http_version | 🟡 Partial | P0 | M |
+| 3 | models/test_url.py | 7/83 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
+| 4 | test_timeouts.py | 6/4 | Write/connect/pool timeout exception types | 🟡 Partial | P1 | L |
+| 5 | client/test_event_hooks.py | 6/3 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
+| 6 | client/test_redirects.py | 5/26 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
+| 7 | client/test_client.py | 4/31 | Raw header, server extensions, autodetect encoding | 🟡 Partial | P0 | M |
+| 8 | models/test_cookies.py | 4/3 | Domain/path support, repr | 🟡 Partial | P2 | M |
+| 9 | test_api.py | 2/10 | Iterator content in top-level API | 🟢 Mostly | P2 | L |
+| 10 | models/test_headers.py | 2/25 | Encoding in repr, explicit decode | 🟢 Mostly | P2 | L |
+| 11 | client/test_headers.py | 2/15 | Host header with port | 🟢 Mostly | P2 | L |
+| 12 | test_multipart.py | 1/37 | Non-seekable file-like | 🟢 Mostly | P2 | M |
+| 13 | models/test_responses.py | 1/105 | Response pickling | 🟢 Mostly | P2 | M |
+| 14 | test_config.py | 1/27 | SSLContext with request | 🟢 Mostly | P2 | M |
+| 15 | client/test_properties.py | 1/7 | Client headers case | 🟢 Mostly | P2 | L |
+| 16 | test_exceptions.py | 1/2 | Request attribute on exception | 🟢 Mostly | P2 | L |
+| 17 | test_auth.py | 0/8 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - | - |
+| 18 | client/test_queryparams.py | 0/3 | Client query params | ✅ Done | - | - |
+| 19 | test_exported_members.py | 0/1 | Module exports | ✅ Done | - | - |
+| 20 | test_content.py | 0/43 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
+| 21 | models/test_requests.py | 0/24 | Request.stream, pickle, generators | ✅ Done | - | - |
+| 22 | client/test_proxies.py | 0/69 | Proxy env vars | ✅ Done | - | - |
+| 23 | models/test_whatwg.py | 0/563 | WHATWG URL parsing | ✅ Done | - | - |
+| 24 | test_decoders.py | 0/40 | gzip/brotli/zstd/deflate | ✅ Done | - | - |
+| 25 | test_utils.py | 0/40 | guess_json_utf, BOM | ✅ Done | - | - |
+| 26 | test_asgi.py | 0/24 | ASGITransport | ✅ Done | - | - |
+| 27 | models/test_queryparams.py | 0/14 | set(), add(), remove() | ✅ Done | - | - |
+| 28 | test_wsgi.py | 0/12 | WSGI transport | ✅ Done | - | - |
+| 29 | client/test_cookies.py | 0/7 | Cookie jar, persistence | ✅ Done | - | - |
+| 30 | test_status_codes.py | 0/6 | Status codes | ✅ Done | - | - |
+
+**Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
 ### Top Failing Categories
-1. **Client auth** (12 failures): Basic auth in URL, custom auth, netrc
-2. **Async client** (8 failures): Stream content access, async iterator streaming, server extensions
-3. **URL edge cases** (7 failures): Path encoding, percent escaping, invalid components
-4. **Event hooks** (6 failures): Hooks on redirects not firing properly
-5. **Timeouts** (6 failures): Connect/write/pool timeout exception types
-6. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookies
+1. **Client auth** (13 failures): Basic auth in URL, custom auth, netrc, digest trio edge cases
+2. **Async client** (8 failures): ResponseNotRead on streamed, async iterator streaming, http_version
+3. **URL edge cases** (7 failures): Query/fragment encoding, percent escaping, component validation
+4. **Timeouts** (6 failures): Write/connect/pool timeout exception type mapping
+5. **Event hooks** (6 failures): Hooks not firing on redirect responses
+6. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
 
 ### Known Issues (Priority Order)
-1. **ResponseNotRead**: Need to raise when accessing content on streamed response
-2. **Async iterator streaming**: Support async iterator content in requests
-3. **Server extensions**: http_version extension missing
-4. **Header case preservation**: Headers are lowercased but tests expect original case
-5. **Encoding detection**: default_encoding callable not being used for autodetection
-6. **Timeout exceptions**: Need to raise correct exception types (ReadTimeout, ConnectTimeout, etc.)
+1. **ResponseNotRead**: Need to raise when accessing `.content` on streamed response (M)
+2. **Async iterator streaming**: Support async iterator content in requests (M)
+3. **Server extensions**: `http_version` extension missing from response (L)
+4. **Timeout exceptions**: Map Rust timeout errors to ConnectTimeout/WriteTimeout/PoolTimeout (L)
+5. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
+6. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+7. **URL auth extraction**: Parse and strip basic auth credentials from URL (M)
+8. **Netrc support**: Parse netrc file for auth credentials (M)
+9. **Custom auth**: Auth generator protocol needs proper response body access (M)
+10. **Header case**: Preserve original header case in some contexts (L)
