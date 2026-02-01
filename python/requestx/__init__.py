@@ -139,22 +139,78 @@ class TransportError(RequestError):
     pass
 
 
-# Use Rust exception classes directly for proper inheritance chain
-# These are imported from _core with underscore prefix, now re-export as main classes
-TimeoutException = _TimeoutException
-ConnectTimeout = _ConnectTimeout
-ReadTimeout = _ReadTimeout
-WriteTimeout = _WriteTimeout
-PoolTimeout = _PoolTimeout
-NetworkError = _NetworkError
-ConnectError = _ConnectError
-ReadError = _ReadError
-WriteError = _WriteError
-CloseError = _CloseError
-ProxyError = _ProxyError
-ProtocolError = _ProtocolError
-LocalProtocolError = _LocalProtocolError
-RemoteProtocolError = _RemoteProtocolError
+# Exception classes with request attribute support
+# These wrap the Rust exceptions to add the request property
+
+
+class TimeoutException(TransportError):
+    """Base class for timeout exceptions."""
+    pass
+
+
+class ConnectTimeout(TimeoutException):
+    """Timeout during connection."""
+    pass
+
+
+class ReadTimeout(TimeoutException):
+    """Timeout while reading response."""
+    pass
+
+
+class WriteTimeout(TimeoutException):
+    """Timeout while writing request."""
+    pass
+
+
+class PoolTimeout(TimeoutException):
+    """Timeout waiting for connection pool."""
+    pass
+
+
+class NetworkError(TransportError):
+    """Network-related errors."""
+    pass
+
+
+class ConnectError(NetworkError):
+    """Error connecting to host."""
+    pass
+
+
+class ReadError(NetworkError):
+    """Error reading from connection."""
+    pass
+
+
+class WriteError(NetworkError):
+    """Error writing to connection."""
+    pass
+
+
+class CloseError(NetworkError):
+    """Error closing connection."""
+    pass
+
+
+class ProxyError(TransportError):
+    """Proxy-related errors."""
+    pass
+
+
+class ProtocolError(TransportError):
+    """Protocol-related errors."""
+    pass
+
+
+class LocalProtocolError(ProtocolError):
+    """Local protocol error."""
+    pass
+
+
+class RemoteProtocolError(ProtocolError):
+    """Remote protocol error."""
+    pass
 
 
 class UnsupportedProtocol(TransportError):
@@ -256,6 +312,29 @@ def _convert_exception(exc):
 # Top-level API functions with exception conversion
 # ============================================================================
 
+
+def _prepare_content(kwargs):
+    """Prepare content argument, consuming iterators/generators to bytes."""
+    import inspect
+    import types
+    content = kwargs.get('content')
+    if content is not None:
+        # Check if it's a generator or iterator (but not bytes, str, or file-like)
+        if isinstance(content, types.GeneratorType):
+            # Consume generator to bytes
+            kwargs['content'] = b''.join(content)
+        elif hasattr(content, '__iter__') and hasattr(content, '__next__'):
+            # It's an iterator - consume it
+            kwargs['content'] = b''.join(content)
+        elif hasattr(content, '__iter__') and not isinstance(content, (bytes, str, list, tuple, dict)):
+            # It's an iterable object (like SyncByteStream) - consume it
+            try:
+                kwargs['content'] = b''.join(content)
+            except TypeError:
+                pass  # Let Rust handle it if join fails
+    return kwargs
+
+
 def get(url, **kwargs):
     """Send a GET request."""
     try:
@@ -270,6 +349,7 @@ def get(url, **kwargs):
 def post(url, **kwargs):
     """Send a POST request."""
     try:
+        kwargs = _prepare_content(kwargs)
         return _post(url, **kwargs)
     except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
             _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
@@ -281,6 +361,7 @@ def post(url, **kwargs):
 def put(url, **kwargs):
     """Send a PUT request."""
     try:
+        kwargs = _prepare_content(kwargs)
         return _put(url, **kwargs)
     except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
             _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
@@ -292,6 +373,7 @@ def put(url, **kwargs):
 def patch(url, **kwargs):
     """Send a PATCH request."""
     try:
+        kwargs = _prepare_content(kwargs)
         return _patch(url, **kwargs)
     except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
             _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
@@ -3535,10 +3617,19 @@ class AsyncClient:
 
 
 # Wrap sync Client to support auth=None vs auth not specified
-class _HeadersProxy:
-    """Proxy object that wraps Headers and syncs changes back to the client."""
+class _HeadersProxy(Headers):
+    """Proxy object that wraps Headers and syncs changes back to the client.
+
+    Inherits from Headers to pass isinstance checks while proxying to client headers.
+    """
+
+    def __new__(cls, client):
+        # Use Headers.__new__ as required by PyO3 subclasses
+        instance = Headers.__new__(cls)
+        return instance
 
     def __init__(self, client):
+        # Don't call super().__init__() - we're proxying, not wrapping
         self._client = client
         self._headers = client._client.headers
 
@@ -3941,12 +4032,17 @@ class Client:
 
     @property
     def headers(self):
-        # Create a new proxy each time to ensure it has the latest headers
-        return _HeadersProxy(self)
+        # Return a proxy that syncs changes back to the client
+        # Use cached proxy if available, but refresh if underlying headers changed
+        if not hasattr(self, '_headers_proxy') or self._headers_proxy is None:
+            self._headers_proxy = _HeadersProxy(self)
+        return self._headers_proxy
 
     @headers.setter
     def headers(self, value):
         self._client.headers = value
+        # Clear cached proxy so it gets refreshed on next access
+        self._headers_proxy = None
 
     @property
     def cookies(self):

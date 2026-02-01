@@ -150,9 +150,13 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 54 failed / 1352 passed / 1 skipped (Total: 1407)
+## Test Status: 49 failed / 1357 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **Exception request attribute**: All exceptions now have `request` property that raises RuntimeError when not set
+- **Client headers isinstance**: `_HeadersProxy` now inherits from Headers, passing isinstance checks
+- **Top-level API iterators**: `post()`, `put()`, `patch()` now consume generators/iterators before passing to Rust
+- **Headers repr encoding**: Repr now includes encoding suffix when not 'ascii'
 - **AsyncClient streaming** (52/52 tests passing): ResponseNotRead, StreamClosed, async iterator content, MockTransport, http_version extensions
 - **Response pickling** (106/106 tests passing): Streaming responses correctly raise StreamClosed after unpickling
 - **Client params**: Client now supports `params` constructor argument with proper QueryParams merging
@@ -178,14 +182,14 @@ pytest tests_requestx/ -v  # ALL PASSED
 | 6 | client/test_redirects.py | 5 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
 | 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
 | 8 | models/test_cookies.py | 4 | Domain/path support, repr | 🟡 Partial | P2 | M |
-| 9 | test_api.py | 2 | Iterator content in top-level API | 🟢 Mostly | P2 | L |
-| 10 | models/test_headers.py | 2 | Encoding in repr, explicit decode | 🟢 Mostly | P2 | L |
-| 11 | client/test_headers.py | 2 | Host header with port | 🟢 Mostly | P2 | L |
+| 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
+| 10 | models/test_headers.py | 1 | Explicit encoding decode | 🟢 Mostly | P2 | M |
+| 11 | client/test_headers.py | 2 | Auth extraction from URL | 🟢 Mostly | P2 | M |
 | 12 | test_multipart.py | 1 | Non-seekable file-like | 🟢 Mostly | P2 | M |
 | 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
 | 14 | test_config.py | 1 | SSLContext with request | 🟢 Mostly | P2 | M |
-| 15 | client/test_properties.py | 1 | Client headers case | 🟢 Mostly | P2 | L |
-| 16 | test_exceptions.py | 1 | Request attribute on exception | 🟢 Mostly | P2 | L |
+| 15 | client/test_properties.py | 0 | Client headers case | ✅ Done | - | - |
+| 16 | test_exceptions.py | 0 | Request attribute on exception | ✅ Done | - | - |
 | 17 | test_auth.py | 0 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - | - |
 | 18 | client/test_queryparams.py | 0 | Client query params | ✅ Done | - | - |
 | 19 | test_exported_members.py | 0 | Module exports | ✅ Done | - | - |

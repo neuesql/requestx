@@ -48,7 +48,7 @@ fn extract_key_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
 }
 
 /// HTTP Headers with case-insensitive keys
-#[pyclass(name = "Headers")]
+#[pyclass(name = "Headers", subclass)]
 #[derive(Clone, Debug, Default)]
 pub struct Headers {
     /// Store headers as list of (name, value) tuples to preserve order and duplicates
@@ -442,13 +442,20 @@ impl Headers {
             }
         };
 
+        // Build the encoding suffix if not ascii
+        let encoding_suffix = if self.encoding != "ascii" {
+            format!(", encoding='{}'", self.encoding)
+        } else {
+            String::new()
+        };
+
         if self.from_dict {
             let items: Vec<String> = self
                 .inner
                 .iter()
                 .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
                 .collect();
-            format!("Headers({{{}}})", items.join(", "))
+            format!("Headers({{{}}}{})", items.join(", "), encoding_suffix)
         } else {
             // Check if we have duplicate keys - if so, use list format
             let mut seen = std::collections::HashSet::new();
@@ -460,7 +467,7 @@ impl Headers {
                     .iter()
                     .map(|(k, v)| format!("('{}', '{}')", k, mask_value(k, v)))
                     .collect();
-                format!("Headers([{}])", items.join(", "))
+                format!("Headers([{}]{})", items.join(", "), encoding_suffix)
             } else {
                 // Single values per key - use dict format
                 let items: Vec<String> = self
@@ -468,7 +475,7 @@ impl Headers {
                     .iter()
                     .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
                     .collect();
-                format!("Headers({{{}}})", items.join(", "))
+                format!("Headers({{{}}}{})", items.join(", "), encoding_suffix)
             }
         }
     }
