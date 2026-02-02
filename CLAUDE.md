@@ -150,9 +150,10 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 44 failed / 1362 passed / 1 skipped (Total: 1407)
+## Test Status: 31 failed / 1375 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **Auth improvements** (79/79 tests passing): Basic auth in URL, custom auth callables, NetRCAuth, RepeatAuth generator flow, ResponseBodyAuth, streaming body digest auth, MockTransport handler property
 - **Timeout exception types** (10/10 tests passing): ConnectTimeout, WriteTimeout, ReadTimeout now properly classified using timeout context
 - **URL fragment decoding**: Fragments are now properly percent-decoded when returned
 - **Limits support**: AsyncClient now accepts `limits` parameter for connection pool configuration
@@ -177,23 +178,23 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 | ID | Test File | Failed | Features | Status | Priority | Effort |
 |----|-----------|--------|----------|--------|----------|--------|
-| 1 | client/test_auth.py | 11 | Basic auth URL, custom auth, netrc, digest trio | 🟡 Partial | P0 | H |
+| 1 | client/test_auth.py | 0 | Basic auth URL, custom auth, netrc, digest, streaming | ✅ Done | - | - |
 | 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
-| 3 | models/test_url.py | 7 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
-| 4 | test_timeouts.py | 0 | Write/connect/pool timeout exception types | ✅ Done | - | - |
+| 3 | models/test_url.py | 6 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
+| 4 | test_timeouts.py | 2 | Pool timeout not firing | 🟢 Mostly | P2 | M |
 | 5 | client/test_event_hooks.py | 6 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
 | 6 | client/test_redirects.py | 5 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
 | 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
 | 8 | models/test_cookies.py | 4 | Domain/path support, repr | 🟡 Partial | P2 | M |
 | 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
 | 10 | models/test_headers.py | 1 | Explicit encoding decode | 🟢 Mostly | P2 | M |
-| 11 | client/test_headers.py | 2 | Auth extraction from URL | 🟢 Mostly | P2 | M |
+| 11 | client/test_headers.py | 0 | Auth extraction from URL | ✅ Done | - | - |
 | 12 | test_multipart.py | 1 | Non-seekable file-like | 🟢 Mostly | P2 | M |
 | 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
 | 14 | test_config.py | 1 | SSLContext with request | 🟢 Mostly | P2 | M |
 | 15 | client/test_properties.py | 0 | Client headers case | ✅ Done | - | - |
 | 16 | test_exceptions.py | 0 | Request attribute on exception | ✅ Done | - | - |
-| 17 | test_auth.py | 0 | Digest auth nonce, RFC 7616, cookies | ✅ Done | - | - |
+| 17 | test_auth.py | 2 | Digest auth RFC 7616 cnonce format | 🟢 Mostly | P2 | M |
 | 18 | client/test_queryparams.py | 0 | Client query params | ✅ Done | - | - |
 | 19 | test_exported_members.py | 0 | Module exports | ✅ Done | - | - |
 | 20 | test_content.py | 0 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
@@ -211,16 +212,16 @@ pytest tests_requestx/ -v  # ALL PASSED
 **Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
 ### Top Failing Categories
-1. **Client auth** (11 failures): Basic auth in URL, custom auth, netrc, digest trio edge cases
-2. **URL edge cases** (6 failures): Query encoding, percent escape host, validation
-3. **Event hooks** (6 failures): Hooks not firing on redirect responses
-4. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
-5. **Cookies** (4 failures): Domain/path support, repr formatting
+1. **URL edge cases** (6 failures): Query encoding, percent escape host, validation
+2. **Event hooks** (6 failures): Hooks not firing on redirect responses
+3. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
+4. **Cookies** (4 failures): Domain/path support, repr formatting
+5. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
 
 ### Known Issues (Priority Order)
 1. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
-3. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
-4. **URL auth extraction**: Parse and strip basic auth credentials from URL (M)
+2. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+3. **Cookie domain/path**: Cookie matching with domain and path constraints (M)
 5. **Netrc support**: Parse netrc file for auth credentials (M)
 6. **Custom auth**: Auth generator protocol needs proper response body access (M)
 7. **Headers explicit encoding**: Lazy re-decode when encoding property is changed (M)
