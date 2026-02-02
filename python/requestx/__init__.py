@@ -492,6 +492,11 @@ class MockTransport(AsyncBaseTransport):
         self._handler = handler
         self._rust_transport = _RustMockTransport(handler)
 
+    @property
+    def handler(self):
+        """Public access to the handler function."""
+        return self._handler
+
     def handle_request(self, request):
         """Handle a sync request by calling the handler."""
         if self._handler is None:
@@ -1121,9 +1126,11 @@ class _ResponseAsyncIteratorStream:
 class _WrappedRequest:
     """Wrapper for Rust Request that provides mutable headers."""
 
-    def __init__(self, rust_request):
+    def __init__(self, rust_request, async_stream=None):
         self._rust_request = rust_request
         self._headers_modified = False
+        self._async_stream = async_stream  # Original async iterator if any
+        self._stream_consumed = False
 
     def __getattr__(self, name):
         return getattr(self._rust_request, name)
@@ -1141,6 +1148,49 @@ class _WrappedRequest:
 
     def get_header(self, name, default=None):
         return self._rust_request.get_header(name, default)
+
+    @property
+    def stream(self):
+        """Get the request body stream."""
+        if self._async_stream is not None:
+            # Return an AsyncByteStream wrapper that tracks consumption
+            return _WrappedAsyncByteStream(self._async_stream, self)
+        return self._rust_request.stream
+
+
+class _WrappedAsyncByteStream(AsyncByteStream):
+    """Async byte stream wrapper that tracks consumption for retry detection."""
+
+    def __init__(self, iterator, owner):
+        self._iterator = iterator
+        self._owner = owner
+        self._consumed = False
+        self._started = False
+
+    def __aiter__(self):
+        # Check if stream was already consumed (by a previous request)
+        if self._owner._stream_consumed:
+            raise StreamConsumed()
+        return self
+
+    async def __anext__(self):
+        self._started = True
+        try:
+            chunk = await self._iterator.__anext__()
+            return chunk
+        except StopAsyncIteration:
+            self._consumed = True
+            self._owner._stream_consumed = True
+            raise
+
+    async def aread(self):
+        """Read all bytes."""
+        if self._owner._stream_consumed:
+            raise StreamConsumed()
+        chunks = []
+        async for chunk in self:
+            chunks.append(chunk)
+        return b''.join(chunks)
 
 
 class _WrappedRequestHeadersProxy:
@@ -2306,7 +2356,8 @@ class DigestAuth:
         # Get client nonce
         cnonce_bytes = self._get_client_nonce(self._nonce_count, nonce.encode())
         if isinstance(cnonce_bytes, bytes):
-            cnonce = cnonce_bytes.decode('latin-1') if len(cnonce_bytes) < 50 else cnonce_bytes.hex()
+            # Always hex-encode the cnonce for proper header formatting (like httpx does)
+            cnonce = cnonce_bytes[:8].hex()  # Use first 8 bytes as hex (16 chars)
         else:
             cnonce = str(cnonce_bytes)
 
@@ -2455,16 +2506,48 @@ class NetRCAuth:
     """NetRC-based authentication with generator protocol."""
 
     def __init__(self, file=None):
-        self._auth = _NetRCAuth(file)
+        import netrc as netrc_module
+        import os
         self._file = file
+        # Parse the netrc file at construction time (like httpx does)
+        if file is None:
+            # Use default netrc file
+            netrc_path = os.path.expanduser("~/.netrc")
+            if os.path.exists(netrc_path):
+                self._netrc = netrc_module.netrc(netrc_path)
+            else:
+                self._netrc = None
+        else:
+            self._netrc = netrc_module.netrc(file)
 
     def sync_auth_flow(self, request):
         """Generator-based sync auth flow for NetRC auth."""
-        # NetRCAuth applies credentials from .netrc file
+        # Look up credentials for the request host
+        if self._netrc is not None:
+            url = request.url
+            host = url.host if hasattr(url, 'host') else str(url).split('/')[2].split(':')[0].split('@')[-1]
+            auth_info = self._netrc.authenticators(host)
+            if auth_info is not None:
+                username, _, password = auth_info
+                import base64
+                credentials = f"{username}:{password}"
+                encoded = base64.b64encode(credentials.encode()).decode('ascii')
+                request.headers["Authorization"] = f"Basic {encoded}"
         yield request
 
     async def async_auth_flow(self, request):
         """Generator-based async auth flow for NetRC auth."""
+        # Look up credentials for the request host
+        if self._netrc is not None:
+            url = request.url
+            host = url.host if hasattr(url, 'host') else str(url).split('/')[2].split(':')[0].split('@')[-1]
+            auth_info = self._netrc.authenticators(host)
+            if auth_info is not None:
+                username, _, password = auth_info
+                import base64
+                credentials = f"{username}:{password}"
+                encoded = base64.b64encode(credentials.encode()).decode('ascii')
+                request.headers["Authorization"] = f"Basic {encoded}"
         yield request
 
     def __repr__(self):
@@ -2480,10 +2563,18 @@ class FunctionAuth:
 
     def sync_auth_flow(self, request):
         """Generator-based sync auth flow."""
+        # Call the function to modify the request
+        self._func(request)
         yield request
 
     async def async_auth_flow(self, request):
         """Generator-based async auth flow."""
+        # Call the function to modify the request
+        import inspect
+        result = self._func(request)
+        # Handle case where function returns a coroutine
+        if inspect.iscoroutine(result):
+            await result
         yield request
 
     def __repr__(self):
@@ -2506,12 +2597,30 @@ def _convert_auth(auth):
         return _AUTH_DISABLED
     return auth
 
-# Helper to normalize auth (convert tuple to BasicAuth)
+# Helper to normalize auth (convert tuple to BasicAuth, callable to FunctionAuth)
 def _normalize_auth(auth):
-    """Convert tuple auth to BasicAuth, pass through others."""
+    """Convert tuple auth to BasicAuth, callable to FunctionAuth, pass through others."""
     if isinstance(auth, tuple) and len(auth) == 2:
         return BasicAuth(auth[0], auth[1])
+    # Wrap plain callables in FunctionAuth (but not Auth subclasses which have auth_flow)
+    if callable(auth) and not hasattr(auth, 'sync_auth_flow') and not hasattr(auth, 'async_auth_flow') and not hasattr(auth, 'auth_flow'):
+        return FunctionAuth(auth)
     return auth
+
+
+def _extract_auth_from_url(url_str):
+    """Extract BasicAuth from URL userinfo if present."""
+    if '@' not in url_str:
+        return None
+    # Parse URL to extract userinfo
+    from urllib.parse import urlparse, unquote
+    parsed = urlparse(url_str)
+    if parsed.username:
+        username = unquote(parsed.username)
+        password = unquote(parsed.password) if parsed.password else ""
+        return BasicAuth(username, password)
+    return None
+
 
 # Wrap AsyncClient to support auth=None vs auth not specified
 # We use a wrapper class that delegates to the Rust implementation
@@ -3044,13 +3153,15 @@ class AsyncClient:
 
         # If we have a custom/mounted transport, use it directly
         if use_custom and transport is not None:
+            # For wrapped requests with async streams, pass the wrapper (for stream access)
+            request_to_send = request if isinstance(request, _WrappedRequest) and request._async_stream is not None else rust_request
             # Check for async handle method
             if hasattr(transport, 'handle_async_request'):
-                result = await transport.handle_async_request(rust_request)
+                result = await transport.handle_async_request(request_to_send)
             elif hasattr(transport, 'handle_request'):
-                result = transport.handle_request(rust_request)
+                result = transport.handle_request(request_to_send)
             elif callable(transport):
-                result = transport(rust_request)
+                result = transport(request_to_send)
             else:
                 raise TypeError("Transport must have handle_async_request or handle_request method")
 
@@ -3139,23 +3250,41 @@ class AsyncClient:
         # For Rust auth classes (BasicAuth, DigestAuth), pass the underlying Rust request
         # For Python auth classes (generators), pass the wrapped request
         auth_flow = None
+        requires_response_body = getattr(auth, 'requires_response_body', False)
         if auth is not None:
             import inspect
-            if hasattr(auth, 'async_auth_flow'):
+            auth_type = type(auth)
+            # First check if auth_flow is overridden in a Python subclass (for custom auth like RepeatAuth)
+            if 'auth_flow' in auth_type.__dict__:
+                auth_flow_method = getattr(auth, 'auth_flow', None)
+                if auth_flow_method and (inspect.isgeneratorfunction(auth_flow_method) or
+                                         (hasattr(auth_flow_method, '__func__') and
+                                          inspect.isgeneratorfunction(auth_flow_method.__func__))):
+                    auth_flow = auth.auth_flow(wrapped_request)
+            # Then check for async_auth_flow
+            if auth_flow is None and hasattr(auth, 'async_auth_flow'):
                 method = getattr(auth, 'async_auth_flow')
                 # Check if it's a generator function (Python auth) or not (Rust auth)
                 if inspect.isgeneratorfunction(method) or inspect.isasyncgenfunction(method):
                     auth_flow = auth.async_auth_flow(wrapped_request)
                 else:
-                    # Rust auth - pass the underlying request
-                    auth_flow = auth.async_auth_flow(wrapped_request._rust_request)
-            elif hasattr(auth, 'sync_auth_flow'):
+                    # Check if async_auth_flow is overridden in Python class
+                    if 'async_auth_flow' in auth_type.__dict__:
+                        auth_flow = auth.async_auth_flow(wrapped_request)
+                    else:
+                        # Rust auth - pass the underlying request
+                        auth_flow = auth.async_auth_flow(wrapped_request._rust_request)
+            elif auth_flow is None and hasattr(auth, 'sync_auth_flow'):
                 method = getattr(auth, 'sync_auth_flow')
                 if inspect.isgeneratorfunction(method):
                     auth_flow = auth.sync_auth_flow(wrapped_request)
                 else:
-                    # Rust auth - pass the underlying request
-                    auth_flow = auth.sync_auth_flow(wrapped_request._rust_request)
+                    # Check if sync_auth_flow is overridden in Python class
+                    if 'sync_auth_flow' in auth_type.__dict__:
+                        auth_flow = auth.sync_auth_flow(wrapped_request)
+                    else:
+                        # Rust auth - pass the underlying request
+                        auth_flow = auth.sync_auth_flow(wrapped_request._rust_request)
 
         if auth_flow is None:
             # No auth flow, send directly
@@ -3178,6 +3307,9 @@ class AsyncClient:
                 # Async generator
                 request = await auth_flow.__anext__()
                 response = await self._send_single_request(request)
+                # Read response body if requires_response_body is True
+                if requires_response_body:
+                    await response.aread()
 
                 while True:
                     try:
@@ -3185,12 +3317,17 @@ class AsyncClient:
                         response._history = list(history)
                         history.append(response)
                         response = await self._send_single_request(request)
+                        if requires_response_body:
+                            await response.aread()
                     except StopAsyncIteration:
                         break
             else:
                 # Sync generator
                 request = next(auth_flow)
                 response = await self._send_single_request(request)
+                # Read response body if requires_response_body is True
+                if requires_response_body:
+                    await response.aread()
 
                 while True:
                     try:
@@ -3198,6 +3335,8 @@ class AsyncClient:
                         response._history = list(history)
                         history.append(response)
                         response = await self._send_single_request(request)
+                        if requires_response_body:
+                            await response.aread()
                     except StopIteration:
                         break
 
@@ -3212,6 +3351,9 @@ class AsyncClient:
         """HTTP GET with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        # Extract auth from URL userinfo if no explicit auth provided
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3361,23 +3503,28 @@ class AsyncClient:
         self._check_closed()
         # Check for sync iterator/generator in content (AsyncClient can't handle these)
         import inspect
+        async_stream = None
         if content is not None:
             if inspect.isgenerator(content):
                 raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
             if hasattr(content, '__next__') and hasattr(content, '__iter__') and not isinstance(content, (str, bytes, bytearray)):
                 raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
-            # Handle async iterators/generators - consume them to bytes
+            # Handle async iterators/generators
             if inspect.isasyncgen(content) or (hasattr(content, '__aiter__') and hasattr(content, '__anext__')):
-                chunks = []
-                async for chunk in content:
-                    chunks.append(chunk)
-                content = b''.join(chunks)
+                # Keep the async iterator for stream tracking (for auth retry detection)
+                async_stream = content
+                content = None  # Don't pass to Rust, keep in Python wrapper
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
             request = self.build_request("POST", url, content=content, data=data, files=files,
                                         json=json, params=params, headers=headers)
+            # If we had an async stream, wrap the request to track it
+            if async_stream is not None and isinstance(request, _WrappedRequest):
+                request._async_stream = async_stream
             if actual_auth is not None:
                 return await self._send_with_auth(request, actual_auth)
             return await self._send_single_request(request)
@@ -3404,6 +3551,8 @@ class AsyncClient:
         """HTTP PUT with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3435,6 +3584,8 @@ class AsyncClient:
         """HTTP PATCH with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3465,6 +3616,8 @@ class AsyncClient:
         """HTTP DELETE with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3493,6 +3646,8 @@ class AsyncClient:
         """HTTP HEAD with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3521,6 +3676,8 @@ class AsyncClient:
         """HTTP OPTIONS with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3550,6 +3707,8 @@ class AsyncClient:
         """HTTP request with proper auth sentinel handling."""
         self._check_closed()
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
 
         # If we have a custom transport, route through _send_single_request
         if self._custom_transport is not None:
@@ -3581,6 +3740,8 @@ class AsyncClient:
                      follow_redirects=None, timeout=None):
         """Stream an HTTP request with proper auth handling."""
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         response = None
         try:
             if actual_auth is not None:
@@ -4627,6 +4788,8 @@ class Client:
         self._warn_per_request_cookies(cookies)
         request = self.build_request("GET", url, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4641,6 +4804,8 @@ class Client:
         request = self.build_request("POST", url, content=content, data=data, files=files,
                                     json=json, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4655,6 +4820,8 @@ class Client:
         request = self.build_request("PUT", url, content=content, data=data, files=files,
                                     json=json, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4669,6 +4836,8 @@ class Client:
         request = self.build_request("PATCH", url, content=content, data=data, files=files,
                                     json=json, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4681,6 +4850,8 @@ class Client:
         self._warn_per_request_cookies(cookies)
         request = self.build_request("DELETE", url, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4693,6 +4864,8 @@ class Client:
         self._warn_per_request_cookies(cookies)
         request = self.build_request("HEAD", url, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4705,6 +4878,8 @@ class Client:
         self._warn_per_request_cookies(cookies)
         request = self.build_request("OPTIONS", url, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4719,6 +4894,8 @@ class Client:
         request = self.build_request(method, url, content=content, data=data, files=files,
                                     json=json, params=params, headers=headers, cookies=cookies)
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
         if actual_auth is not None:
             return self._send_with_auth(request, actual_auth, follow_redirects=actual_follow)
@@ -4730,6 +4907,8 @@ class Client:
                follow_redirects=None, timeout=None):
         """Stream an HTTP request with proper auth handling."""
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+        if actual_auth is None:
+            actual_auth = _extract_auth_from_url(str(url))
         response = None
         try:
             if actual_auth is not None:
