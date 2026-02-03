@@ -205,7 +205,7 @@ impl Client {
             if let Some(c) = cookies {
                 if let Ok(cookies_obj) = c.extract::<Cookies>() {
                     for (k, v) in cookies_obj.inner() {
-                        all_cookies.set(k, v);
+                        all_cookies.set(&k, &v);
                     }
                 }
             }
@@ -396,7 +396,7 @@ impl Client {
         if let Some(c) = cookies {
             if let Ok(cookies_obj) = c.extract::<Cookies>() {
                 for (k, v) in cookies_obj.inner() {
-                    all_cookies.set(k, v);
+                    all_cookies.set(&k, &v);
                 }
             }
         }
@@ -939,7 +939,7 @@ impl Client {
         if let Some(c) = cookies {
             if let Ok(cookies_obj) = c.extract::<Cookies>() {
                 for (k, v) in cookies_obj.inner() {
-                    all_cookies.set(k, v);
+                    all_cookies.set(&k, &v);
                 }
             } else if let Ok(dict) = c.downcast::<pyo3::types::PyDict>() {
                 for (key, value) in dict.iter() {

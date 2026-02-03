@@ -2,6 +2,7 @@
 # API-compatible with httpx, powered by Rust's reqwest via PyO3
 
 import contextlib as _contextlib
+import http.cookiejar as _http_cookiejar  # Import for side effect (httpx compatibility)
 import logging as _logging
 
 # Set up the httpx logger (for compatibility)
