@@ -117,6 +117,66 @@ from ._core import (
 
 
 # ============================================================================
+# URL wrapper for explicit port preservation
+# ============================================================================
+
+class _ExplicitPortURL:
+    """URL wrapper that preserves explicit port in string representation.
+
+    The standard URL class normalizes away default ports (e.g., :443 for https).
+    This wrapper preserves the explicit port string for cases like malformed
+    redirect URLs that specify the default port explicitly.
+    """
+
+    def __init__(self, url_str):
+        self._url_str = url_str
+        self._url = URL(url_str)  # Underlying URL for property access
+
+    def __str__(self):
+        return self._url_str
+
+    def __repr__(self):
+        return f"URL('{self._url_str}')"
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self._url_str == other
+        if isinstance(other, (_ExplicitPortURL, URL)):
+            return str(self) == str(other)
+        return False
+
+    def __hash__(self):
+        return hash(self._url_str)
+
+    @property
+    def scheme(self):
+        return self._url.scheme
+
+    @property
+    def host(self):
+        return self._url.host
+
+    @property
+    def port(self):
+        return self._url.port
+
+    @property
+    def path(self):
+        return self._url.path
+
+    @property
+    def query(self):
+        return self._url.query
+
+    @property
+    def fragment(self):
+        return self._url.fragment
+
+    def join(self, url):
+        return self._url.join(url)
+
+
+# ============================================================================
 # Exception Classes with request attribute support
 # ============================================================================
 
@@ -759,6 +819,60 @@ class SyncByteStream:
         return "<SyncByteStream>"
 
 
+class _GeneratorByteStream(SyncByteStream):
+    """SyncByteStream wrapper for generators/iterators that tracks consumption.
+
+    This allows generators to be passed as content while tracking whether
+    the stream has been consumed (for detecting StreamConsumed on redirects).
+    """
+
+    def __init__(self, generator, owner=None):
+        # Don't call super().__init__ since we don't have bytes data
+        self._generator = generator
+        self._owner = owner  # Reference to _WrappedRequest for tracking
+        self._consumed = False
+        self._started = False
+        self._chunks = []  # Store chunks for potential re-read
+
+    def __iter__(self):
+        if self._consumed:
+            raise StreamConsumed()
+        return self
+
+    def __next__(self):
+        if self._consumed:
+            raise StopIteration
+        self._started = True
+        try:
+            chunk = next(self._generator)
+            self._chunks.append(chunk)
+            return chunk
+        except StopIteration:
+            self._consumed = True
+            if self._owner is not None:
+                self._owner._stream_consumed = True
+            raise
+
+    def read(self):
+        """Read all bytes."""
+        if self._consumed:
+            raise StreamConsumed()
+        # Consume remaining generator
+        for chunk in self._generator:
+            self._chunks.append(chunk)
+        self._consumed = True
+        if self._owner is not None:
+            self._owner._stream_consumed = True
+        return b''.join(self._chunks)
+
+    def close(self):
+        """Close the stream."""
+        pass
+
+    def __repr__(self):
+        return "<GeneratorByteStream>"
+
+
 class AsyncByteStream:
     """Base class for asynchronous byte streams.
 
@@ -1127,11 +1241,13 @@ class _ResponseAsyncIteratorStream:
 class _WrappedRequest:
     """Wrapper for Rust Request that provides mutable headers."""
 
-    def __init__(self, rust_request, async_stream=None):
+    def __init__(self, rust_request, async_stream=None, sync_stream=None, explicit_url=None):
         self._rust_request = rust_request
         self._headers_modified = False
         self._async_stream = async_stream  # Original async iterator if any
+        self._sync_stream = sync_stream  # Sync iterator/generator if any
         self._stream_consumed = False
+        self._explicit_url = explicit_url  # URL string that should not be normalized
 
     def __getattr__(self, name):
         return getattr(self._rust_request, name)
@@ -1156,6 +1272,9 @@ class _WrappedRequest:
         if self._async_stream is not None:
             # Return an AsyncByteStream wrapper that tracks consumption
             return _WrappedAsyncByteStream(self._async_stream, self)
+        if self._sync_stream is not None:
+            # Return the sync stream wrapper (already a SyncByteStream)
+            return self._sync_stream
         return self._rust_request.stream
 
 
@@ -2953,6 +3072,8 @@ class AsyncClient:
         # Parse and add each cookie
         # Note: client.cookies returns a copy, so we need to get it, modify it, and set it back
         if set_cookie_headers:
+            from email.utils import parsedate_to_datetime
+            import datetime
             cookies = self.cookies
             for cookie_str in set_cookie_headers:
                 # Parse Set-Cookie header: "name=value; attr1; attr2=val"
@@ -2962,8 +3083,29 @@ class AsyncClient:
                     name_value = parts[0].strip()
                     if '=' in name_value:
                         name, value = name_value.split('=', 1)
-                        # Add to cookies
-                        cookies.set(name.strip(), value.strip())
+                        name = name.strip()
+                        value = value.strip()
+
+                        # Check for expires attribute to handle cookie deletion
+                        is_expired = False
+                        for part in parts[1:]:
+                            part = part.strip()
+                            if part.lower().startswith('expires='):
+                                expires_str = part[8:].strip()
+                                try:
+                                    expires_dt = parsedate_to_datetime(expires_str)
+                                    if expires_dt < datetime.datetime.now(datetime.timezone.utc):
+                                        is_expired = True
+                                except Exception:
+                                    pass
+                                break
+
+                        if is_expired:
+                            # Delete the cookie
+                            cookies.delete(name)
+                        else:
+                            # Add to cookies
+                            cookies.set(name, value)
             # Set cookies back to client
             self.cookies = cookies
 
@@ -4369,13 +4511,25 @@ class Client:
         """Build a Request object - wrap result in Python Request class."""
         # Check for async iterator/generator in content (sync Client can't handle these)
         import inspect
+        import types
         content = kwargs.get('content')
+        sync_stream = None  # Track if we're using a generator stream
         if content is not None:
             if inspect.isasyncgen(content) or inspect.iscoroutine(content):
                 raise RuntimeError("Attempted to send an async request with a sync Client instance.")
             # Also check for async iterator protocol
             if hasattr(content, '__anext__') or hasattr(content, '__aiter__'):
                 raise RuntimeError("Attempted to send an async request with a sync Client instance.")
+            # Handle sync generators/iterators - wrap them in a trackable stream
+            if isinstance(content, types.GeneratorType):
+                # Create a wrapper that tracks consumption
+                # Pass None to Rust - the body will be read from the stream by the transport
+                sync_stream = _GeneratorByteStream(content)
+                kwargs['content'] = None  # Don't pass generator to Rust
+            elif hasattr(content, '__iter__') and hasattr(content, '__next__') and not isinstance(content, (bytes, str, list, tuple)):
+                # It's an iterator - wrap it
+                sync_stream = _GeneratorByteStream(content)
+                kwargs['content'] = None
         # Validate URL before processing
         url_str = str(url)
         # Check for empty scheme (like '://example.org')
@@ -4404,7 +4558,11 @@ class Client:
 
         rust_request = self._client.build_request(method, merged_url, **kwargs)
         # Create a wrapper that delegates to the Rust request but has our headers proxy
-        return _WrappedRequest(rust_request)
+        wrapped = _WrappedRequest(rust_request, sync_stream=sync_stream)
+        # Link the stream back to the owner for consumption tracking
+        if sync_stream is not None:
+            sync_stream._owner = wrapped
+        return wrapped
 
     def _merge_url(self, url):
         """Merge a URL with the base_url.
@@ -4500,10 +4658,19 @@ class Client:
             use_custom = True
 
         if use_custom and transport is not None:
+            # Determine which request to send based on transport type
+            # Python-based transports (MockTransport, BaseTransport subclasses) can handle _WrappedRequest
+            # Rust-based transports (WSGITransport, HTTPTransport) need the Rust Request
+            if isinstance(transport, (MockTransport, BaseTransport, AsyncBaseTransport)):
+                # Python transport - pass wrapped request for stream tracking
+                request_to_send = request if isinstance(request, _WrappedRequest) else rust_request
+            else:
+                # Rust transport - pass raw Rust request
+                request_to_send = rust_request
             if hasattr(transport, 'handle_request'):
-                result = transport.handle_request(rust_request)
+                result = transport.handle_request(request_to_send)
             elif callable(transport):
-                result = transport(rust_request)
+                result = transport(request_to_send)
             else:
                 raise TypeError("Transport must have handle_request method")
             # Wrap result in Response if needed
@@ -4525,7 +4692,10 @@ class Client:
                 raise _convert_exception(e) from None
 
         # Set URL and request on response
-        if request_url is not None:
+        # Use explicit URL if available (preserves non-normalized port like :443)
+        if isinstance(request, _WrappedRequest) and request._explicit_url is not None:
+            response._url = _ExplicitPortURL(request._explicit_url)
+        elif request_url is not None:
             response._url = request_url
         response._request = request
 
@@ -4597,6 +4767,7 @@ class Client:
                 redirect_url = URL(location)
         except InvalidURL as e:
             # Handle malformed URLs like https://:443/ by trying to fix empty host
+            explicit_url_str = None  # Track manually constructed URL with explicit port
             if 'empty host' in str(e).lower() and original_url:
                 # Try to extract what we can from the location
                 from urllib.parse import urlparse
@@ -4609,28 +4780,35 @@ class Client:
                 port = parsed.port if parsed.port else None
                 path = parsed.path or '/'
 
-                # Construct the redirect URL
+                # Construct the redirect URL - preserve explicit port even if it's the default
                 if port:
                     redirect_url_str = f"{scheme}://{host}:{port}{path}"
+                    explicit_url_str = redirect_url_str  # Mark as explicit (has non-standard port repr)
                 else:
                     redirect_url_str = f"{scheme}://{host}{path}"
                 if parsed.query:
                     redirect_url_str += f"?{parsed.query}"
+                    if explicit_url_str:
+                        explicit_url_str += f"?{parsed.query}"
 
                 try:
                     redirect_url = URL(redirect_url_str)
+                    # Keep the manually constructed URL string - don't let URL normalize the port
+                    # redirect_url_str is already set correctly above
                 except Exception:
                     raise RemoteProtocolError(f"Invalid redirect URL: {location}")
             else:
                 raise RemoteProtocolError(f"Invalid redirect URL: {location}")
         except Exception:
             raise RemoteProtocolError(f"Invalid redirect URL: {location}")
-
-        # Check for invalid URL (e.g., non-ASCII characters)
-        try:
-            redirect_url_str = str(redirect_url)
-        except Exception:
-            raise RemoteProtocolError(f"Invalid redirect URL: {location}")
+        else:
+            # Normal case - get URL string from the parsed redirect_url
+            # Check for invalid URL (e.g., non-ASCII characters)
+            explicit_url_str = None
+            try:
+                redirect_url_str = str(redirect_url)
+            except Exception:
+                raise RemoteProtocolError(f"Invalid redirect URL: {location}")
 
         # Check scheme
         scheme = redirect_url.scheme
@@ -4678,8 +4856,24 @@ class Client:
                 # For SyncByteStream, check if it's already been iterated
                 if isinstance(stream, SyncByteStream) and getattr(stream, '_consumed', False):
                     raise StreamConsumed()
+            # Also check if the request was built with a generator/iterator stream
+            if hasattr(request, '_stream_consumed') and request._stream_consumed:
+                raise StreamConsumed()
+            if isinstance(request, _WrappedRequest) and request._stream_consumed:
+                raise StreamConsumed()
 
-        return self.build_request(method, redirect_url_str, headers=headers, content=content)
+        # Add client cookies to redirect request
+        # This ensures cookies set via Set-Cookie headers are sent on subsequent requests
+        if self.cookies:
+            cookie_header = "; ".join(f"{name}={value}" for name, value in self.cookies.items())
+            if cookie_header:
+                headers['Cookie'] = cookie_header
+
+        wrapped_request = self.build_request(method, redirect_url_str, headers=headers, content=content)
+        # Store explicit URL if we have one (preserves non-normalized port)
+        if explicit_url_str:
+            wrapped_request._explicit_url = explicit_url_str
+        return wrapped_request
 
     def _send_handling_redirects(self, request, follow_redirects=False, history=None):
         """Send a request, optionally following redirects."""
@@ -4713,6 +4907,19 @@ class Client:
         next_request = response.next_request
         if next_request is None:
             return response
+
+        # Update cookies on the redirect request (they were extracted after next_request was built)
+        # This handles both adding new cookies AND removing expired ones
+        if isinstance(next_request, _WrappedRequest):
+            if self.cookies:
+                cookie_header = "; ".join(f"{name}={value}" for name, value in self.cookies.items())
+                next_request.headers['Cookie'] = cookie_header
+            else:
+                # Cookies might have been deleted (e.g., expired), remove the Cookie header
+                try:
+                    del next_request.headers['Cookie']
+                except KeyError:
+                    pass
 
         # Preserve fragment from original URL
         if original_fragment:
@@ -4885,6 +5092,8 @@ class Client:
         # Parse and add each cookie
         # Note: client.cookies returns a copy, so we need to get it, modify it, and set it back
         if set_cookie_headers:
+            from email.utils import parsedate_to_datetime
+            import datetime
             cookies = self.cookies
             for cookie_str in set_cookie_headers:
                 # Parse Set-Cookie header: "name=value; attr1; attr2=val"
@@ -4894,8 +5103,29 @@ class Client:
                     name_value = parts[0].strip()
                     if '=' in name_value:
                         name, value = name_value.split('=', 1)
-                        # Add to cookies
-                        cookies.set(name.strip(), value.strip())
+                        name = name.strip()
+                        value = value.strip()
+
+                        # Check for expires attribute to handle cookie deletion
+                        is_expired = False
+                        for part in parts[1:]:
+                            part = part.strip()
+                            if part.lower().startswith('expires='):
+                                expires_str = part[8:].strip()
+                                try:
+                                    expires_dt = parsedate_to_datetime(expires_str)
+                                    if expires_dt < datetime.datetime.now(datetime.timezone.utc):
+                                        is_expired = True
+                                except Exception:
+                                    pass
+                                break
+
+                        if is_expired:
+                            # Delete the cookie
+                            cookies.delete(name)
+                        else:
+                            # Add to cookies
+                            cookies.set(name, value)
             # Set cookies back to client
             self.cookies = cookies
 
