@@ -150,9 +150,10 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 31 failed / 1375 passed / 1 skipped (Total: 1407)
+## Test Status: 19 failed / 1387 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
+- **Redirect handling** (31/31 tests passing): Malformed redirect URL with explicit port preserved, streaming body redirect raises StreamConsumed, cookie persistence across redirects with proper expiration handling
 - **Auth improvements** (79/79 tests passing): Basic auth in URL, custom auth callables, NetRCAuth, RepeatAuth generator flow, ResponseBodyAuth, streaming body digest auth, MockTransport handler property
 - **Timeout exception types** (10/10 tests passing): ConnectTimeout, WriteTimeout, ReadTimeout now properly classified using timeout context
 - **URL fragment decoding**: Fragments are now properly percent-decoded when returned
@@ -180,12 +181,12 @@ pytest tests_requestx/ -v  # ALL PASSED
 |----|-----------|--------|----------|--------|----------|--------|
 | 1 | client/test_auth.py | 0 | Basic auth URL, custom auth, netrc, digest, streaming | ✅ Done | - | - |
 | 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
-| 3 | models/test_url.py | 6 | Query/fragment encoding, percent escape, validation | 🟢 Mostly | P1 | M |
-| 4 | test_timeouts.py | 2 | Pool timeout not firing | 🟢 Mostly | P2 | M |
+| 3 | models/test_url.py | 10 | Query/fragment encoding, percent escape, validation | 🟡 Partial | P1 | M |
+| 4 | test_timeouts.py | 1 | Pool timeout not firing | 🟢 Mostly | P2 | L |
 | 5 | client/test_event_hooks.py | 6 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
-| 6 | client/test_redirects.py | 5 | Streaming body, malformed, cookies | 🟢 Mostly | P1 | M |
+| 6 | client/test_redirects.py | 0 | Streaming body, malformed, cookies | ✅ Done | - | - |
 | 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
-| 8 | models/test_cookies.py | 4 | Domain/path support, repr | 🟡 Partial | P2 | M |
+| 8 | models/test_cookies.py | 0 | Domain/path support, repr | ✅ Done | - | - |
 | 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
 | 10 | models/test_headers.py | 1 | Explicit encoding decode | 🟢 Mostly | P2 | M |
 | 11 | client/test_headers.py | 0 | Auth extraction from URL | ✅ Done | - | - |
@@ -212,16 +213,16 @@ pytest tests_requestx/ -v  # ALL PASSED
 **Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
 ### Top Failing Categories
-1. **URL edge cases** (6 failures): Query encoding, percent escape host, validation
+1. **URL edge cases** (10 failures): Query encoding, percent escape host, validation, path encoding
 2. **Event hooks** (6 failures): Hooks not firing on redirect responses
-3. **Redirects** (5 failures): Streaming body redirect, malformed redirect, cookie behavior
-4. **Cookies** (4 failures): Domain/path support, repr formatting
-5. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
+3. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
+4. **Digest auth** (2 failures): RFC 7616 cnonce format for MD5 and SHA-256
+5. **Timeouts** (1 failure): Pool timeout not firing correctly
 
 ### Known Issues (Priority Order)
-1. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
-2. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
-3. **Cookie domain/path**: Cookie matching with domain and path constraints (M)
-5. **Netrc support**: Parse netrc file for auth credentials (M)
-6. **Custom auth**: Auth generator protocol needs proper response body access (M)
-7. **Headers explicit encoding**: Lazy re-decode when encoding property is changed (M)
+1. **URL encoding**: Query/path encoding not matching httpx behavior exactly (M)
+2. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
+3. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+4. **Digest auth cnonce**: RFC 7616 cnonce format not matching expected pattern (L)
+5. **Headers explicit encoding**: Lazy re-decode when encoding property is changed (M)
+6. **SSLContext**: Passing SSLContext to request methods needs support (M)
