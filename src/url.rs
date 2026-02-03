@@ -36,23 +36,25 @@ pub struct URL {
     original_host: Option<String>,
     /// Store original relative path for relative URLs (without leading /)
     relative_path: Option<String>,
+    /// Store original raw path+query for preserving exact encoding (e.g., single quotes)
+    original_raw_path: Option<String>,
 }
 
 impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
         // Default to true since url crate always normalizes to have slash
-        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false, original_host: None, relative_path: None }
+        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false, original_host: None, relative_path: None, original_raw_path: None }
     }
 
     pub fn from_url_with_slash(url: Url, has_trailing_slash: bool) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host: None, relative_path: None }
+        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host: None, relative_path: None, original_raw_path: None }
     }
 
     pub fn from_url_with_host(url: Url, has_trailing_slash: bool, original_host: Option<String>) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host, relative_path: None }
+        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host, relative_path: None, original_raw_path: None }
     }
 
     pub fn inner(&self) -> &Url {
@@ -381,6 +383,7 @@ impl URL {
                             empty_host: false,
                             original_host: None,
                             relative_path: None,
+                            original_raw_path: None,
                         });
                     }
                     Err(e) => {
@@ -419,6 +422,7 @@ impl URL {
                             empty_host: true,  // Mark as empty host
                             original_host: None,
                             relative_path: None,
+                            original_raw_path: None,
                         });
                     }
                     Err(_) => {
@@ -433,11 +437,35 @@ impl URL {
                                 empty_host: true,
                                 original_host: None,
                                 relative_path: None,
+                                original_raw_path: None,
                             });
                         }
                     }
                 }
             }
+
+            // Pre-process URL to percent-encode spaces in the host
+            // This handles URLs like "https://exam le.com/" which should become "https://exam%20le.com/"
+            let url_str_processed = if let Some(authority_start) = url_str.find("://") {
+                let scheme_part = &url_str[..authority_start + 3];
+                let after_scheme = &url_str[authority_start + 3..];
+
+                // Find the end of the host (first / ? or #)
+                let host_end = after_scheme.find(&['/', '?', '#'][..]).unwrap_or(after_scheme.len());
+                let host_part = &after_scheme[..host_end];
+                let rest_part = &after_scheme[host_end..];
+
+                // Check if host contains spaces that need encoding
+                if host_part.contains(' ') {
+                    let encoded_host = host_part.replace(' ', "%20");
+                    format!("{}{}{}", scheme_part, encoded_host, rest_part)
+                } else {
+                    url_str.to_string()
+                }
+            } else {
+                url_str.to_string()
+            };
+            let url_str = url_str_processed.as_str();
 
             // Normal URL parsing
             let parsed = Url::parse(url_str).or_else(|_| {
@@ -480,6 +508,8 @@ impl URL {
                     let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
                     // Extract original host from URL string for IDNA/IPv6
                     let original_host = extract_original_host(url_str);
+                    // Extract original raw_path (path + query) from the URL string to preserve exact encoding
+                    let original_raw_path = extract_original_raw_path(url_str);
                     return Ok(Self {
                         inner: parsed_url,
                         fragment: frag,
@@ -488,6 +518,7 @@ impl URL {
                         empty_host: false,
                         original_host,
                         relative_path: None,
+                        original_raw_path,
                     });
                 }
                 Err(e) => {
@@ -507,6 +538,39 @@ impl URL {
         } else {
             scheme.unwrap_or("http")
         };
+
+        // Validate component lengths (max 65536 characters for any component)
+        const MAX_COMPONENT_LENGTH: usize = 65536;
+        if let Some(p) = path {
+            if p.len() > MAX_COMPONENT_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'path' too long",
+                ));
+            }
+            // Check for non-printable characters in path
+            for (i, c) in p.chars().enumerate() {
+                if c.is_control() && c != '\t' {
+                    return Err(crate::exceptions::InvalidURL::new_err(format!(
+                        "Invalid non-printable ASCII character in URL path component, {:?} at position {}.",
+                        c, i
+                    )));
+                }
+            }
+        }
+        if let Some(q) = query {
+            if q.len() > MAX_COMPONENT_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'query' too long",
+                ));
+            }
+        }
+        if let Some(f) = fragment {
+            if f.len() > MAX_COMPONENT_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'fragment' too long",
+                ));
+            }
+        }
 
         // Validate scheme
         if !scheme.is_empty() && !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
@@ -594,6 +658,7 @@ impl URL {
                         empty_host: false,
                         original_host: None,
                         relative_path: rel_path,
+                        original_raw_path: None,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -619,6 +684,7 @@ impl URL {
                         empty_host: false,
                         original_host: orig_host,
                         relative_path: None,
+                        original_raw_path: None,
                     })
                 }
                 Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
@@ -669,6 +735,33 @@ fn extract_original_host(url_str: &str) -> Option<String> {
         // Only store if it contains non-ASCII (IDNA) or is IPv6
         if host.chars().any(|c| !c.is_ascii()) || host.contains(':') {
             return Some(host.to_string());
+        }
+    }
+    None
+}
+
+/// Extract original raw path (path + query) from URL string to preserve exact encoding
+/// This is needed because the url crate may encode characters like single quotes
+/// that shouldn't be encoded in query/path strings according to RFC 3986.
+fn extract_original_raw_path(url_str: &str) -> Option<String> {
+    // Find the path portion of the URL (after authority, before fragment)
+    if let Some(authority_start) = url_str.find("://") {
+        let after_scheme = &url_str[authority_start + 3..];
+
+        // Find the start of the path (first /)
+        if let Some(path_start) = after_scheme.find('/') {
+            let path_and_rest = &after_scheme[path_start..];
+
+            // Remove the fragment if present
+            let raw_path = if let Some(frag_start) = path_and_rest.find('#') {
+                &path_and_rest[..frag_start]
+            } else {
+                path_and_rest
+            };
+
+            // Always store the original raw_path to preserve exact encoding
+            // The url crate may encode characters differently than expected
+            return Some(raw_path.to_string());
         }
     }
     None
@@ -896,6 +989,11 @@ impl URL {
 
     #[getter]
     fn raw_path<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        // If we have the original raw_path stored, use it to preserve exact encoding
+        if let Some(ref orig_raw) = self.original_raw_path {
+            return PyBytes::new(py, orig_raw.as_bytes());
+        }
+
         let path = self.inner.path();
         let query = self.inner.query();
 
@@ -1044,6 +1142,7 @@ impl URL {
                     empty_host: false,
                     original_host: None,
                     relative_path: rel_path,
+                    original_raw_path: None,
                 })
             }
             Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
