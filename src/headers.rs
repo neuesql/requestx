@@ -5,6 +5,39 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 use std::collections::HashMap;
 
+/// Decode raw bytes using the specified encoding
+fn decode_bytes(bytes: &[u8], encoding: &str) -> String {
+    match encoding.to_lowercase().replace('-', "").as_str() {
+        "utf8" => String::from_utf8_lossy(bytes).to_string(),
+        "iso88591" | "latin1" => bytes.iter().map(|&b| b as char).collect(),
+        // "ascii" and others: use UTF-8 lossy
+        _ => String::from_utf8_lossy(bytes).to_string(),
+    }
+}
+
+/// Encode a string back to raw bytes using the specified encoding
+fn encode_to_bytes(s: &str, encoding: &str) -> Vec<u8> {
+    match encoding.to_lowercase().replace('-', "").as_str() {
+        "iso88591" | "latin1" => {
+            s.chars()
+                .flat_map(|c| {
+                    let cp = c as u32;
+                    if cp <= 0xFF {
+                        vec![cp as u8]
+                    } else {
+                        // Can't encode in ISO-8859-1, fall back to UTF-8 bytes
+                        let mut buf = [0u8; 4];
+                        let encoded = c.encode_utf8(&mut buf);
+                        encoded.as_bytes().to_vec()
+                    }
+                })
+                .collect()
+        }
+        // "ascii", "utf-8", and others: Rust strings are UTF-8
+        _ => s.as_bytes().to_vec(),
+    }
+}
+
 /// Extract string from either str or bytes, returning (string, encoding)
 fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     // Check for None first
@@ -304,7 +337,7 @@ impl Headers {
     fn raw(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         self.inner
             .iter()
-            .map(|(k, v)| (k.as_bytes().to_vec(), v.as_bytes().to_vec()))
+            .map(|(k, v)| (k.as_bytes().to_vec(), encode_to_bytes(v, &self.encoding)))
             .collect()
     }
 
@@ -487,7 +520,15 @@ impl Headers {
 
     #[setter]
     fn set_encoding(&mut self, encoding: &str) {
+        let old_encoding = self.encoding.clone();
         self.encoding = encoding.to_string();
+        // Re-decode values from raw bytes using new encoding
+        if old_encoding != encoding {
+            for (_, value) in &mut self.inner {
+                let raw_bytes = encode_to_bytes(value, &old_encoding);
+                *value = decode_bytes(&raw_bytes, encoding);
+            }
+        }
     }
 
     fn copy(&self) -> Self {
