@@ -2676,6 +2676,13 @@ class AsyncClient:
                 self._default_transport = AsyncHTTPTransport()
 
         self._custom_transport = custom_transport  # Keep reference to user-provided transport
+
+        # Extract and store follow_redirects from kwargs before passing to Rust
+        self._follow_redirects = kwargs.pop('follow_redirects', False)
+
+        # Always create Rust client with follow_redirects=False so Python handles redirects
+        # This allows proper logging and history tracking
+        kwargs['follow_redirects'] = False
         self._client = _AsyncClient(*args, **kwargs)
         self._is_closed = False
 
@@ -2840,6 +2847,29 @@ class AsyncClient:
                 score += 4
 
         return score
+
+    async def _invoke_request_hooks(self, request):
+        """Invoke all request event hooks (handles both sync and async hooks)."""
+        import inspect
+        hooks = self.event_hooks.get('request', [])
+        for hook in hooks:
+            result = hook(request)
+            if inspect.iscoroutine(result):
+                await result
+
+    async def _invoke_response_hooks(self, response):
+        """Invoke all response event hooks (handles both sync and async hooks)."""
+        import inspect
+        hooks = self.event_hooks.get('response', [])
+        for hook in hooks:
+            try:
+                result = hook(response)
+                if inspect.iscoroutine(result):
+                    await result
+            except BaseException:
+                # Close the response when a hook raises an exception
+                await response.aclose()
+                raise
 
     def __getattr__(self, name):
         """Delegate attribute access to the underlying client."""
@@ -3140,6 +3170,9 @@ class AsyncClient:
             rust_request = request
             request_url = request.url if hasattr(request, 'url') else None
 
+        # Invoke request event hooks before sending
+        await self._invoke_request_hooks(request)
+
         # Get the appropriate transport for this URL
         # First check if there's a mounted transport for this URL
         transport = self._transport_for_url(request_url)
@@ -3209,6 +3242,8 @@ class AsyncClient:
                         await stream_obj.aclose()
                     raise
 
+            # Invoke response event hooks before returning
+            await self._invoke_response_hooks(response)
             return response
         else:
             # Use the Rust client's send
@@ -3237,9 +3272,61 @@ class AsyncClient:
                 if location:
                     response._next_request = self._build_redirect_request(request, response)
 
+            # Invoke response event hooks before returning
+            await self._invoke_response_hooks(response)
             return response
 
-    async def _send_with_auth(self, request, auth):
+    async def _send_handling_redirects(self, request, follow_redirects=False, history=None):
+        """Send a request, optionally following redirects."""
+        if history is None:
+            history = []
+
+        # Get original request URL for fragment preservation
+        original_url = request.url if hasattr(request, 'url') else None
+        original_fragment = None
+        if original_url and isinstance(original_url, URL):
+            original_fragment = original_url.fragment
+
+        response = await self._send_single_request(request)
+
+        # Extract cookies from response and add to client cookies
+        self._extract_cookies_from_response(response, request)
+
+        if not follow_redirects or not response.is_redirect:
+            response._history = list(history)
+            return response
+
+        # Check max redirects
+        if len(history) >= 20:
+            raise TooManyRedirects("Too many redirects")
+
+        # Add current response to history
+        response._history = list(history)
+        history = history + [response]
+
+        # Get next request
+        next_request = response.next_request
+        if next_request is None:
+            return response
+
+        # Preserve fragment from original URL
+        if original_fragment:
+            next_url = next_request.url if hasattr(next_request, 'url') else None
+            if next_url and isinstance(next_url, URL):
+                if not next_url.fragment:
+                    next_url_str = str(next_url)
+                    if '#' not in next_url_str:
+                        next_request = self.build_request(
+                            next_request.method,
+                            next_url_str + '#' + original_fragment,
+                            headers=dict(next_request.headers.items()) if hasattr(next_request, 'headers') else None,
+                            content=next_request.content if hasattr(next_request, 'content') else None,
+                        )
+
+        # Recursively follow
+        return await self._send_handling_redirects(next_request, follow_redirects=True, history=history)
+
+    async def _send_with_auth(self, request, auth, follow_redirects=False):
         """Send a request with async auth flow handling."""
         # Ensure we have a wrapped request for proper header mutation
         if isinstance(request, _WrappedRequest):
@@ -3288,8 +3375,8 @@ class AsyncClient:
                         auth_flow = auth.sync_auth_flow(wrapped_request._rust_request)
 
         if auth_flow is None:
-            # No auth flow, send directly
-            return await self._send_single_request(wrapped_request)
+            # No auth flow, send with redirect handling
+            return await self._send_handling_redirects(wrapped_request, follow_redirects=follow_redirects)
 
         # Check if auth_flow returned a list (Rust base class) or generator
         import types
@@ -3298,7 +3385,7 @@ class AsyncClient:
             last_request = wrapped_request
             for req in auth_flow:
                 last_request = req
-            return await self._send_single_request(last_request)
+            return await self._send_handling_redirects(last_request, follow_redirects=follow_redirects)
 
         # Generator-based auth flow
         history = []
@@ -3343,9 +3430,13 @@ class AsyncClient:
 
             if history:
                 response._history = history
+
+            # After auth completes, handle redirects if needed
+            if follow_redirects and response.is_redirect:
+                return await self._send_handling_redirects(response.next_request, follow_redirects=True, history=history)
             return response
         except (StopIteration, StopAsyncIteration):
-            return await self._send_single_request(wrapped_request)
+            return await self._send_handling_redirects(wrapped_request, follow_redirects=follow_redirects)
 
     async def get(self, url, *, params=None, headers=None, cookies=None,
                   auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
@@ -3356,12 +3447,15 @@ class AsyncClient:
         if actual_auth is None:
             actual_auth = _extract_auth_from_url(str(url))
 
-        # If we have a custom transport, route through _send_single_request
+        # Determine follow_redirects behavior
+        actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
+
+        # If we have a custom transport, route through redirect handling
         if self._custom_transport is not None:
             request = self.build_request("GET", url, params=params, headers=headers)
             if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
+                return await self._send_with_auth(request, actual_auth, follow_redirects=bool(actual_follow))
+            return await self._send_handling_redirects(request, follow_redirects=bool(actual_follow))
 
         if actual_auth is not None:
             result = await self._handle_auth("GET", url, actual_auth, params=params, headers=headers)
@@ -4125,6 +4219,23 @@ class Client:
 
         return score
 
+    def _invoke_request_hooks(self, request):
+        """Invoke all request event hooks."""
+        hooks = self.event_hooks.get('request', [])
+        for hook in hooks:
+            hook(request)
+
+    def _invoke_response_hooks(self, response):
+        """Invoke all response event hooks."""
+        hooks = self.event_hooks.get('response', [])
+        for hook in hooks:
+            try:
+                hook(response)
+            except BaseException:
+                # Close the response when a hook raises an exception
+                response.close()
+                raise
+
     def __getattr__(self, name):
         """Delegate attribute access to the underlying client."""
         return getattr(self._client, name)
@@ -4373,6 +4484,9 @@ class Client:
             rust_request = request
             request_url = url or (request.url if hasattr(request, 'url') else None)
 
+        # Invoke request event hooks before sending
+        self._invoke_request_hooks(request)
+
         # Get the appropriate transport for this URL
         # First check if there's a mounted transport for this URL
         transport = self._transport_for_url(request_url)
@@ -4420,6 +4534,9 @@ class Client:
             location = response.headers.get("location")
             if location:
                 response._next_request = self._build_redirect_request(request, response)
+
+        # Invoke response event hooks after receiving
+        self._invoke_response_hooks(response)
 
         # Log the request/response
         method = request.method if hasattr(request, 'method') else 'GET'
