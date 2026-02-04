@@ -2441,8 +2441,12 @@ class DigestAuth:
 
     def _get_client_nonce(self, nonce_count: int, nonce: bytes) -> bytes:
         """Generate a client nonce. Signature matches httpx for test mocking."""
-        import os
-        return os.urandom(16)
+        import hashlib, os, time
+        s = str(nonce_count).encode()
+        s += nonce
+        s += time.ctime().encode()
+        s += os.urandom(8)
+        return hashlib.sha1(s).hexdigest()[:16].encode()
 
     def _build_auth_header(self, request, challenge):
         """Build the Authorization header from a challenge."""
@@ -2476,8 +2480,7 @@ class DigestAuth:
         # Get client nonce
         cnonce_bytes = self._get_client_nonce(self._nonce_count, nonce.encode())
         if isinstance(cnonce_bytes, bytes):
-            # Always hex-encode the cnonce for proper header formatting (like httpx does)
-            cnonce = cnonce_bytes[:8].hex()  # Use first 8 bytes as hex (16 chars)
+            cnonce = cnonce_bytes.decode("ascii")
         else:
             cnonce = str(cnonce_bytes)
 
