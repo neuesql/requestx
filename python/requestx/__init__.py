@@ -1320,8 +1320,8 @@ class _WrappedRequestHeadersProxy:
         self._wrapped_request = wrapped_request
         # Get headers from rust request and convert to a new Headers object
         rust_headers = wrapped_request._rust_request.headers
-        # Create a new Headers from the multi_items (preserves duplicates)
-        self._headers = Headers(list(rust_headers.multi_items()))
+        # Use _internal_items to preserve original header casing for .raw access
+        self._headers = Headers(list(rust_headers._internal_items()))
 
     def _sync_back(self):
         self._wrapped_request._rust_request.headers = self._headers
@@ -4156,6 +4156,9 @@ class Client:
         # Extract and store follow_redirects from kwargs before passing to Rust
         self._follow_redirects = kwargs.pop('follow_redirects', False)
 
+        # Extract and store default_encoding for response text decoding
+        self._default_encoding = kwargs.pop('default_encoding', None)
+
         # Extract and store params from kwargs
         params = kwargs.pop('params', None)
         if params is not None:
@@ -4625,7 +4628,7 @@ class Client:
 
     def _wrap_response(self, rust_response):
         """Wrap a Rust response in a Python Response."""
-        return Response(rust_response)
+        return Response(rust_response, default_encoding=self._default_encoding)
 
     def _send_single_request(self, request, url=None):
         """Send a single request, handling transport properly."""
@@ -4676,14 +4679,16 @@ class Client:
             # Wrap result in Response if needed
             if isinstance(result, Response):
                 response = result
+                if response._default_encoding is None and self._default_encoding is not None:
+                    response._default_encoding = self._default_encoding
             elif isinstance(result, _Response):
-                response = Response(result)
+                response = Response(result, default_encoding=self._default_encoding)
             else:
-                response = Response(result)
+                response = Response(result, default_encoding=self._default_encoding)
         else:
             try:
                 result = self._client.send(rust_request)
-                response = Response(result)
+                response = Response(result, default_encoding=self._default_encoding)
             except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
                     _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
                     _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,

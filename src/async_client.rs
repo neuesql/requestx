@@ -118,10 +118,10 @@ impl AsyncClient {
         // Create default headers if none provided
         let version = env!("CARGO_PKG_VERSION");
         let mut default_headers = Headers::default();
-        default_headers.set("accept".to_string(), "*/*".to_string());
-        default_headers.set("accept-encoding".to_string(), "gzip, deflate, br, zstd".to_string());
-        default_headers.set("connection".to_string(), "keep-alive".to_string());
-        default_headers.set("user-agent".to_string(), format!("python-httpx/{}", version));
+        default_headers.set("Accept".to_string(), "*/*".to_string());
+        default_headers.set("Accept-Encoding".to_string(), "gzip, deflate, br, zstd".to_string());
+        default_headers.set("Connection".to_string(), "keep-alive".to_string());
+        default_headers.set("User-Agent".to_string(), format!("python-httpx/{}", version));
 
         // Merge user-provided headers over defaults
         let final_headers = if let Some(user_headers) = headers {
@@ -571,9 +571,9 @@ impl AsyncClient {
         }
 
         // Add Host header from URL if not already set
-        if !all_headers.contains("host") && !all_headers.contains("Host") {
+        if !all_headers.contains("host") {
             if let Some(host_value) = host_header_value {
-                all_headers.set("host".to_string(), host_value);
+                all_headers.insert_front("Host".to_string(), host_value);
             }
         }
 
@@ -585,14 +585,14 @@ impl AsyncClient {
             let content_len = c.len();
             request.set_content(c);
             let mut headers_mut = request.headers_ref().clone();
-            headers_mut.set("content-length".to_string(), content_len.to_string());
+            headers_mut.set("Content-Length".to_string(), content_len.to_string());
             request.set_headers(headers_mut);
         } else {
             // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
             let method_upper = method.to_uppercase();
             if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
                 let mut headers_mut = request.headers_ref().clone();
-                headers_mut.set("content-length".to_string(), "0".to_string());
+                headers_mut.set("Content-Length".to_string(), "0".to_string());
                 request.set_headers(headers_mut);
             }
         }
@@ -1033,13 +1033,13 @@ impl AsyncClient {
                         &base64::engine::general_purpose::STANDARD,
                         credentials.as_bytes(),
                     );
-                    request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
                 }
             }
 
             // Add Host header if not already present
             if !request_headers.contains("host") {
-                request_headers.set("host".to_string(), host_header);
+                request_headers.insert_front("Host".to_string(), host_header);
             }
 
             // Build the Request object

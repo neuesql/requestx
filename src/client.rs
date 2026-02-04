@@ -83,10 +83,10 @@ impl Client {
         // Create default headers if none provided
         let version = env!("CARGO_PKG_VERSION");
         let mut default_headers = Headers::default();
-        default_headers.set("accept".to_string(), "*/*".to_string());
-        default_headers.set("accept-encoding".to_string(), "gzip, deflate, br, zstd".to_string());
-        default_headers.set("connection".to_string(), "keep-alive".to_string());
-        default_headers.set("user-agent".to_string(), format!("python-httpx/{}", version));
+        default_headers.set("Accept".to_string(), "*/*".to_string());
+        default_headers.set("Accept-Encoding".to_string(), "gzip, deflate, br, zstd".to_string());
+        default_headers.set("Connection".to_string(), "keep-alive".to_string());
+        default_headers.set("User-Agent".to_string(), format!("python-httpx/{}", version));
 
         // Merge user-provided headers over defaults
         let final_headers = if let Some(user_headers) = headers {
@@ -328,7 +328,7 @@ impl Client {
                     &base64::engine::general_purpose::STANDARD,
                     credentials.as_bytes(),
                 );
-                request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
             } else {
                 // Extract auth from URL userinfo if present
                 let url_username = url_obj.get_username();
@@ -339,7 +339,7 @@ impl Client {
                         &base64::engine::general_purpose::STANDARD,
                         credentials.as_bytes(),
                     );
-                    request_headers.set("authorization".to_string(), format!("Basic {}", encoded));
+                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
                 }
             }
 
@@ -347,7 +347,7 @@ impl Client {
             // Other headers (accept, accept-encoding, connection, user-agent) come from
             // client.headers which has defaults set at initialization
             if !request_headers.contains("host") {
-                request_headers.set("host".to_string(), host_header);
+                request_headers.insert_front("Host".to_string(), host_header);
             }
 
             let mut request = Request::new(method, url_obj);
@@ -928,9 +928,9 @@ impl Client {
         }
 
         // Add Host header from URL if not already set
-        if !all_headers.contains("host") && !all_headers.contains("Host") {
+        if !all_headers.contains("host") {
             if let Some(host_value) = host_header_value {
-                all_headers.set("host".to_string(), host_value);
+                all_headers.insert_front("Host".to_string(), host_value);
             }
         }
 
@@ -951,7 +951,7 @@ impl Client {
         }
         let cookie_header = all_cookies.to_header_value();
         if !cookie_header.is_empty() {
-            all_headers.set("cookie".to_string(), cookie_header);
+            all_headers.set("Cookie".to_string(), cookie_header);
         }
 
         request.set_headers(all_headers);
@@ -962,7 +962,7 @@ impl Client {
             let content_len = c.len();
             request.set_content(c);
             let mut headers_mut = request.headers_ref().clone();
-            headers_mut.set("content-length".to_string(), content_len.to_string());
+            headers_mut.set("Content-Length".to_string(), content_len.to_string());
             request.set_headers(headers_mut);
         } else if let Some(j) = json {
             // Handle JSON body
@@ -978,9 +978,9 @@ impl Client {
             let content_len = json_bytes.len();
             request.set_content(json_bytes);
             let mut headers_mut = request.headers_ref().clone();
-            headers_mut.set("content-length".to_string(), content_len.to_string());
+            headers_mut.set("Content-Length".to_string(), content_len.to_string());
             if !headers_mut.contains("content-type") {
-                headers_mut.set("content-type".to_string(), "application/json".to_string());
+                headers_mut.set("Content-Type".to_string(), "application/json".to_string());
             }
             request.set_headers(headers_mut);
         } else if files.is_some() {
@@ -1023,8 +1023,8 @@ impl Client {
 
                 let content_len = body.len();
                 request.set_content(body);
-                headers_mut.set("content-length".to_string(), content_len.to_string());
-                headers_mut.set("content-type".to_string(), content_type);
+                headers_mut.set("Content-Length".to_string(), content_len.to_string());
+                headers_mut.set("Content-Type".to_string(), content_type);
                 request.set_headers(headers_mut);
             } else if let Some(d) = data {
                 // files was empty, but data might not be - handle form data
@@ -1046,9 +1046,9 @@ impl Client {
                     let content_len = body.len();
                     request.set_content(body);
                     let mut headers_mut = request.headers_ref().clone();
-                    headers_mut.set("content-length".to_string(), content_len.to_string());
+                    headers_mut.set("Content-Length".to_string(), content_len.to_string());
                     if !headers_mut.contains("content-type") {
-                        headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+                        headers_mut.set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
                     }
                     request.set_headers(headers_mut);
                 }
@@ -1074,9 +1074,9 @@ impl Client {
                 let content_len = body.len();
                 request.set_content(body);
                 let mut headers_mut = request.headers_ref().clone();
-                headers_mut.set("content-length".to_string(), content_len.to_string());
+                headers_mut.set("Content-Length".to_string(), content_len.to_string());
                 if !headers_mut.contains("content-type") {
-                    headers_mut.set("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+                    headers_mut.set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
                 }
                 request.set_headers(headers_mut);
             } else {
@@ -1084,7 +1084,7 @@ impl Client {
                 let method_upper = method.to_uppercase();
                 if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
                     let mut headers_mut = request.headers_ref().clone();
-                    headers_mut.set("content-length".to_string(), "0".to_string());
+                    headers_mut.set("Content-Length".to_string(), "0".to_string());
                     request.set_headers(headers_mut);
                 }
             }
@@ -1093,7 +1093,7 @@ impl Client {
             let method_upper = method.to_uppercase();
             if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
                 let mut headers_mut = request.headers_ref().clone();
-                headers_mut.set("content-length".to_string(), "0".to_string());
+                headers_mut.set("Content-Length".to_string(), "0".to_string());
                 request.set_headers(headers_mut);
             }
         }

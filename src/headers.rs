@@ -74,10 +74,11 @@ fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)>
     }).map(|s| (s, "ascii".to_string()))
 }
 
-/// Extract key (lowercased) from either str or bytes, returning (string, encoding)
+/// Extract key from either str or bytes, returning (string, encoding)
+/// Preserves original casing - lookups are case-insensitive via .to_lowercase() at comparison time
 fn extract_key_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     let (s, enc) = extract_string_or_bytes(obj)?;
-    Ok((s.to_lowercase(), enc))
+    Ok((s, enc))
 }
 
 /// HTTP Headers with case-insensitive keys
@@ -146,11 +147,19 @@ impl Headers {
     }
 
     /// Set a header value (removes existing headers with same key)
-    /// Keys are normalized to lowercase to match httpx behavior
+    /// Preserves original key casing; lookups are case-insensitive
     pub fn set(&mut self, key: String, value: String) {
         let key_lower = key.to_lowercase();
         self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
-        self.inner.push((key_lower, value));
+        self.inner.push((key, value));
+    }
+
+    /// Insert a header at the front of the list (removes existing headers with same key)
+    /// Used for Host header which should appear first per HTTP convention
+    pub fn insert_front(&mut self, key: String, value: String) {
+        let key_lower = key.to_lowercase();
+        self.inner.retain(|(k, _)| k.to_lowercase() != key_lower);
+        self.inner.insert(0, (key, value));
     }
 
     /// Check if a header exists
@@ -182,9 +191,9 @@ impl Headers {
     }
 
     /// Append a header value (allows duplicate keys)
+    /// Preserves original key casing
     pub fn append(&mut self, key: String, value: String) {
-        let key_lower = key.to_lowercase();
-        self.inner.push((key_lower, value));
+        self.inner.push((key, value));
     }
 }
 
@@ -270,7 +279,7 @@ impl Headers {
             .filter_map(|(k, _)| {
                 let lower = k.to_lowercase();
                 if seen.insert(lower.clone()) {
-                    Some(k.clone())
+                    Some(lower)
                 } else {
                     None
                 }
@@ -306,13 +315,14 @@ impl Headers {
             existing
         } else {
             let value = default.unwrap_or_default();
-            self.inner.push((key_lower, value.clone()));
+            self.inner.push((key, value.clone()));
             value
         }
     }
 
     fn items(&self) -> Vec<(String, String)> {
         // Return merged values for duplicate keys, maintaining key order
+        // Keys are lowercased for httpx compatibility
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
         for (key, _) in &self.inner {
@@ -323,13 +333,20 @@ impl Headers {
                     .filter(|(k, _)| k.to_lowercase() == key_lower)
                     .map(|(_, v)| v.as_str())
                     .collect();
-                result.push((key.clone(), values.join(", ")));
+                result.push((key_lower, values.join(", ")));
             }
         }
         result
     }
 
     fn multi_items(&self) -> Vec<(String, String)> {
+        // Keys are lowercased for httpx compatibility
+        self.inner.iter().map(|(k, v)| (k.to_lowercase(), v.clone())).collect()
+    }
+
+    /// Internal method returning items with original key casing (for proxy reconstruction)
+    #[pyo3(name = "_internal_items")]
+    fn _internal_items(&self) -> Vec<(String, String)> {
         self.inner.clone()
     }
 
@@ -377,9 +394,9 @@ impl Headers {
         }
 
         if let Some(pos) = insert_pos {
-            new_inner.insert(pos, (key_lower.clone(), value));
+            new_inner.insert(pos, (key, value));
         } else {
-            new_inner.push((key_lower, value));
+            new_inner.push((key, value));
         }
 
         self.inner = new_inner;
@@ -486,7 +503,10 @@ impl Headers {
             let items: Vec<String> = self
                 .inner
                 .iter()
-                .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
+                .map(|(k, v)| {
+                    let kl = k.to_lowercase();
+                    format!("'{}': '{}'", kl, mask_value(&kl, v))
+                })
                 .collect();
             format!("Headers({{{}}}{})", items.join(", "), encoding_suffix)
         } else {
@@ -498,7 +518,10 @@ impl Headers {
                 let items: Vec<String> = self
                     .inner
                     .iter()
-                    .map(|(k, v)| format!("('{}', '{}')", k, mask_value(k, v)))
+                    .map(|(k, v)| {
+                        let kl = k.to_lowercase();
+                        format!("('{}', '{}')", kl, mask_value(&kl, v))
+                    })
                     .collect();
                 format!("Headers([{}]{})", items.join(", "), encoding_suffix)
             } else {
@@ -506,7 +529,10 @@ impl Headers {
                 let items: Vec<String> = self
                     .inner
                     .iter()
-                    .map(|(k, v)| format!("'{}': '{}'", k, mask_value(k, v)))
+                    .map(|(k, v)| {
+                        let kl = k.to_lowercase();
+                        format!("'{}': '{}'", kl, mask_value(&kl, v))
+                    })
                     .collect();
                 format!("Headers({{{}}}{})", items.join(", "), encoding_suffix)
             }

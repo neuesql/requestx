@@ -69,14 +69,14 @@ impl MutableHeaders {
     }
 
     fn __iter__(&self) -> MutableHeadersIter {
-        // Get unique keys
+        // Get unique keys (lowercased for httpx compatibility)
         let mut seen = std::collections::HashSet::new();
         let keys: Vec<String> = self.headers.inner()
             .iter()
             .filter_map(|(k, _)| {
                 let k_lower = k.to_lowercase();
-                if seen.insert(k_lower) {
-                    Some(k.clone())
+                if seen.insert(k_lower.clone()) {
+                    Some(k_lower)
                 } else {
                     None
                 }
@@ -91,14 +91,14 @@ impl MutableHeaders {
     }
 
     fn keys(&self) -> Vec<String> {
-        // Return unique keys
+        // Return unique keys (lowercased for httpx compatibility)
         let mut seen = std::collections::HashSet::new();
         self.headers.inner()
             .iter()
             .filter_map(|(k, _)| {
                 let k_lower = k.to_lowercase();
-                if seen.insert(k_lower) {
-                    Some(k.clone())
+                if seen.insert(k_lower.clone()) {
+                    Some(k_lower)
                 } else {
                     None
                 }
@@ -112,6 +112,7 @@ impl MutableHeaders {
 
     fn items(&self) -> Vec<(String, String)> {
         // Return merged values for duplicate keys (httpx behavior)
+        // Keys are lowercased
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
         for (key, _) in self.headers.inner() {
@@ -122,13 +123,20 @@ impl MutableHeaders {
                     .filter(|(k, _)| k.to_lowercase() == key_lower)
                     .map(|(_, v)| v.as_str())
                     .collect();
-                result.push((key.clone(), values.join(", ")));
+                result.push((key_lower, values.join(", ")));
             }
         }
         result
     }
 
     fn multi_items(&self) -> Vec<(String, String)> {
+        // Keys are lowercased for httpx compatibility
+        self.headers.inner().iter().map(|(k, v)| (k.to_lowercase(), v.clone())).collect()
+    }
+
+    /// Internal method returning items with original key casing (for proxy reconstruction)
+    #[pyo3(name = "_internal_items")]
+    fn _internal_items(&self) -> Vec<(String, String)> {
         self.headers.inner().clone()
     }
 
