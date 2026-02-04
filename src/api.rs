@@ -38,7 +38,7 @@ pub fn get(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -63,7 +63,7 @@ pub fn post(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -88,7 +88,7 @@ pub fn put(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -113,7 +113,7 @@ pub fn patch(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -134,7 +134,7 @@ pub fn delete(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -155,7 +155,7 @@ pub fn head(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -176,7 +176,7 @@ pub fn options(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -202,7 +202,7 @@ pub fn request(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
@@ -228,7 +228,7 @@ pub fn stream(
     auth: Option<&Bound<'_, PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<&Bound<'_, PyAny>>,
-    verify: Option<bool>,
+    verify: Option<&Bound<'_, PyAny>>,
     cert: Option<&str>,
     trust_env: Option<bool>,
 ) -> PyResult<Response> {
