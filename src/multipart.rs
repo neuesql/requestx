@@ -27,26 +27,52 @@ pub fn extract_boundary_from_content_type(content_type: &str) -> Option<String> 
     None
 }
 
+/// Check if a Python object is a non-seekable file-like object
+fn is_non_seekable_filelike(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    // bytes and strings are not file-like objects
+    if value.extract::<Vec<u8>>().is_ok() || value.extract::<String>().is_ok() {
+        return Ok(false);
+    }
+
+    // Only check objects with a read method (file-like)
+    if !value.hasattr("read")? {
+        return Ok(false);
+    }
+
+    // Check seekable() method (io.IOBase defines this, returns False by default)
+    if let Ok(seekable_result) = value.call_method0("seekable") {
+        if let Ok(is_seekable) = seekable_result.extract::<bool>() {
+            return Ok(!is_seekable);
+        }
+    }
+
+    // No seekable() method - non-seekable if no seek attribute
+    Ok(!value.hasattr("seek")?)
+}
+
 /// Build multipart body with auto-generated boundary
+/// Returns (body, boundary, has_non_seekable_file)
 pub fn build_multipart_body(
     py: Python<'_>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
-) -> PyResult<(Vec<u8>, String)> {
+) -> PyResult<(Vec<u8>, String, bool)> {
     let boundary = generate_boundary();
-    let body = build_multipart_body_with_boundary(py, data, files, &boundary)?;
-    Ok((body.0, boundary))
+    let (body, _, has_non_seekable) = build_multipart_body_with_boundary(py, data, files, &boundary)?;
+    Ok((body, boundary, has_non_seekable))
 }
 
 /// Build multipart body with specified boundary
+/// Returns (body, boundary, has_non_seekable_file)
 pub fn build_multipart_body_with_boundary(
     py: Python<'_>,
     data: Option<&Bound<'_, PyDict>>,
     files: Option<&Bound<'_, PyAny>>,
     boundary: &str,
-) -> PyResult<(Vec<u8>, String)> {
+) -> PyResult<(Vec<u8>, String, bool)> {
     let mut body = Vec::new();
     let boundary_bytes = boundary.as_bytes();
+    let mut has_non_seekable = false;
 
     // Add data fields first
     if let Some(d) = data {
@@ -97,7 +123,10 @@ pub fn build_multipart_body_with_boundary(
             // - tuple: (filename, file-content)
             // - tuple: (filename, file-content, content-type)
             // - tuple: (filename, file-content, content-type, headers)
-            let (filename, content, content_type, extra_headers) = parse_file_value(py, &value, &field_name)?;
+            let (filename, content, content_type, extra_headers, non_seekable) = parse_file_value(py, &value, &field_name)?;
+            if non_seekable {
+                has_non_seekable = true;
+            }
 
             body.extend_from_slice(b"--");
             body.extend_from_slice(boundary_bytes);
@@ -154,7 +183,7 @@ pub fn build_multipart_body_with_boundary(
     body.extend_from_slice(boundary_bytes);
     body.extend_from_slice(b"--\r\n");
 
-    Ok((body, boundary.to_string()))
+    Ok((body, boundary.to_string(), has_non_seekable))
 }
 
 /// Add a data field to the multipart body
@@ -235,11 +264,12 @@ fn add_single_data_field(
 }
 
 /// Parse a file value which can be a file-like object or tuple
+/// Returns (filename, content, content_type, extra_headers, is_non_seekable)
 fn parse_file_value(
     py: Python<'_>,
     value: &Bound<'_, PyAny>,
     field_name: &str,
-) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>)> {
+) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
     // Check if it's a tuple: (filename, content) or (filename, content, content_type) or (filename, content, content_type, headers)
     if let Ok(tuple) = value.downcast::<PyTuple>() {
         let len = tuple.len();
@@ -253,6 +283,7 @@ fn parse_file_value(
 
             // Get content
             let content_item = tuple.get_item(1)?;
+            let non_seekable = is_non_seekable_filelike(&content_item)?;
             let content = read_file_content(py, &content_item)?;
 
             // Get content type if provided
@@ -283,16 +314,17 @@ fn parse_file_value(
                 Vec::new()
             };
 
-            return Ok((filename, content, content_type, extra_headers));
+            return Ok((filename, content, content_type, extra_headers, non_seekable));
         }
     }
 
     // It's a file-like object
+    let non_seekable = is_non_seekable_filelike(value)?;
     let content = read_file_content(py, value)?;
     let filename = Some("upload".to_string());
     let content_type = "application/octet-stream".to_string();
 
-    Ok((filename, content, content_type, Vec::new()))
+    Ok((filename, content, content_type, Vec::new(), non_seekable))
 }
 
 /// Read content from a file-like object or bytes/string

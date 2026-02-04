@@ -498,32 +498,37 @@ impl Request {
             // Get data dict if provided
             let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.downcast::<PyDict>().ok());
 
-            let (body, content_type) = if let Some(ref ct) = existing_ct {
+            let (body, content_type, has_non_seekable) = if let Some(ref ct) = existing_ct {
                 if ct.contains("boundary=") {
                     // Extract boundary from existing header and use it
                     let boundary_str = extract_boundary_from_content_type(ct);
                     if let Some(b) = boundary_str {
-                        let (body, _) = build_multipart_body_with_boundary(py, data_dict, Some(f), &b)?;
-                        (body, ct.clone())
+                        let (body, _, has_non_seekable) = build_multipart_body_with_boundary(py, data_dict, Some(f), &b)?;
+                        (body, ct.clone(), has_non_seekable)
                     } else {
                         // Invalid boundary format, use auto-generated
-                        let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
-                        (body, format!("multipart/form-data; boundary={}", boundary))
+                        let (body, boundary, has_non_seekable) = build_multipart_body(py, data_dict, Some(f))?;
+                        (body, format!("multipart/form-data; boundary={}", boundary), has_non_seekable)
                     }
                 } else {
                     // Content-Type set but no boundary
-                    let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
+                    let (body, boundary, has_non_seekable) = build_multipart_body(py, data_dict, Some(f))?;
                     // Keep the existing content-type
-                    (body, ct.clone())
+                    (body, ct.clone(), has_non_seekable)
                 }
             } else {
                 // No Content-Type set, use auto-generated boundary
-                let (body, boundary) = build_multipart_body(py, data_dict, Some(f))?;
-                (body, format!("multipart/form-data; boundary={}", boundary))
+                let (body, boundary, has_non_seekable) = build_multipart_body(py, data_dict, Some(f))?;
+                (body, format!("multipart/form-data; boundary={}", boundary), has_non_seekable)
             };
 
             request.content = Some(body);
             request.headers.set("Content-Type".to_string(), content_type);
+
+            // Non-seekable files use Transfer-Encoding: chunked instead of Content-Length
+            if has_non_seekable {
+                request.headers.set("Transfer-Encoding".to_string(), "chunked".to_string());
+            }
         } else if let Some(d) = data {
             // Handle form data (no files)
             if let Ok(dict) = d.downcast::<PyDict>() {
@@ -601,6 +606,9 @@ impl Request {
             if !request.headers.contains("content-length") && !request.headers.contains("Content-Length") {
                 request.headers.set("Transfer-Encoding".to_string(), "chunked".to_string());
             }
+        } else if request.headers.contains("transfer-encoding") || request.headers.contains("Transfer-Encoding") {
+            // Transfer-Encoding already set (e.g., for non-seekable multipart files)
+            // Don't set Content-Length
         } else if let Some(ref content) = request.content {
             request.headers.set("Content-Length".to_string(), content.len().to_string());
         } else if matches!(request.method.as_str(), "POST" | "PUT" | "PATCH") {

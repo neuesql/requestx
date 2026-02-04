@@ -224,23 +224,23 @@ impl Client {
                         // Extract boundary from existing header and use it
                         let boundary_str = extract_boundary_from_content_type(ct);
                         if let Some(b) = boundary_str {
-                            let (body, _) = build_multipart_body_with_boundary(py, data, files, &b)?;
+                            let (body, _, _) = build_multipart_body_with_boundary(py, data, files, &b)?;
                             (body, ct.clone())
                         } else {
                             // Invalid boundary format, use auto-generated
-                            let (body, boundary) = build_multipart_body(py, data, files)?;
+                            let (body, boundary, _) = build_multipart_body(py, data, files)?;
                             (body, format!("multipart/form-data; boundary={}", boundary))
                         }
                     } else {
                         // Content-Type set but no boundary - use content-type as is (will auto-generate boundary in body)
-                        let (body, boundary) = build_multipart_body(py, data, files)?;
+                        let (body, boundary, _) = build_multipart_body(py, data, files)?;
                         // Keep the existing content-type but we generated body with auto boundary
                         // This case is when user sets content-type without boundary - we keep their content-type
                         (body, ct.clone())
                     }
                 } else {
                     // No Content-Type set, use auto-generated boundary
-                    let (body, boundary) = build_multipart_body(py, data, files)?;
+                    let (body, boundary, _) = build_multipart_body(py, data, files)?;
                     (body, format!("multipart/form-data; boundary={}", boundary))
                 };
 
@@ -1005,19 +1005,19 @@ impl Client {
                     if ct.contains("boundary=") {
                         let boundary = crate::multipart::extract_boundary_from_content_type(ct);
                         if let Some(b) = boundary {
-                            let (body, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(&f), &b)?;
+                            let (body, _, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(&f), &b)?;
                             (body, ct.clone())
                         } else {
-                            let (body, boundary) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                            let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
                             (body, format!("multipart/form-data; boundary={}", boundary))
                         }
                     } else {
                         // Content-Type set but no boundary - preserve the original
-                        let (body, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                        let (body, _, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
                         (body, ct.clone())
                     }
                 } else {
-                    let (body, boundary) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                    let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
                     (body, format!("multipart/form-data; boundary={}", boundary))
                 };
 
