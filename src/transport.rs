@@ -1,9 +1,9 @@
 //! HTTP Transport implementations including MockTransport
 
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 use crate::request::Request;
 use crate::response::Response;
@@ -21,9 +21,7 @@ pub struct MockTransport {
 
 impl Default for MockTransport {
     fn default() -> Self {
-        Self {
-            handler: Arc::new(Mutex::new(None)),
-        }
+        Self { handler: Arc::new(Mutex::new(None)) }
     }
 }
 
@@ -58,9 +56,7 @@ impl MockTransport {
 
             // If it's a callable that needs to be awaited (async), handle that
             // For now, we expect sync handlers
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "MockTransport handler must return a Response object",
-            ))
+            Err(pyo3::exceptions::PyTypeError::new_err("MockTransport handler must return a Response object"))
         } else {
             // Return a default 200 response
             Ok(Response::new(200))
@@ -69,11 +65,7 @@ impl MockTransport {
 
     /// Async version of handle_request for use with AsyncClient
     /// This can handle both sync and async handlers
-    fn handle_async_request<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn handle_async_request<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyAny>> {
         use pyo3_async_runtimes::tokio::future_into_py;
 
         // Call the handler first to see if it's async or sync
@@ -85,7 +77,9 @@ impl MockTransport {
 
             // Check if result is a coroutine (needs await)
             let inspect = py.import("inspect")?;
-            let is_coro = inspect.call_method1("iscoroutine", (result_bound,))?.extract::<bool>()?;
+            let is_coro = inspect
+                .call_method1("iscoroutine", (result_bound,))?
+                .extract::<bool>()?;
 
             if is_coro {
                 // Convert Python coroutine to Rust future and await it
@@ -106,9 +100,7 @@ impl MockTransport {
                                 return Ok(response);
                             }
                         }
-                        Err(pyo3::exceptions::PyTypeError::new_err(
-                            "MockTransport handler must return a Response object",
-                        ))
+                        Err(pyo3::exceptions::PyTypeError::new_err("MockTransport handler must return a Response object"))
                     })
                 });
             }
@@ -127,9 +119,7 @@ impl MockTransport {
                 }
             }
 
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "MockTransport handler must return a Response object",
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("MockTransport handler must return a Response object"));
         }
         drop(handler);
 
@@ -151,9 +141,7 @@ pub struct AsyncMockTransport {
 
 impl Default for AsyncMockTransport {
     fn default() -> Self {
-        Self {
-            handler: Arc::new(Mutex::new(None)),
-        }
+        Self { handler: Arc::new(Mutex::new(None)) }
     }
 }
 
@@ -167,11 +155,7 @@ impl AsyncMockTransport {
         }
     }
 
-    fn handle_async_request<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn handle_async_request<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyAny>> {
         use pyo3_async_runtimes::tokio::future_into_py;
 
         // Clone the handler Arc to move into the future
@@ -194,9 +178,7 @@ impl AsyncMockTransport {
                             return Ok(response);
                         }
                     }
-                    Err(pyo3::exceptions::PyTypeError::new_err(
-                        "AsyncMockTransport handler must return a Response object",
-                    ))
+                    Err(pyo3::exceptions::PyTypeError::new_err("AsyncMockTransport handler must return a Response object"))
                 } else {
                     Ok(Response::new(200))
                 }
@@ -240,9 +222,7 @@ impl HTTPTransport {
         // Add proxy if specified
         if let Some(proxy_url) = proxy {
             // Validate proxy scheme
-            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             let scheme = parsed.scheme();
             if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -250,15 +230,13 @@ impl HTTPTransport {
                     proxy_url
                 )));
             }
-            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             builder = builder.proxy(reqwest_proxy);
         }
 
-        let client = builder.build().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e)))?;
 
         Ok(Self {
             inner: Arc::new(client),
@@ -274,14 +252,7 @@ impl HTTPTransport {
 impl HTTPTransport {
     #[new]
     #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, proxy=None, **_kwargs))]
-    fn new(
-        verify: bool,
-        cert: Option<String>,
-        http2: bool,
-        retries: usize,
-        proxy: Option<&str>,
-        _kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
+    fn new(verify: bool, cert: Option<String>, http2: bool, retries: usize, proxy: Option<&str>, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let _ = retries; // TODO: implement retries
 
         let mut builder = reqwest::blocking::Client::builder();
@@ -293,9 +264,7 @@ impl HTTPTransport {
         // Add proxy if specified
         if let Some(proxy_url) = proxy {
             // Validate proxy scheme
-            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             let scheme = parsed.scheme();
             if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -303,15 +272,13 @@ impl HTTPTransport {
                     proxy_url
                 )));
             }
-            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             builder = builder.proxy(reqwest_proxy);
         }
 
-        let client = builder.build().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e)))?;
 
         Ok(Self {
             inner: Arc::new(client),
@@ -360,12 +327,7 @@ impl HTTPTransport {
         slf
     }
 
-    fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> bool {
+    fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> bool {
         self.close();
         false
     }
@@ -402,9 +364,7 @@ impl AsyncHTTPTransport {
         // Add proxy if specified
         if let Some(proxy_url) = proxy {
             // Validate proxy scheme
-            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             let scheme = parsed.scheme();
             if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -412,15 +372,13 @@ impl AsyncHTTPTransport {
                     proxy_url
                 )));
             }
-            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             builder = builder.proxy(reqwest_proxy);
         }
 
-        let client = builder.build().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e)))?;
 
         Ok(Self {
             inner: Arc::new(client),
@@ -436,14 +394,7 @@ impl AsyncHTTPTransport {
 impl AsyncHTTPTransport {
     #[new]
     #[pyo3(signature = (*, verify=true, cert=None, http2=false, retries=0, proxy=None, **_kwargs))]
-    fn new(
-        verify: bool,
-        cert: Option<String>,
-        http2: bool,
-        retries: usize,
-        proxy: Option<&str>,
-        _kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
+    fn new(verify: bool, cert: Option<String>, http2: bool, retries: usize, proxy: Option<&str>, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let _ = retries;
 
         let mut builder = reqwest::Client::builder();
@@ -455,9 +406,7 @@ impl AsyncHTTPTransport {
         // Add proxy if specified
         if let Some(proxy_url) = proxy {
             // Validate proxy scheme
-            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let parsed = reqwest::Url::parse(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             let scheme = parsed.scheme();
             if !["http", "https", "socks4", "socks5", "socks5h"].contains(&scheme) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -465,15 +414,13 @@ impl AsyncHTTPTransport {
                     proxy_url
                 )));
             }
-            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e))
-            })?;
+            let reqwest_proxy = reqwest::Proxy::all(proxy_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid proxy URL: {}", e)))?;
             builder = builder.proxy(reqwest_proxy);
         }
 
-        let client = builder.build().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e))
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create transport: {}", e)))?;
 
         Ok(Self {
             inner: Arc::new(client),
@@ -525,13 +472,7 @@ impl AsyncHTTPTransport {
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
-    fn __aexit__<'py>(
-        &self,
-        py: Python<'py>,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn __aexit__<'py>(&self, py: Python<'py>, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
         self.aclose(py)
     }
 }
@@ -549,13 +490,7 @@ pub struct WSGITransport {
 impl WSGITransport {
     #[new]
     #[pyo3(signature = (app, *, raise_app_exceptions=true, script_name="", root_path="", wsgi_errors=None))]
-    fn new(
-        app: Py<PyAny>,
-        raise_app_exceptions: bool,
-        script_name: &str,
-        root_path: &str,
-        wsgi_errors: Option<Py<PyAny>>,
-    ) -> Self {
+    fn new(app: Py<PyAny>, raise_app_exceptions: bool, script_name: &str, root_path: &str, wsgi_errors: Option<Py<PyAny>>) -> Self {
         let _ = raise_app_exceptions; // We always raise exceptions
         Self {
             app,
@@ -593,9 +528,7 @@ impl WSGITransport {
 
         // Parse URL components
         let url_str = url.to_string();
-        let parsed_url = reqwest::Url::parse(&url_str).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {}", e))
-        })?;
+        let parsed_url = reqwest::Url::parse(&url_str).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {}", e)))?;
 
         let host = parsed_url.host_str().unwrap_or("localhost");
         let port = parsed_url.port_or_known_default().unwrap_or(80);
@@ -718,9 +651,7 @@ start_response = StartResponse(status_holder, headers_holder, exc_info_holder)
         // Parse status (after iteration since start_response may be called during iteration for generators)
         let status_bound = status_holder.bind(py);
         if status_bound.len() == 0 {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "start_response was not called",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("start_response was not called"));
         }
         let status_str: String = status_bound.get_item(0)?.extract()?;
         let status_code: u16 = status_str
@@ -760,12 +691,7 @@ start_response = StartResponse(status_holder, headers_holder, exc_info_holder)
         slf
     }
 
-    fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> bool {
+    fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> bool {
         self.close();
         false
     }

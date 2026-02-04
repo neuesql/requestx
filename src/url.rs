@@ -44,17 +44,44 @@ impl URL {
     pub fn from_url(url: Url) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
         // Default to true since url crate always normalizes to have slash
-        Self { inner: url, fragment, has_trailing_slash: true, empty_scheme: false, empty_host: false, original_host: None, relative_path: None, original_raw_path: None }
+        Self {
+            inner: url,
+            fragment,
+            has_trailing_slash: true,
+            empty_scheme: false,
+            empty_host: false,
+            original_host: None,
+            relative_path: None,
+            original_raw_path: None,
+        }
     }
 
     pub fn from_url_with_slash(url: Url, has_trailing_slash: bool) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host: None, relative_path: None, original_raw_path: None }
+        Self {
+            inner: url,
+            fragment,
+            has_trailing_slash,
+            empty_scheme: false,
+            empty_host: false,
+            original_host: None,
+            relative_path: None,
+            original_raw_path: None,
+        }
     }
 
     pub fn from_url_with_host(url: Url, has_trailing_slash: bool, original_host: Option<String>) -> Self {
         let fragment = url.fragment().unwrap_or("").to_string();
-        Self { inner: url, fragment, has_trailing_slash, empty_scheme: false, empty_host: false, original_host, relative_path: None, original_raw_path: None }
+        Self {
+            inner: url,
+            fragment,
+            has_trailing_slash,
+            empty_scheme: false,
+            empty_host: false,
+            original_host,
+            relative_path: None,
+            original_raw_path: None,
+        }
     }
 
     pub fn inner(&self) -> &Url {
@@ -74,10 +101,7 @@ impl URL {
     pub fn join_url(&self, url: &str) -> PyResult<Self> {
         match self.inner.join(url) {
             Ok(joined) => Ok(Self::from_url(joined)),
-            Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
-                "Invalid URL for join: {}",
-                e
-            ))),
+            Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL for join: {}", e))),
         }
     }
 
@@ -180,7 +204,7 @@ impl URL {
                 if let Some(pos) = s.find("/?") {
                     // Remove the / before ?
                     let mut result = s[..pos].to_string();
-                    result.push_str(&s[pos + 1..]);  // Skip the /
+                    result.push_str(&s[pos + 1..]); // Skip the /
                     return result;
                 }
             }
@@ -189,7 +213,7 @@ impl URL {
             if !self.fragment.is_empty() {
                 if let Some(pos) = s.find("/#") {
                     let mut result = s[..pos].to_string();
-                    result.push_str(&s[pos + 1..]);  // Skip the /
+                    result.push_str(&s[pos + 1..]); // Skip the /
                     return result;
                 }
             }
@@ -208,7 +232,7 @@ impl URL {
         self.inner.host_str().map(|s| {
             // Strip brackets for IPv6 addresses
             let host = if s.starts_with('[') && s.ends_with(']') {
-                &s[1..s.len()-1]
+                &s[1..s.len() - 1]
             } else {
                 s
             };
@@ -231,7 +255,7 @@ impl URL {
         let host = self.inner.host_str().unwrap_or("");
         // Strip brackets for IPv6 addresses
         let host = if host.starts_with('[') && host.ends_with(']') {
-            &host[1..host.len()-1]
+            &host[1..host.len() - 1]
         } else {
             host
         };
@@ -301,16 +325,15 @@ impl URL {
                 let authority = &after_scheme[..authority_end];
 
                 // Check for port in authority (after last : that's not part of IPv6)
-                if !authority.starts_with('[') {  // Not IPv6
+                if !authority.starts_with('[') {
+                    // Not IPv6
                     if let Some(colon_pos) = authority.rfind(':') {
                         // Check if there's an @ (userinfo) after this colon
                         let after_colon = &authority[colon_pos + 1..];
                         if !after_colon.contains('@') {
                             // This should be a port
                             if !after_colon.is_empty() && !after_colon.chars().all(|c| c.is_ascii_digit()) {
-                                return Err(crate::exceptions::InvalidURL::new_err(format!(
-                                    "Invalid port: '{}'", after_colon
-                                )));
+                                return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid port: '{}'", after_colon)));
                             }
                         }
                     }
@@ -335,29 +358,25 @@ impl URL {
                         let inner_addr = &host_part[1..bracket_end];
                         // Check if it's a valid IPv6 address (basic validation)
                         if !is_valid_ipv6(inner_addr) {
-                            return Err(crate::exceptions::InvalidURL::new_err(format!(
-                                "Invalid IPv6 address: '{}'", ipv6_addr
-                            )));
+                            return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid IPv6 address: '{}'", ipv6_addr)));
                         }
                     }
                 } else {
                     // Find end of host
-                    let host_end = host_part.find(&[':', '/', '?', '#'][..]).unwrap_or(host_part.len());
+                    let host_end = host_part
+                        .find(&[':', '/', '?', '#'][..])
+                        .unwrap_or(host_part.len());
                     let host = &host_part[..host_end];
 
                     // Check if it looks like an IPv4 address
                     if looks_like_ipv4(host) && !is_valid_ipv4(host) {
-                        return Err(crate::exceptions::InvalidURL::new_err(format!(
-                            "Invalid IPv4 address: '{}'", host
-                        )));
+                        return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid IPv4 address: '{}'", host)));
                     }
 
                     // Check for invalid IDNA characters
                     if !host.is_empty() && host.chars().any(|c| !c.is_ascii()) {
                         if !is_valid_idna(host) {
-                            return Err(crate::exceptions::InvalidURL::new_err(format!(
-                                "Invalid IDNA hostname: '{}'", host
-                            )));
+                            return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid IDNA hostname: '{}'", host)));
                         }
                     }
                 }
@@ -367,8 +386,8 @@ impl URL {
 
             // Case 1: Empty scheme like "://example.com"
             if url_str.starts_with("://") {
-                let rest = &url_str[3..];  // Remove "://"
-                // Parse the rest as if it had http scheme, then mark as empty scheme
+                let rest = &url_str[3..]; // Remove "://"
+                                          // Parse the rest as if it had http scheme, then mark as empty scheme
                 let temp_url = format!("http://{}", rest);
                 match Url::parse(&temp_url) {
                     Ok(mut parsed_url) => {
@@ -377,14 +396,20 @@ impl URL {
                             let query_params = QueryParams::from_py(params_obj)?;
                             parsed_url.set_query(Some(&query_params.to_query_string()));
                         }
-                        let has_trailing_slash = url_str.split('?').next().unwrap_or(url_str)
-                            .split('#').next().unwrap_or(url_str).ends_with('/');
+                        let has_trailing_slash = url_str
+                            .split('?')
+                            .next()
+                            .unwrap_or(url_str)
+                            .split('#')
+                            .next()
+                            .unwrap_or(url_str)
+                            .ends_with('/');
                         let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
                         return Ok(Self {
                             inner: parsed_url,
                             fragment: frag,
                             has_trailing_slash,
-                            empty_scheme: true,  // Mark as empty scheme
+                            empty_scheme: true, // Mark as empty scheme
                             empty_host: false,
                             original_host: None,
                             relative_path: None,
@@ -392,18 +417,18 @@ impl URL {
                         });
                     }
                     Err(e) => {
-                        return Err(crate::exceptions::InvalidURL::new_err(format!(
-                            "Invalid URL: {}", e
-                        )));
+                        return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL: {}", e)));
                     }
                 }
             }
 
             // Case 2: Scheme with empty authority like "http://"
-            if url_str.ends_with("://") || (url_str.contains("://") && {
-                let after = url_str.split("://").nth(1).unwrap_or("");
-                after.is_empty() || after == "/"
-            }) {
+            if url_str.ends_with("://")
+                || (url_str.contains("://") && {
+                    let after = url_str.split("://").nth(1).unwrap_or("");
+                    after.is_empty() || after == "/"
+                })
+            {
                 // Extract the scheme
                 let scheme_end = url_str.find("://").unwrap();
                 let scheme = &url_str[..scheme_end];
@@ -424,7 +449,7 @@ impl URL {
                             fragment: frag,
                             has_trailing_slash,
                             empty_scheme: false,
-                            empty_host: true,  // Mark as empty host
+                            empty_host: true, // Mark as empty host
                             original_host: None,
                             relative_path: None,
                             original_raw_path: None,
@@ -457,7 +482,9 @@ impl URL {
                 let after_scheme = &url_str[authority_start + 3..];
 
                 // Find the authority portion (before first / ? or #)
-                let authority_end = after_scheme.find(&['/', '?', '#'][..]).unwrap_or(after_scheme.len());
+                let authority_end = after_scheme
+                    .find(&['/', '?', '#'][..])
+                    .unwrap_or(after_scheme.len());
                 let authority_part = &after_scheme[..authority_end];
                 let rest_part = &after_scheme[authority_end..];
 
@@ -565,10 +592,7 @@ impl URL {
                     });
                 }
                 Err(e) => {
-                    return Err(crate::exceptions::InvalidURL::new_err(format!(
-                        "Invalid URL: {}",
-                        e
-                    )));
+                    return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL: {}", e)));
                 }
             }
         }
@@ -586,9 +610,7 @@ impl URL {
         const MAX_COMPONENT_LENGTH: usize = 65536;
         if let Some(p) = path {
             if p.len() > MAX_COMPONENT_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'path' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'path' too long"));
             }
             // Check for non-printable characters in path
             for (i, c) in p.chars().enumerate() {
@@ -602,30 +624,28 @@ impl URL {
         }
         if let Some(q) = query {
             if q.len() > MAX_COMPONENT_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'query' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'query' too long"));
             }
         }
         if let Some(f) = fragment {
             if f.len() > MAX_COMPONENT_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'fragment' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'fragment' too long"));
             }
         }
 
         // Validate scheme
-        if !scheme.is_empty() && !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
-            return Err(crate::exceptions::InvalidURL::new_err(
-                "Invalid URL component 'scheme'",
-            ));
+        if !scheme.is_empty()
+            && !scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+        {
+            return Err(crate::exceptions::InvalidURL::new_err("Invalid URL component 'scheme'"));
         }
 
         // Check if host is IPv6 (contains : but is not a domain with port)
         // Strip brackets if present
         let host_clean = if host.starts_with('[') && host.ends_with(']') {
-            &host[1..host.len()-1]
+            &host[1..host.len() - 1]
         } else {
             host
         };
@@ -650,22 +670,16 @@ impl URL {
 
         // Validate path for absolute URLs
         if !host.is_empty() && !path.is_empty() && !path.starts_with('/') {
-            return Err(crate::exceptions::InvalidURL::new_err(
-                "For absolute URLs, path must be empty or begin with '/'",
-            ));
+            return Err(crate::exceptions::InvalidURL::new_err("For absolute URLs, path must be empty or begin with '/'"));
         }
 
         // Validate path for relative URLs
         if host.is_empty() && scheme.is_empty() {
             if path.starts_with("//") {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "Relative URLs cannot have a path starting with '//'",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("Relative URLs cannot have a path starting with '//'"));
             }
             if path.starts_with(':') {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "Relative URLs cannot have a path starting with ':'",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("Relative URLs cannot have a path starting with ':'"));
             }
         }
 
@@ -704,10 +718,7 @@ impl URL {
                         original_raw_path: None,
                     })
                 }
-                Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
-                    "Invalid URL: {}",
-                    e
-                ))),
+                Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL: {}", e))),
             }
         } else {
             // Store original host if it's an IDNA or IPv6 address (use cleaned version without brackets)
@@ -730,10 +741,7 @@ impl URL {
                         original_raw_path: None,
                     })
                 }
-                Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
-                    "Invalid URL: {}",
-                    e
-                ))),
+                Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL: {}", e))),
             }
         }
     }
@@ -763,14 +771,16 @@ fn extract_original_host(url_str: &str) -> Option<String> {
             }
         } else {
             // Regular host - find first delimiter
-            host_part.find(&[':', '/', '?', '#'][..]).unwrap_or(host_part.len())
+            host_part
+                .find(&[':', '/', '?', '#'][..])
+                .unwrap_or(host_part.len())
         };
 
         let host = &host_part[..host_end];
 
         // Strip brackets from IPv6
         let host = if host.starts_with('[') && host.ends_with(']') {
-            &host[1..host.len()-1]
+            &host[1..host.len() - 1]
         } else {
             host
         };
@@ -818,10 +828,7 @@ fn normalize_raw_path(raw: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if b == b'%' && i + 2 < bytes.len()
-            && bytes[i + 1].is_ascii_hexdigit()
-            && bytes[i + 2].is_ascii_hexdigit()
-        {
+        if b == b'%' && i + 2 < bytes.len() && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit() {
             // Already-encoded sequence - preserve as-is (keep original case)
             result.push('%');
             result.push(bytes[i + 1] as char);
@@ -976,10 +983,7 @@ fn is_valid_idna(s: &str) -> bool {
 impl URL {
     #[new]
     #[pyo3(signature = (url=None, **kwargs))]
-    fn py_new(
-        url: Option<&Bound<'_, PyAny>>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
+    fn py_new(url: Option<&Bound<'_, PyAny>>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         // Validate and extract url argument
         let url_str: Option<String> = match url {
             None => None,
@@ -991,10 +995,7 @@ impl URL {
                         Ok(s) => Some(s),
                         Err(_) => {
                             let type_name = obj.get_type().qualname()?;
-                            return Err(PyTypeError::new_err(format!(
-                                "Invalid type for url. Expected str but got {}",
-                                type_name
-                            )));
+                            return Err(PyTypeError::new_err(format!("Invalid type for url. Expected str but got {}", type_name)));
                         }
                     }
                 }
@@ -1002,10 +1003,7 @@ impl URL {
         };
 
         // Valid keyword arguments
-        const VALID_KWARGS: &[&str] = &[
-            "scheme", "host", "port", "path", "query", "fragment",
-            "username", "password", "params", "netloc", "raw_path",
-        ];
+        const VALID_KWARGS: &[&str] = &["scheme", "host", "port", "path", "query", "fragment", "username", "password", "params", "netloc", "raw_path"];
 
         let mut scheme_owned: Option<String> = None;
         let mut host_owned: Option<String> = None;
@@ -1023,10 +1021,7 @@ impl URL {
             for (key, value) in kw.iter() {
                 let key_str: String = key.extract()?;
                 if !VALID_KWARGS.contains(&key_str.as_str()) {
-                    return Err(PyTypeError::new_err(format!(
-                        "'{}' is an invalid keyword argument for URL()",
-                        key_str
-                    )));
+                    return Err(PyTypeError::new_err(format!("'{}' is an invalid keyword argument for URL()", key_str)));
                 }
                 match key_str.as_str() {
                     "scheme" => scheme_owned = Some(value.extract()?),
@@ -1037,7 +1032,7 @@ impl URL {
                         } else {
                             port = Some(value.extract()?);
                         }
-                    },
+                    }
                     "path" => path_owned = Some(value.extract()?),
                     "query" => query_owned = Some(value.extract()?),
                     "fragment" => fragment_owned = Some(value.extract()?),
@@ -1054,9 +1049,7 @@ impl URL {
         // Early validation of component kwargs (even when url string is provided)
         if let Some(ref p) = path_owned {
             if p.len() > MAX_URL_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'path' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'path' too long"));
             }
             for (i, c) in p.chars().enumerate() {
                 if c.is_control() && c != '\t' {
@@ -1069,16 +1062,12 @@ impl URL {
         }
         if let Some(ref q) = query_owned {
             if q.len() > MAX_URL_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'query' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'query' too long"));
             }
         }
         if let Some(ref f) = fragment_owned {
             if f.len() > MAX_URL_LENGTH {
-                return Err(crate::exceptions::InvalidURL::new_err(
-                    "URL component 'fragment' too long",
-                ));
+                return Err(crate::exceptions::InvalidURL::new_err("URL component 'fragment' too long"));
             }
         }
 
@@ -1120,7 +1109,7 @@ impl URL {
         if let Some(ref orig) = self.original_host {
             // Strip brackets from IPv6 if present
             let host = if orig.starts_with('[') && orig.ends_with(']') {
-                &orig[1..orig.len()-1]
+                &orig[1..orig.len() - 1]
             } else {
                 orig.as_str()
             };
@@ -1129,7 +1118,7 @@ impl URL {
         let host = self.inner.host_str().unwrap_or("");
         // Strip brackets for IPv6 addresses - httpx returns host without brackets
         let host = if host.starts_with('[') && host.ends_with(']') {
-            &host[1..host.len()-1]
+            &host[1..host.len() - 1]
         } else {
             host
         };
@@ -1212,7 +1201,7 @@ impl URL {
         let host = self.inner.host_str().unwrap_or("");
         // Strip brackets for IPv6 addresses - httpcore expects host without brackets
         let host = if host.starts_with('[') && host.ends_with(']') {
-            &host[1..host.len()-1]
+            &host[1..host.len() - 1]
         } else {
             host
         };
@@ -1337,10 +1326,7 @@ impl URL {
                     original_raw_path: None,
                 })
             }
-            Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!(
-                "Invalid URL for join: {}",
-                e
-            ))),
+            Err(e) => Err(crate::exceptions::InvalidURL::new_err(format!("Invalid URL for join: {}", e))),
         }
     }
 
@@ -1354,15 +1340,16 @@ impl URL {
                 match key_str.as_str() {
                     "scheme" => {
                         let scheme: String = value.extract()?;
-                        new_url.inner.set_scheme(&scheme).map_err(|_| {
-                            crate::exceptions::InvalidURL::new_err("Invalid scheme")
-                        })?;
+                        new_url
+                            .inner
+                            .set_scheme(&scheme)
+                            .map_err(|_| crate::exceptions::InvalidURL::new_err("Invalid scheme"))?;
                     }
                     "host" => {
                         let host: String = value.extract()?;
                         // Strip brackets if present (user might pass [::1] or ::1)
                         let host_clean = if host.starts_with('[') && host.ends_with(']') {
-                            &host[1..host.len()-1]
+                            &host[1..host.len() - 1]
                         } else {
                             &host
                         };
@@ -1373,9 +1360,10 @@ impl URL {
                         } else {
                             host_clean.to_string()
                         };
-                        new_url.inner.set_host(Some(&host_to_set)).map_err(|e| {
-                            crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e))
-                        })?;
+                        new_url
+                            .inner
+                            .set_host(Some(&host_to_set))
+                            .map_err(|e| crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e)))?;
                         // Store original host for IDNA/IPv6
                         if is_ipv6 || host.chars().any(|c| !c.is_ascii()) {
                             new_url.original_host = Some(host_clean.to_string());
@@ -1386,24 +1374,24 @@ impl URL {
                     "port" => {
                         // Handle port - allow large values in URL (will fail at connection time)
                         if value.is_none() {
-                            new_url.inner.set_port(None).map_err(|_| {
-                                crate::exceptions::InvalidURL::new_err("Invalid port")
-                            })?;
+                            new_url
+                                .inner
+                                .set_port(None)
+                                .map_err(|_| crate::exceptions::InvalidURL::new_err("Invalid port"))?;
                         } else {
                             let port_value: i64 = value.extract()?;
                             // Store as u16 by taking modulo - the connection will fail if truly invalid
                             // This matches httpx behavior which allows "impossible" ports in URLs
                             if port_value < 0 {
-                                return Err(crate::exceptions::InvalidURL::new_err(
-                                    "Invalid port: negative values not allowed"
-                                ));
+                                return Err(crate::exceptions::InvalidURL::new_err("Invalid port: negative values not allowed"));
                             }
                             // Convert large port numbers by truncating to u16 range
                             // The URL will be invalid for actual connections
                             let port_u16 = (port_value % 65536) as u16;
-                            new_url.inner.set_port(Some(port_u16)).map_err(|_| {
-                                crate::exceptions::InvalidURL::new_err("Invalid port")
-                            })?;
+                            new_url
+                                .inner
+                                .set_port(Some(port_u16))
+                                .map_err(|_| crate::exceptions::InvalidURL::new_err("Invalid port"))?;
                         }
                     }
                     "path" => {
@@ -1440,11 +1428,9 @@ impl URL {
                     "fragment" => {
                         let frag: String = value.extract()?;
                         new_url.fragment = frag.clone();
-                        new_url.inner.set_fragment(if frag.is_empty() {
-                            None
-                        } else {
-                            Some(&frag)
-                        });
+                        new_url
+                            .inner
+                            .set_fragment(if frag.is_empty() { None } else { Some(&frag) });
                     }
                     "netloc" => {
                         let netloc: &[u8] = value.extract()?;
@@ -1454,42 +1440,45 @@ impl URL {
                             let (host, port_str) = netloc_str.split_at(idx);
                             let port_str = &port_str[1..];
                             if let Ok(port) = port_str.parse::<u16>() {
-                                new_url.inner.set_host(Some(host)).map_err(|e| {
-                                    crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e))
-                                })?;
-                                new_url.inner.set_port(Some(port)).map_err(|_| {
-                                    crate::exceptions::InvalidURL::new_err("Invalid port")
-                                })?;
+                                new_url
+                                    .inner
+                                    .set_host(Some(host))
+                                    .map_err(|e| crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e)))?;
+                                new_url
+                                    .inner
+                                    .set_port(Some(port))
+                                    .map_err(|_| crate::exceptions::InvalidURL::new_err("Invalid port"))?;
                             } else {
-                                new_url.inner.set_host(Some(&netloc_str)).map_err(|e| {
-                                    crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e))
-                                })?;
+                                new_url
+                                    .inner
+                                    .set_host(Some(&netloc_str))
+                                    .map_err(|e| crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e)))?;
                             }
                         } else {
-                            new_url.inner.set_host(Some(&netloc_str)).map_err(|e| {
-                                crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e))
-                            })?;
+                            new_url
+                                .inner
+                                .set_host(Some(&netloc_str))
+                                .map_err(|e| crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e)))?;
                         }
                     }
                     "username" => {
                         let username: String = value.extract()?;
                         let encoded = encode_userinfo(&username);
-                        new_url.inner.set_username(&encoded).map_err(|_| {
-                            crate::exceptions::InvalidURL::new_err("Cannot set username")
-                        })?;
+                        new_url
+                            .inner
+                            .set_username(&encoded)
+                            .map_err(|_| crate::exceptions::InvalidURL::new_err("Cannot set username"))?;
                     }
                     "password" => {
                         let password: String = value.extract()?;
                         let encoded = encode_userinfo(&password);
-                        new_url.inner.set_password(Some(&encoded)).map_err(|_| {
-                            crate::exceptions::InvalidURL::new_err("Cannot set password")
-                        })?;
+                        new_url
+                            .inner
+                            .set_password(Some(&encoded))
+                            .map_err(|_| crate::exceptions::InvalidURL::new_err("Cannot set password"))?;
                     }
                     other => {
-                        return Err(PyTypeError::new_err(format!(
-                            "'{}' is an invalid keyword argument for URL()",
-                            other
-                        )));
+                        return Err(PyTypeError::new_err(format!("'{}' is an invalid keyword argument for URL()", other)));
                     }
                 }
             }

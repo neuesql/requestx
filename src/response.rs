@@ -50,7 +50,10 @@ impl Clone for Response {
             explicit_encoding: self.explicit_encoding.clone(),
             text_accessed: self.text_accessed,
             elapsed: self.elapsed,
-            stream: self.stream.as_ref().map(|s| Python::with_gil(|py| s.clone_ref(py))),
+            stream: self
+                .stream
+                .as_ref()
+                .map(|s| Python::with_gil(|py| s.clone_ref(py))),
             is_async_stream: self.is_async_stream,
         }
     }
@@ -88,10 +91,7 @@ impl Response {
         self.request = request;
     }
 
-    pub fn from_reqwest(
-        response: reqwest::blocking::Response,
-        request: Option<Request>,
-    ) -> PyResult<Self> {
+    pub fn from_reqwest(response: reqwest::blocking::Response, request: Option<Request>) -> PyResult<Self> {
         let status_code = response.status().as_u16();
         let headers = Headers::from_reqwest(response.headers());
         let url = URL::parse(response.url().as_str()).ok();
@@ -125,18 +125,11 @@ impl Response {
         })
     }
 
-    pub async fn from_reqwest_async(
-        response: reqwest::Response,
-        request: Option<Request>,
-    ) -> PyResult<Self> {
+    pub async fn from_reqwest_async(response: reqwest::Response, request: Option<Request>) -> PyResult<Self> {
         Self::from_reqwest_async_with_context(response, request, None).await
     }
 
-    pub async fn from_reqwest_async_with_context(
-        response: reqwest::Response,
-        request: Option<Request>,
-        timeout_context: Option<&str>,
-    ) -> PyResult<Self> {
+    pub async fn from_reqwest_async_with_context(response: reqwest::Response, request: Option<Request>, timeout_context: Option<&str>) -> PyResult<Self> {
         let status_code = response.status().as_u16();
         let headers = Headers::from_reqwest(response.headers());
         let url = URL::parse(response.url().as_str()).ok();
@@ -280,57 +273,51 @@ impl Response {
                 // Don't set content-length for streaming responses
             } else {
                 // Invalid content type
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    format!("'content' must be bytes, str, or iterable, not {}", c.get_type().name()?)
-                ));
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "'content' must be bytes, str, or iterable, not {}",
+                    c.get_type().name()?
+                )));
             }
             // Don't set content-length if transfer-encoding is set (chunked transfer)
             if !response.headers.contains("content-length") && !response.headers.contains("transfer-encoding") {
-                response.headers.set(
-                    "Content-Length".to_string(),
-                    response.content.len().to_string(),
-                );
+                response
+                    .headers
+                    .set("Content-Length".to_string(), response.content.len().to_string());
             }
         }
 
         // Handle text
         if let Some(t) = text {
             response.content = t.as_bytes().to_vec();
-            response.headers.set(
-                "Content-Length".to_string(),
-                response.content.len().to_string(),
-            );
-            response.headers.set(
-                "Content-Type".to_string(),
-                "text/plain; charset=utf-8".to_string(),
-            );
+            response
+                .headers
+                .set("Content-Length".to_string(), response.content.len().to_string());
+            response
+                .headers
+                .set("Content-Type".to_string(), "text/plain; charset=utf-8".to_string());
         }
 
         // Handle HTML
         if let Some(h) = html {
             response.content = h.as_bytes().to_vec();
-            response.headers.set(
-                "Content-Length".to_string(),
-                response.content.len().to_string(),
-            );
-            response.headers.set(
-                "Content-Type".to_string(),
-                "text/html; charset=utf-8".to_string(),
-            );
+            response
+                .headers
+                .set("Content-Length".to_string(), response.content.len().to_string());
+            response
+                .headers
+                .set("Content-Type".to_string(), "text/html; charset=utf-8".to_string());
         }
 
         // Handle JSON
         if let Some(j) = json {
-            let json_str = py_to_json_string(j)?;
+            let json_str = crate::common::py_to_json_string(j)?;
             response.content = json_str.into_bytes();
-            response.headers.set(
-                "Content-Length".to_string(),
-                response.content.len().to_string(),
-            );
-            response.headers.set(
-                "Content-Type".to_string(),
-                "application/json".to_string(),
-            );
+            response
+                .headers
+                .set("Content-Length".to_string(), response.content.len().to_string());
+            response
+                .headers
+                .set("Content-Type".to_string(), "application/json".to_string());
         }
 
         // For manually constructed responses, they start as not consumed and not closed
@@ -375,11 +362,7 @@ impl Response {
         // Decode based on encoding
         let enc_lower = encoding.to_lowercase();
         match enc_lower.as_str() {
-            "utf-8" | "utf8" => {
-                String::from_utf8(self.content.clone()).map_err(|e| {
-                    crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-                })
-            }
+            "utf-8" | "utf8" => String::from_utf8(self.content.clone()).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))),
             "latin-1" | "latin1" | "iso-8859-1" | "iso_8859_1" => {
                 // Latin-1 is a simple 1:1 byte to char mapping
                 Ok(self.content.iter().map(|&b| b as char).collect())
@@ -387,17 +370,16 @@ impl Response {
             "ascii" | "us-ascii" => {
                 // ASCII is UTF-8 compatible for bytes 0-127
                 let valid: Result<String, _> = String::from_utf8(
-                    self.content.iter().map(|&b| if b > 127 { b'?' } else { b }).collect()
+                    self.content
+                        .iter()
+                        .map(|&b| if b > 127 { b'?' } else { b })
+                        .collect(),
                 );
-                valid.map_err(|e| {
-                    crate::exceptions::DecodingError::new_err(format!("Failed to decode ASCII: {}", e))
-                })
+                valid.map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode ASCII: {}", e)))
             }
             _ => {
                 // For unknown encodings, try UTF-8 first, then fall back to latin-1
-                String::from_utf8(self.content.clone()).or_else(|_| {
-                    Ok(self.content.iter().map(|&b| b as char).collect())
-                })
+                String::from_utf8(self.content.clone()).or_else(|_| Ok(self.content.iter().map(|&b| b as char).collect()))
             }
         }
     }
@@ -421,11 +403,9 @@ impl Response {
 
     #[getter]
     fn request(&self) -> PyResult<Request> {
-        self.request.clone().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "The request instance has not been set on this response."
-            )
-        })
+        self.request
+            .clone()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("The request instance has not been set on this response."))
     }
 
     #[setter]
@@ -469,9 +449,7 @@ impl Response {
     #[setter]
     fn set_encoding(&mut self, encoding: &str) -> PyResult<()> {
         if self.text_accessed {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "cannot set encoding after .text has been accessed"
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err("cannot set encoding after .text has been accessed"));
         }
         self.explicit_encoding = Some(encoding.to_string());
         Ok(())
@@ -533,10 +511,7 @@ impl Response {
         // Only add http_version if it was set from a real HTTP response
         if self.has_real_http_version {
             let version_bytes = self.http_version.as_bytes().to_vec();
-            extensions.insert(
-                "http_version".to_string(),
-                PyBytes::new(py, &version_bytes).into_any().unbind(),
-            );
+            extensions.insert("http_version".to_string(), PyBytes::new(py, &version_bytes).into_any().unbind());
         }
         extensions
     }
@@ -581,7 +556,10 @@ impl Response {
                         }
 
                         // Use 'rel' as the key if present, otherwise use URL
-                        let key = link_data.get("rel").cloned().unwrap_or_else(|| url.to_string());
+                        let key = link_data
+                            .get("rel")
+                            .cloned()
+                            .unwrap_or_else(|| url.to_string());
                         result.insert(key, link_data);
                     }
                 }
@@ -610,7 +588,7 @@ impl Response {
         // Must have a request associated
         if slf.request.is_none() {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot call `raise_for_status` as the request instance has not been set on this response."
+                "Cannot call `raise_for_status` as the request instance has not been set on this response.",
             ));
         }
 
@@ -622,7 +600,9 @@ impl Response {
         let self_ref = &*slf;
 
         // Get URL from response or from request if available
-        let url_str = self_ref.url.as_ref()
+        let url_str = self_ref
+            .url
+            .as_ref()
             .map(|u| u.to_string())
             .or_else(|| self_ref.request.as_ref().map(|r| r.url_ref().to_string()))
             .unwrap_or_default();
@@ -640,13 +620,7 @@ impl Response {
         };
 
         // Build the error message
-        let mut message = format!(
-            "{} '{} {}' for url '{}'",
-            message_prefix,
-            self_ref.status_code,
-            self_ref.reason_phrase(),
-            url_str
-        );
+        let mut message = format!("{} '{} {}' for url '{}'", message_prefix, self_ref.status_code, self_ref.reason_phrase(), url_str);
 
         // Add redirect location for redirect responses
         if self_ref.is_redirect() {
@@ -677,9 +651,7 @@ impl Response {
     fn iter_raw<'py>(&mut self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<PyObject> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call a sync iterator method on an async stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
         }
 
         // Allow iteration if we have content (even if stream was previously consumed)
@@ -699,7 +671,10 @@ impl Response {
                 stream: Some(stream_obj),
                 chunk_size: chunk_size.unwrap_or(65536),
                 buffer: Vec::new(),
-            }.into_pyobject(py)?.into_any().unbind());
+            }
+            .into_pyobject(py)?
+            .into_any()
+            .unbind());
         }
 
         self.is_stream_consumed = true;
@@ -708,16 +683,17 @@ impl Response {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        }.into_pyobject(py)?.into_any().unbind())
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn iter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call a sync iterator method on an async stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
         }
 
         // Allow iteration if we have content (even if stream was previously consumed)
@@ -737,7 +713,10 @@ impl Response {
                 stream: Some(stream_obj),
                 chunk_size: chunk_size.unwrap_or(65536),
                 buffer: Vec::new(),
-            }.into_pyobject(py)?.into_any().unbind());
+            }
+            .into_pyobject(py)?
+            .into_any()
+            .unbind());
         }
 
         self.is_stream_consumed = true;
@@ -746,16 +725,17 @@ impl Response {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        }.into_pyobject(py)?.into_any().unbind())
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn iter_text(&mut self, chunk_size: Option<usize>) -> PyResult<TextIterator> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call a sync iterator method on an async stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
         }
 
         // Allow iteration if we have content (even if stream was previously consumed)
@@ -764,9 +744,7 @@ impl Response {
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
-        let text = String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })?;
+        let text = String::from_utf8(self.content.clone()).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e)))?;
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(TextIterator {
@@ -779,9 +757,7 @@ impl Response {
     fn iter_lines(&mut self) -> PyResult<LinesIterator> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call a sync iterator method on an async stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
         }
 
         // Allow iteration if we have content (even if stream was previously consumed)
@@ -790,9 +766,7 @@ impl Response {
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
-        let text = String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })?;
+        let text = String::from_utf8(self.content.clone()).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e)))?;
         self.is_stream_consumed = true;
         self.is_closed = true;
 
@@ -822,10 +796,7 @@ impl Response {
             lines.push(current_line);
         }
 
-        Ok(LinesIterator {
-            lines,
-            position: 0,
-        })
+        Ok(LinesIterator { lines, position: 0 })
     }
 
     // Async methods
@@ -841,9 +812,7 @@ impl Response {
     fn aiter_raw(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call an async iterator method on a sync stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
         if self.is_stream_consumed && self.stream.is_none() {
@@ -862,7 +831,10 @@ impl Response {
                 aiter: None,
                 chunk_size: chunk_size.unwrap_or(65536),
                 buffer: Vec::new(),
-            }.into_pyobject(py)?.into_any().unbind());
+            }
+            .into_pyobject(py)?
+            .into_any()
+            .unbind());
         }
 
         self.is_stream_consumed = true;
@@ -871,16 +843,17 @@ impl Response {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        }.into_pyobject(py)?.into_any().unbind())
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn aiter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call an async iterator method on a sync stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
         if self.is_stream_consumed && self.stream.is_none() {
@@ -899,7 +872,10 @@ impl Response {
                 aiter: None,
                 chunk_size: chunk_size.unwrap_or(65536),
                 buffer: Vec::new(),
-            }.into_pyobject(py)?.into_any().unbind());
+            }
+            .into_pyobject(py)?
+            .into_any()
+            .unbind());
         }
 
         self.is_stream_consumed = true;
@@ -908,16 +884,17 @@ impl Response {
             content: self.content.clone(),
             position: 0,
             chunk_size: chunk_size.unwrap_or(65536),
-        }.into_pyobject(py)?.into_any().unbind())
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
     }
 
     #[pyo3(signature = (chunk_size=None))]
     fn aiter_text(&mut self, chunk_size: Option<usize>) -> PyResult<AsyncTextIterator> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call an async iterator method on a sync stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
         if self.is_stream_consumed && self.stream.is_none() {
@@ -925,9 +902,7 @@ impl Response {
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
-        let text = String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })?;
+        let text = String::from_utf8(self.content.clone()).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e)))?;
         self.is_stream_consumed = true;
         self.is_closed = true;
         Ok(AsyncTextIterator {
@@ -940,9 +915,7 @@ impl Response {
     fn aiter_lines(&mut self) -> PyResult<AsyncLinesIterator> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call an async iterator method on a sync stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
         if self.is_stream_consumed && self.stream.is_none() {
@@ -950,9 +923,7 @@ impl Response {
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
         }
-        let text = String::from_utf8(self.content.clone()).map_err(|e| {
-            crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e))
-        })?;
+        let text = String::from_utf8(self.content.clone()).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode response: {}", e)))?;
         self.is_stream_consumed = true;
         self.is_closed = true;
 
@@ -980,18 +951,13 @@ impl Response {
             lines.push(current_line);
         }
 
-        Ok(AsyncLinesIterator {
-            lines,
-            position: 0,
-        })
+        Ok(AsyncLinesIterator { lines, position: 0 })
     }
 
     fn aclose<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Attempted to call an async method on a sync stream.",
-            ));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async method on a sync stream."));
         }
 
         self.is_closed = true;
@@ -1010,12 +976,7 @@ impl Response {
         slf
     }
 
-    fn __exit__(
-        &mut self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> bool {
+    fn __exit__(&mut self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> bool {
         self.close();
         false
     }
@@ -1395,8 +1356,8 @@ impl SyncStreamBytesIterator {
 /// Async iterator that wraps a Python async stream for raw bytes
 #[pyclass]
 pub struct AsyncStreamRawIterator {
-    stream: Option<PyObject>,  // The original async generator/iterator
-    aiter: Option<PyObject>,   // The __aiter__ result (stored after first call)
+    stream: Option<PyObject>, // The original async generator/iterator
+    aiter: Option<PyObject>,  // The __aiter__ result (stored after first call)
     chunk_size: usize,
     buffer: Vec<u8>,
 }
@@ -1524,102 +1485,26 @@ fn status_code_to_reason(code: u16) -> &'static str {
     }
 }
 
-/// Convert Python object to JSON string
-/// Uses Python's json module for serialization to preserve dict insertion order
-/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
-fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let py = obj.py();
-    let json_mod = py.import("json")?;
-
-    // Use httpx's default JSON settings:
-    // - ensure_ascii=False (allows non-ASCII characters)
-    // - allow_nan=False (raises ValueError for NaN/Inf)
-    // - separators=(',', ':') (compact representation)
-    let kwargs = pyo3::types::PyDict::new(py);
-    kwargs.set_item("ensure_ascii", false)?;
-    kwargs.set_item("allow_nan", false)?;
-    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
-    kwargs.set_item("separators", separators)?;
-
-    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
-    result.extract::<String>()
-}
-
-/// Convert Python object to sonic_rs::Value
-fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
-    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString};
-
-    if obj.is_none() {
-        return Ok(sonic_rs::Value::default());
-    }
-
-    if let Ok(b) = obj.downcast::<PyBool>() {
-        return Ok(sonic_rs::json!(b.is_true()));
-    }
-
-    if let Ok(i) = obj.downcast::<PyInt>() {
-        let val: i64 = i.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(f) = obj.downcast::<PyFloat>() {
-        let val: f64 = f.extract()?;
-        // Check for NaN and Inf - not allowed by default in JSON
-        if val.is_nan() || val.is_infinite() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Out of range float values are not JSON compliant",
-            ));
-        }
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(s) = obj.downcast::<PyString>() {
-        let val: String = s.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(list) = obj.downcast::<PyList>() {
-        let mut arr = Vec::new();
-        for item in list.iter() {
-            arr.push(py_to_json_value(&item)?);
-        }
-        return Ok(sonic_rs::Value::from(arr));
-    }
-
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut obj_map = sonic_rs::Object::new();
-        for (k, v) in dict.iter() {
-            let key: String = k.extract()?;
-            let value = py_to_json_value(&v)?;
-            obj_map.insert(&key, value);
-        }
-        return Ok(sonic_rs::Value::from(obj_map));
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "Unsupported type for JSON serialization",
-    ))
-}
-
 /// Parse JSON string to Python object
 fn json_to_py(py: Python<'_>, json_str: &str) -> PyResult<PyObject> {
-    let value: sonic_rs::Value = sonic_rs::from_str(json_str).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
-    })?;
+    let value: sonic_rs::Value = sonic_rs::from_str(json_str).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
     json_value_to_py(py, &value)
 }
 
 /// Convert sonic_rs::Value to Python object
 fn json_value_to_py(py: Python<'_>, value: &sonic_rs::Value) -> PyResult<PyObject> {
     use pyo3::types::{PyDict, PyList};
-    use sonic_rs::{JsonValueTrait, JsonContainerTrait};
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
     if value.is_null() {
         return Ok(py.None());
     }
 
     if let Some(b) = value.as_bool() {
-        return Ok(pyo3::types::PyBool::new(py, b).to_owned().into_any().unbind());
+        return Ok(pyo3::types::PyBool::new(py, b)
+            .to_owned()
+            .into_any()
+            .unbind());
     }
 
     if let Some(i) = value.as_i64() {

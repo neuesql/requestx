@@ -34,13 +34,7 @@ impl Default for Timeout {
 
 impl Timeout {
     /// Create a new Timeout with the given values
-    pub fn new(
-        timeout: Option<f64>,
-        connect: Option<f64>,
-        read: Option<f64>,
-        write: Option<f64>,
-        pool: Option<f64>,
-    ) -> Self {
+    pub fn new(timeout: Option<f64>, connect: Option<f64>, read: Option<f64>, write: Option<f64>, pool: Option<f64>) -> Self {
         if let Some(t) = timeout {
             Self {
                 connect: connect.or(Some(t)),
@@ -49,12 +43,7 @@ impl Timeout {
                 pool: pool.or(Some(t)),
             }
         } else {
-            Self {
-                connect,
-                read,
-                write,
-                pool,
-            }
+            Self { connect, read, write, pool }
         }
     }
 
@@ -115,10 +104,7 @@ impl Timeout {
 impl Timeout {
     #[new]
     #[pyo3(signature = (*args, **kwargs))]
-    fn py_new(
-        args: &Bound<'_, PyTuple>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
+    fn py_new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         // Extract keyword arguments
         let (timeout_kwarg, connect, read, write, pool) = if let Some(kw) = kwargs {
             let timeout_kw = kw.get_item("timeout")?;
@@ -150,7 +136,7 @@ impl Timeout {
             if any_individual_set && !all_individual_set {
                 // Some individual timeouts provided without a default or all four
                 return Err(pyo3::exceptions::PyValueError::new_err(
-                    "httpx.Timeout must either include a default, or set all four parameters explicitly."
+                    "httpx.Timeout must either include a default, or set all four parameters explicitly.",
                 ));
             }
 
@@ -169,21 +155,14 @@ impl Timeout {
         // Check if timeout is explicitly Python None
         if timeout.is_none() {
             // Timeout(None) or Timeout(timeout=None) - all values are None (unless keyword args override)
-            return Ok(Self {
-                connect,
-                read,
-                write,
-                pool,
-            });
+            return Ok(Self { connect, read, write, pool });
         }
 
         // Try tuple format: Timeout(timeout=(connect, read, write, pool))
         if let Ok(tuple) = timeout.downcast::<PyTuple>() {
             let len = tuple.len();
             if len != 4 {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "timeout tuple must have 4 elements (connect, read, write, pool)",
-                ));
+                return Err(pyo3::exceptions::PyValueError::new_err("timeout tuple must have 4 elements (connect, read, write, pool)"));
             }
             let c: Option<f64> = tuple.get_item(0)?.extract()?;
             let r: Option<f64> = tuple.get_item(1)?.extract()?;
@@ -221,9 +200,7 @@ impl Timeout {
             });
         }
 
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "timeout must be a float, tuple, Timeout instance, or None",
-        ))
+        Err(pyo3::exceptions::PyTypeError::new_err("timeout must be a float, tuple, Timeout instance, or None"))
     }
 
     fn as_dict(&self) -> std::collections::HashMap<String, Option<f64>> {
@@ -236,19 +213,16 @@ impl Timeout {
     }
 
     fn __eq__(&self, other: &Timeout) -> bool {
-        self.connect == other.connect
-            && self.read == other.read
-            && self.write == other.write
-            && self.pool == other.pool
+        self.connect == other.connect && self.read == other.read && self.write == other.write && self.pool == other.pool
     }
 
     fn __repr__(&self) -> String {
         // Helper to format f64 with at least one decimal place
         let fmt_f64 = |v: f64| {
             if v.fract() == 0.0 {
-                format!("{:.1}", v)  // 5 -> 5.0
+                format!("{:.1}", v) // 5 -> 5.0
             } else {
-                format!("{}", v)     // 5.5 -> 5.5
+                format!("{}", v) // 5.5 -> 5.5
             }
         };
 
@@ -259,11 +233,9 @@ impl Timeout {
             }
         }
         // Otherwise use long form
-        let fmt_opt = |opt: Option<f64>| {
-            match opt {
-                Some(v) => fmt_f64(v),
-                None => "None".to_string(),
-            }
+        let fmt_opt = |opt: Option<f64>| match opt {
+            Some(v) => fmt_f64(v),
+            None => "None".to_string(),
         };
         format!(
             "Timeout(connect={}, read={}, write={}, pool={})",
@@ -301,11 +273,7 @@ impl Default for Limits {
 impl Limits {
     #[new]
     #[pyo3(signature = (*, max_connections=None, max_keepalive_connections=None, keepalive_expiry=None))]
-    fn new(
-        max_connections: Option<usize>,
-        max_keepalive_connections: Option<usize>,
-        keepalive_expiry: Option<f64>,
-    ) -> Self {
+    fn new(max_connections: Option<usize>, max_keepalive_connections: Option<usize>, keepalive_expiry: Option<f64>) -> Self {
         // Only apply defaults for keepalive_expiry, others stay None if not provided
         Self {
             max_connections,
@@ -315,9 +283,7 @@ impl Limits {
     }
 
     fn __eq__(&self, other: &Limits) -> bool {
-        self.max_connections == other.max_connections
-            && self.max_keepalive_connections == other.max_keepalive_connections
-            && self.keepalive_expiry == other.keepalive_expiry
+        self.max_connections == other.max_connections && self.max_keepalive_connections == other.max_keepalive_connections && self.keepalive_expiry == other.keepalive_expiry
     }
 
     fn __repr__(&self) -> String {
@@ -328,11 +294,11 @@ impl Limits {
         let fmt_opt_f64 = |opt: Option<f64>| match opt {
             Some(v) => {
                 if v.fract() == 0.0 {
-                    format!("{:.1}", v)  // 5 -> 5.0
+                    format!("{:.1}", v) // 5 -> 5.0
                 } else {
                     format!("{}", v)
                 }
-            },
+            }
             None => "None".to_string(),
         };
         format!(
@@ -357,11 +323,7 @@ pub struct Proxy {
 impl Proxy {
     #[new]
     #[pyo3(signature = (url, *, auth=None, headers=None))]
-    fn new(
-        url: &str,
-        auth: Option<(String, String)>,
-        headers: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
+    fn new(url: &str, auth: Option<(String, String)>, headers: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let parsed_url = URL::parse(url)?;
 
         // Validate proxy scheme
@@ -381,10 +343,7 @@ impl Proxy {
             let username = inner_url.username();
             let password = inner_url.password();
             if !username.is_empty() {
-                Some((
-                    username.to_string(),
-                    password.unwrap_or("").to_string(),
-                ))
+                Some((username.to_string(), password.unwrap_or("").to_string()))
             } else {
                 None
             }
@@ -442,11 +401,7 @@ impl Proxy {
 
     fn __repr__(&self) -> String {
         if let Some(ref auth) = self.auth {
-            format!(
-                "Proxy('{}', auth=('{}', '********'))",
-                self.url.to_string(),
-                auth.0
-            )
+            format!("Proxy('{}', auth=('{}', '********'))", self.url.to_string(), auth.0)
         } else {
             format!("Proxy('{}')", self.url.to_string())
         }

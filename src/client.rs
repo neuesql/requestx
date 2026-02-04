@@ -8,7 +8,7 @@ use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
-use crate::request::{Request, py_value_to_form_str};
+use crate::request::{py_value_to_form_str, Request};
 use crate::response::Response;
 use crate::timeout::Timeout;
 use crate::types::BasicAuth;
@@ -61,12 +61,11 @@ impl Client {
         let follow_redirects = follow_redirects.unwrap_or(true);
         let max_redirects = max_redirects.unwrap_or(20);
 
-        let mut builder = reqwest::blocking::Client::builder()
-            .redirect(if follow_redirects {
-                reqwest::redirect::Policy::limited(max_redirects)
-            } else {
-                reqwest::redirect::Policy::none()
-            });
+        let mut builder = reqwest::blocking::Client::builder().redirect(if follow_redirects {
+            reqwest::redirect::Policy::limited(max_redirects)
+        } else {
+            reqwest::redirect::Policy::none()
+        });
 
         if let Some(dur) = timeout.to_duration() {
             builder = builder.timeout(dur);
@@ -76,28 +75,12 @@ impl Client {
             builder = builder.connect_timeout(connect_dur);
         }
 
-        let client = builder.build().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create client: {}", e))
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create client: {}", e)))?;
 
-        // Create default headers if none provided
-        let version = env!("CARGO_PKG_VERSION");
-        let mut default_headers = Headers::default();
-        default_headers.set("Accept".to_string(), "*/*".to_string());
-        default_headers.set("Accept-Encoding".to_string(), "gzip, deflate, br, zstd".to_string());
-        default_headers.set("Connection".to_string(), "keep-alive".to_string());
-        default_headers.set("User-Agent".to_string(), format!("python-httpx/{}", version));
-
-        // Merge user-provided headers over defaults
-        let final_headers = if let Some(user_headers) = headers {
-            // Start with defaults, then overlay user headers
-            for (k, v) in user_headers.inner() {
-                default_headers.set(k.clone(), v.clone());
-            }
-            default_headers
-        } else {
-            default_headers
-        };
+        // Create default headers, merging user-provided headers on top
+        let final_headers = crate::common::make_default_headers(headers.as_ref());
 
         Ok(Self {
             inner: client,
@@ -268,7 +251,7 @@ impl Client {
                 };
                 (Some(form_data.join("&").into_bytes()), ct)
             } else if let Some(j) = json {
-                let json_str = py_to_json_string(j)?;
+                let json_str = crate::common::py_to_json_string(j)?;
                 let ct = if !request_headers.contains("content-type") {
                     Some("application/json".to_string())
                 } else {
@@ -316,18 +299,13 @@ impl Client {
                 self.auth.clone()
             };
 
-            // Build default headers that httpx sets
             let url_obj = URL::parse(&final_url)?;
-            let host_header = Self::get_host_header(&url_obj);
-            let version = env!("CARGO_PKG_VERSION");
+            let host_header = crate::common::get_host_header(&url_obj);
 
             // Determine final auth - either from effective_auth, or from URL userinfo
             if let Some((username, password)) = effective_auth {
                 let credentials = format!("{}:{}", username, password);
-                let encoded = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    credentials.as_bytes(),
-                );
+                let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
                 request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
             } else {
                 // Extract auth from URL userinfo if present
@@ -335,10 +313,7 @@ impl Client {
                 if !url_username.is_empty() {
                     let url_password = url_obj.get_password().unwrap_or_default();
                     let credentials = format!("{}:{}", url_username, url_password);
-                    let encoded = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        credentials.as_bytes(),
-                    );
+                    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
                     request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
                 }
             }
@@ -365,9 +340,7 @@ impl Client {
         }
 
         // Standard HTTP request path
-        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", method))
-        })?;
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", method)))?;
 
         let mut builder = self.inner.request(method.clone(), &final_url);
 
@@ -455,7 +428,7 @@ impl Client {
             }
             builder = builder.form(&form_data);
         } else if let Some(j) = json {
-            let json_str = py_to_json_string(j)?;
+            let json_str = crate::common::py_to_json_string(j)?;
             builder = builder
                 .header("content-type", "application/json")
                 .body(json_str);
@@ -466,9 +439,9 @@ impl Client {
 
         // Execute request (release GIL during I/O) and measure elapsed time
         let start = std::time::Instant::now();
-        let response = py.allow_threads(|| {
-            builder.send()
-        }).map_err(convert_reqwest_error)?;
+        let response = py
+            .allow_threads(|| builder.send())
+            .map_err(convert_reqwest_error)?;
         let elapsed = start.elapsed();
 
         let mut result = Response::from_reqwest(response, Some(request))?;
@@ -587,23 +560,13 @@ impl Client {
             } else if let Ok(url_str) = url.extract::<String>() {
                 Some(URL::parse(&url_str)?)
             } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "base_url must be a string or URL object",
-                ));
+                return Err(pyo3::exceptions::PyTypeError::new_err("base_url must be a string or URL object"));
             }
         } else {
             None
         };
 
-        let mut client = Self::new_impl(
-            auth_tuple,
-            headers_obj,
-            cookies_obj,
-            timeout_obj,
-            follow_redirects,
-            max_redirects,
-            base_url_obj,
-        )?;
+        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, follow_redirects, max_redirects, base_url_obj)?;
 
         // Set trust_env
         if let Some(trust) = trust_env {
@@ -915,10 +878,7 @@ impl Client {
                 for item in list.iter() {
                     if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
                         if tuple.len() == 2 {
-                            if let (Ok(k), Ok(v)) = (
-                                tuple.get_item(0).and_then(|i| i.extract::<String>()),
-                                tuple.get_item(1).and_then(|i| i.extract::<String>())
-                            ) {
+                            if let (Ok(k), Ok(v)) = (tuple.get_item(0).and_then(|i| i.extract::<String>()), tuple.get_item(1).and_then(|i| i.extract::<String>())) {
                                 all_headers.append(k, v);
                             }
                         }
@@ -973,7 +933,9 @@ impl Client {
             kwargs.set_item("allow_nan", false)?;
             let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
             kwargs.set_item("separators", separators)?;
-            let json_str: String = json_mod.call_method("dumps", (j,), Some(&kwargs))?.extract()?;
+            let json_str: String = json_mod
+                .call_method("dumps", (j,), Some(&kwargs))?
+                .extract()?;
             let json_bytes = json_str.into_bytes();
             let content_len = json_bytes.len();
             request.set_content(json_bytes);
@@ -991,7 +953,7 @@ impl Client {
             } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
                 !list.is_empty()
             } else {
-                true  // Unknown type, assume not empty
+                true // Unknown type, assume not empty
             };
 
             if files_not_empty {
@@ -1109,12 +1071,7 @@ impl Client {
         slf
     }
 
-    fn __exit__(
-        &self,
-        _exc_type: Option<&Bound<'_, PyAny>>,
-        _exc_val: Option<&Bound<'_, PyAny>>,
-        _exc_tb: Option<&Bound<'_, PyAny>>,
-    ) -> bool {
+    fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> bool {
         self.close();
         false
     }
@@ -1183,9 +1140,7 @@ impl Client {
             } else if let Ok(s) = value.extract::<String>() {
                 s
             } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "base_url must be a string or URL object",
-                ));
+                return Err(pyo3::exceptions::PyTypeError::new_err("base_url must be a string or URL object"));
             };
 
             // Normalize base_url: ensure trailing slash for paths
@@ -1222,9 +1177,7 @@ impl Client {
             }
             self.headers = headers;
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "headers must be a Headers object or dict",
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("headers must be a Headers object or dict"));
         }
         Ok(())
     }
@@ -1249,9 +1202,7 @@ impl Client {
             }
             self.cookies = cookies;
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "cookies must be a Cookies object or dict",
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("cookies must be a Cookies object or dict"));
         }
         Ok(())
     }
@@ -1272,9 +1223,7 @@ impl Client {
         } else if value.is_none() {
             self.timeout = Timeout::default();
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "timeout must be a Timeout object or number",
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("timeout must be a Timeout object or number"));
         }
         Ok(())
     }
@@ -1309,7 +1258,7 @@ impl Client {
         sorted_patterns.sort_by(|a, b| b.len().cmp(&a.len()));
 
         for pattern in sorted_patterns {
-            if self.url_matches_pattern(&url_str, pattern) {
+            if crate::common::url_matches_pattern(&url_str, pattern) {
                 if let Some(transport) = self.mounts.get(pattern) {
                     return Ok(transport.bind(py).clone());
                 }
@@ -1336,25 +1285,24 @@ impl Client {
 
         // Get ports, defaulting to standard ports for comparison
         let request_port = request_url.get_port().unwrap_or_else(|| {
-            if request_url.get_scheme() == "https" { 443 } else { 80 }
+            if request_url.get_scheme() == "https" {
+                443
+            } else {
+                80
+            }
         });
-        let url_port = url.get_port().unwrap_or_else(|| {
-            if url.get_scheme() == "https" { 443 } else { 80 }
-        });
+        let url_port = url
+            .get_port()
+            .unwrap_or_else(|| if url.get_scheme() == "https" { 443 } else { 80 });
         let same_port = request_port == url_port;
 
         let same_origin = same_scheme && same_host && same_port;
 
         // Check if this is an HTTPS upgrade (http -> https on same host with default ports)
-        let is_https_upgrade = !same_scheme
-            && request_url.get_scheme() == "http"
-            && url.get_scheme() == "https"
-            && same_host
-            && request_port == 80
-            && url_port == 443;
+        let is_https_upgrade = !same_scheme && request_url.get_scheme() == "http" && url.get_scheme() == "https" && same_host && request_port == 80 && url_port == 443;
 
         // Update Host header for the new URL
-        let new_host = Self::get_host_header(url);
+        let new_host = crate::common::get_host_header(url);
         headers.set("Host".to_string(), new_host);
 
         // Strip Authorization header unless same origin or HTTPS upgrade
@@ -1364,197 +1312,4 @@ impl Client {
 
         headers
     }
-}
-
-impl Client {
-    /// Get the host header value for a URL (without userinfo, port only if non-default)
-    fn get_host_header(url: &URL) -> String {
-        let host = url.get_host_str();
-        let port = url.get_port();
-        let scheme = url.get_scheme();
-
-        // Only include port if non-default
-        let default_port = match scheme.as_str() {
-            "http" => 80,
-            "https" => 443,
-            _ => 0,
-        };
-
-        if let Some(p) = port {
-            if p != default_port {
-                return format!("{}:{}", host, p);
-            }
-        }
-        host
-    }
-
-    /// Check if a URL matches a mount pattern
-    fn url_matches_pattern(&self, url: &str, pattern: &str) -> bool {
-        // Mount patterns can be:
-        // - "all://" - matches all URLs
-        // - "http://" - matches all HTTP URLs
-        // - "https://" - matches all HTTPS URLs
-        // - "http://example.com" - matches specific domain (any port)
-        // - "http://example.com:8080" - matches specific domain and port
-        // - "http://*.example.com" - matches subdomains only (not example.com itself)
-        // - "http://*example.com" - matches domain suffix (example.com and www.example.com)
-        // - "http://*" - matches any domain with http scheme
-        // - "all://example.com" - matches domain on any scheme
-
-        if pattern == "all://" {
-            return true;
-        }
-
-        // Parse the URL scheme
-        let url_scheme = url.split("://").next().unwrap_or("");
-        let pattern_scheme = pattern.split("://").next().unwrap_or("");
-
-        // Check scheme match (unless pattern scheme is "all")
-        if pattern_scheme != "all" && pattern_scheme != url_scheme {
-            return false;
-        }
-
-        // Get the URL host (with port)
-        let url_host = if let Some(rest) = url.strip_prefix(&format!("{}://", url_scheme)) {
-            rest.split('/').next().unwrap_or("")
-        } else {
-            ""
-        };
-
-        // Get the pattern host (with port if specified)
-        let pattern_host = if let Some(rest) = pattern.strip_prefix(&format!("{}://", pattern_scheme)) {
-            rest.split('/').next().unwrap_or("")
-        } else {
-            ""
-        };
-
-        // If pattern is just scheme://, match all hosts
-        if pattern_host.is_empty() {
-            return true;
-        }
-
-        // Handle "*" pattern - matches any host
-        if pattern_host == "*" {
-            return true;
-        }
-
-        // Split into host and port
-        let url_host_no_port = url_host.split(':').next().unwrap_or(url_host);
-        let url_port = url_host.split(':').nth(1);
-        let pattern_host_no_port = pattern_host.split(':').next().unwrap_or(pattern_host);
-        let pattern_port = pattern_host.split(':').nth(1);
-
-        // Handle "*.example.com" pattern - matches subdomains ONLY (NOT example.com itself)
-        if pattern_host_no_port.starts_with("*.") {
-            let suffix = &pattern_host_no_port[2..]; // Remove "*."
-            // Must have a dot before the suffix (i.e., must be a subdomain)
-            // "*.example.com" matches "www.example.com" but NOT "example.com"
-            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
-                return Self::port_matches(url_port, pattern_port);
-            }
-            return false;
-        }
-
-        // Handle "*example.com" pattern (no dot) - matches suffix
-        // e.g., "*example.com" matches "example.com" and "www.example.com" but NOT "wwwexample.com"
-        if pattern_host_no_port.starts_with('*') && !pattern_host_no_port.starts_with("*.") {
-            let suffix = &pattern_host_no_port[1..]; // Remove "*"
-            // Must either be exact match or have a dot before suffix
-            if url_host_no_port == suffix {
-                return Self::port_matches(url_port, pattern_port);
-            }
-            if url_host_no_port.ends_with(&format!(".{}", suffix)) {
-                return Self::port_matches(url_port, pattern_port);
-            }
-            return false;
-        }
-
-        // Exact host match
-        if url_host_no_port != pattern_host_no_port {
-            return false;
-        }
-
-        // If pattern has a port, URL must have matching port
-        // If pattern has no port, any port matches
-        Self::port_matches(url_port, pattern_port)
-    }
-
-    /// Check if URL port matches pattern port
-    fn port_matches(url_port: Option<&str>, pattern_port: Option<&str>) -> bool {
-        match pattern_port {
-            None => true,  // Pattern has no port requirement
-            Some(pp) => url_port == Some(pp),  // Port must match exactly
-        }
-    }
-}
-
-/// Convert Python object to JSON string
-/// Uses Python's json module for serialization to preserve dict insertion order
-/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
-fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let py = obj.py();
-    let json_mod = py.import("json")?;
-
-    // Use httpx's default JSON settings:
-    // - ensure_ascii=False (allows non-ASCII characters)
-    // - allow_nan=False (raises ValueError for NaN/Inf)
-    // - separators=(',', ':') (compact representation)
-    let kwargs = pyo3::types::PyDict::new(py);
-    kwargs.set_item("ensure_ascii", false)?;
-    kwargs.set_item("allow_nan", false)?;
-    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
-    kwargs.set_item("separators", separators)?;
-
-    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
-    result.extract::<String>()
-}
-
-/// Convert Python object to sonic_rs::Value
-fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
-    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString};
-
-    if obj.is_none() {
-        return Ok(sonic_rs::Value::default());
-    }
-
-    if let Ok(b) = obj.downcast::<PyBool>() {
-        return Ok(sonic_rs::json!(b.is_true()));
-    }
-
-    if let Ok(i) = obj.downcast::<PyInt>() {
-        let val: i64 = i.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(f) = obj.downcast::<PyFloat>() {
-        let val: f64 = f.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(s) = obj.downcast::<PyString>() {
-        let val: String = s.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(list) = obj.downcast::<PyList>() {
-        let mut arr = Vec::new();
-        for item in list.iter() {
-            arr.push(py_to_json_value(&item)?);
-        }
-        return Ok(sonic_rs::Value::from(arr));
-    }
-
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut obj_map = sonic_rs::Object::new();
-        for (k, v) in dict.iter() {
-            let key: String = k.extract()?;
-            let value = py_to_json_value(&v)?;
-            obj_map.insert(&key, value);
-        }
-        return Ok(sonic_rs::Value::from(obj_map));
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "Unsupported type for JSON serialization",
-    ))
 }

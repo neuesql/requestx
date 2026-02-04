@@ -1,165 +1,11 @@
 //! Additional types: streams, auth, status codes
 
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
 
-/// Dual-mode byte stream that supports both sync and async iteration
-/// This implements both SyncByteStream and AsyncByteStream protocols
-#[pyclass(name = "SyncByteStream", subclass)]
-#[derive(Clone, Debug, Default)]
-pub struct SyncByteStream {
-    data: Vec<u8>,
-    /// Track iteration state - allows multiple iterations
-    sync_consumed: bool,
-    async_consumed: bool,
-}
+use crate::common::impl_byte_stream;
 
-impl SyncByteStream {
-    /// Create a new SyncByteStream with the given data
-    pub fn from_data(data: Vec<u8>) -> Self {
-        Self { data, sync_consumed: false, async_consumed: false }
-    }
-
-    /// Get data reference
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-}
-
-#[pymethods]
-impl SyncByteStream {
-    #[new]
-    fn new() -> Self {
-        Self { data: Vec::new(), sync_consumed: false, async_consumed: false }
-    }
-
-    // === Sync iteration support ===
-    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.sync_consumed = false;
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<Vec<u8>> {
-        if self.sync_consumed || self.data.is_empty() {
-            None
-        } else {
-            self.sync_consumed = true;
-            Some(self.data.clone())
-        }
-    }
-
-    // === Async iteration support - makes this dual-mode ===
-    fn __aiter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.async_consumed = false;
-        slf
-    }
-
-    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        if self.async_consumed || self.data.is_empty() {
-            Ok(None)
-        } else {
-            self.async_consumed = true;
-            Ok(Some(PyBytes::new(py, &self.data)))
-        }
-    }
-
-    // === Common methods ===
-    fn read(&self) -> Vec<u8> {
-        self.data.clone()
-    }
-
-    fn close(&mut self) {
-        self.data.clear();
-        self.sync_consumed = true;
-        self.async_consumed = true;
-    }
-
-    fn aread<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.data)
-    }
-
-    fn aclose(&mut self) {
-        self.data.clear();
-        self.sync_consumed = true;
-        self.async_consumed = true;
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<SyncByteStream [{} bytes]>", self.data.len())
-    }
-}
-
-/// Asynchronous byte stream - alias to SyncByteStream for compatibility
-/// Both types support both sync and async iteration
-#[pyclass(name = "AsyncByteStream", subclass)]
-#[derive(Clone, Debug, Default)]
-pub struct AsyncByteStream {
-    data: Vec<u8>,
-    sync_consumed: bool,
-    async_consumed: bool,
-}
-
-#[pymethods]
-impl AsyncByteStream {
-    #[new]
-    fn new() -> Self {
-        Self { data: Vec::new(), sync_consumed: false, async_consumed: false }
-    }
-
-    // === Sync iteration support ===
-    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.sync_consumed = false;
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<Vec<u8>> {
-        if self.sync_consumed || self.data.is_empty() {
-            None
-        } else {
-            self.sync_consumed = true;
-            Some(self.data.clone())
-        }
-    }
-
-    // === Async iteration support ===
-    fn __aiter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.async_consumed = false;
-        slf
-    }
-
-    fn __anext__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        if self.async_consumed || self.data.is_empty() {
-            Ok(None)
-        } else {
-            self.async_consumed = true;
-            Ok(Some(PyBytes::new(py, &self.data)))
-        }
-    }
-
-    fn read(&self) -> Vec<u8> {
-        self.data.clone()
-    }
-
-    fn close(&mut self) {
-        self.data.clear();
-        self.sync_consumed = true;
-        self.async_consumed = true;
-    }
-
-    fn aread<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.data)
-    }
-
-    fn aclose(&mut self) {
-        self.data.clear();
-        self.sync_consumed = true;
-        self.async_consumed = true;
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<AsyncByteStream [{} bytes]>", self.data.len())
-    }
-}
+impl_byte_stream!(SyncByteStream, "SyncByteStream");
+impl_byte_stream!(AsyncByteStream, "AsyncByteStream");
 
 /// Basic authentication
 #[pyclass(name = "BasicAuth")]
@@ -229,9 +75,7 @@ impl NetRCAuth {
     #[new]
     #[pyo3(signature = (file=None))]
     fn new(file: Option<&str>) -> Self {
-        Self {
-            file: file.map(|s| s.to_string()),
-        }
+        Self { file: file.map(|s| s.to_string()) }
     }
 
     fn __repr__(&self) -> String {
@@ -386,9 +230,7 @@ impl codes {
     /// Allow codes["NOT_FOUND"] access
     #[classmethod]
     fn __class_getitem__(_cls: &Bound<'_, pyo3::types::PyType>, name: &str) -> PyResult<u16> {
-        Self::name_to_code(name).ok_or_else(|| {
-            pyo3::exceptions::PyKeyError::new_err(name.to_string())
-        })
+        Self::name_to_code(name).ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(name.to_string()))
     }
 
     /// Get reason phrase for a status code
@@ -533,127 +375,251 @@ impl codes {
 
     // Lowercase aliases for all status codes
     #[classattr]
-    fn r#continue() -> u16 { 100 }
+    fn r#continue() -> u16 {
+        100
+    }
     #[classattr]
-    fn switching_protocols() -> u16 { 101 }
+    fn switching_protocols() -> u16 {
+        101
+    }
     #[classattr]
-    fn processing() -> u16 { 102 }
+    fn processing() -> u16 {
+        102
+    }
     #[classattr]
-    fn early_hints() -> u16 { 103 }
+    fn early_hints() -> u16 {
+        103
+    }
     #[classattr]
-    fn ok() -> u16 { 200 }
+    fn ok() -> u16 {
+        200
+    }
     #[classattr]
-    fn created() -> u16 { 201 }
+    fn created() -> u16 {
+        201
+    }
     #[classattr]
-    fn accepted() -> u16 { 202 }
+    fn accepted() -> u16 {
+        202
+    }
     #[classattr]
-    fn non_authoritative_information() -> u16 { 203 }
+    fn non_authoritative_information() -> u16 {
+        203
+    }
     #[classattr]
-    fn no_content() -> u16 { 204 }
+    fn no_content() -> u16 {
+        204
+    }
     #[classattr]
-    fn reset_content() -> u16 { 205 }
+    fn reset_content() -> u16 {
+        205
+    }
     #[classattr]
-    fn partial_content() -> u16 { 206 }
+    fn partial_content() -> u16 {
+        206
+    }
     #[classattr]
-    fn multi_status() -> u16 { 207 }
+    fn multi_status() -> u16 {
+        207
+    }
     #[classattr]
-    fn already_reported() -> u16 { 208 }
+    fn already_reported() -> u16 {
+        208
+    }
     #[classattr]
-    fn im_used() -> u16 { 226 }
+    fn im_used() -> u16 {
+        226
+    }
     #[classattr]
-    fn multiple_choices() -> u16 { 300 }
+    fn multiple_choices() -> u16 {
+        300
+    }
     #[classattr]
-    fn moved_permanently() -> u16 { 301 }
+    fn moved_permanently() -> u16 {
+        301
+    }
     #[classattr]
-    fn found() -> u16 { 302 }
+    fn found() -> u16 {
+        302
+    }
     #[classattr]
-    fn see_other() -> u16 { 303 }
+    fn see_other() -> u16 {
+        303
+    }
     #[classattr]
-    fn not_modified() -> u16 { 304 }
+    fn not_modified() -> u16 {
+        304
+    }
     #[classattr]
-    fn use_proxy() -> u16 { 305 }
+    fn use_proxy() -> u16 {
+        305
+    }
     #[classattr]
-    fn temporary_redirect() -> u16 { 307 }
+    fn temporary_redirect() -> u16 {
+        307
+    }
     #[classattr]
-    fn permanent_redirect() -> u16 { 308 }
+    fn permanent_redirect() -> u16 {
+        308
+    }
     #[classattr]
-    fn bad_request() -> u16 { 400 }
+    fn bad_request() -> u16 {
+        400
+    }
     #[classattr]
-    fn unauthorized() -> u16 { 401 }
+    fn unauthorized() -> u16 {
+        401
+    }
     #[classattr]
-    fn payment_required() -> u16 { 402 }
+    fn payment_required() -> u16 {
+        402
+    }
     #[classattr]
-    fn forbidden() -> u16 { 403 }
+    fn forbidden() -> u16 {
+        403
+    }
     #[classattr]
-    fn not_found() -> u16 { 404 }
+    fn not_found() -> u16 {
+        404
+    }
     #[classattr]
-    fn method_not_allowed() -> u16 { 405 }
+    fn method_not_allowed() -> u16 {
+        405
+    }
     #[classattr]
-    fn not_acceptable() -> u16 { 406 }
+    fn not_acceptable() -> u16 {
+        406
+    }
     #[classattr]
-    fn proxy_authentication_required() -> u16 { 407 }
+    fn proxy_authentication_required() -> u16 {
+        407
+    }
     #[classattr]
-    fn request_timeout() -> u16 { 408 }
+    fn request_timeout() -> u16 {
+        408
+    }
     #[classattr]
-    fn conflict() -> u16 { 409 }
+    fn conflict() -> u16 {
+        409
+    }
     #[classattr]
-    fn gone() -> u16 { 410 }
+    fn gone() -> u16 {
+        410
+    }
     #[classattr]
-    fn length_required() -> u16 { 411 }
+    fn length_required() -> u16 {
+        411
+    }
     #[classattr]
-    fn precondition_failed() -> u16 { 412 }
+    fn precondition_failed() -> u16 {
+        412
+    }
     #[classattr]
-    fn payload_too_large() -> u16 { 413 }
+    fn payload_too_large() -> u16 {
+        413
+    }
     #[classattr]
-    fn uri_too_long() -> u16 { 414 }
+    fn uri_too_long() -> u16 {
+        414
+    }
     #[classattr]
-    fn unsupported_media_type() -> u16 { 415 }
+    fn unsupported_media_type() -> u16 {
+        415
+    }
     #[classattr]
-    fn range_not_satisfiable() -> u16 { 416 }
+    fn range_not_satisfiable() -> u16 {
+        416
+    }
     #[classattr]
-    fn expectation_failed() -> u16 { 417 }
+    fn expectation_failed() -> u16 {
+        417
+    }
     #[classattr]
-    fn im_a_teapot() -> u16 { 418 }
+    fn im_a_teapot() -> u16 {
+        418
+    }
     #[classattr]
-    fn misdirected_request() -> u16 { 421 }
+    fn misdirected_request() -> u16 {
+        421
+    }
     #[classattr]
-    fn unprocessable_entity() -> u16 { 422 }
+    fn unprocessable_entity() -> u16 {
+        422
+    }
     #[classattr]
-    fn locked() -> u16 { 423 }
+    fn locked() -> u16 {
+        423
+    }
     #[classattr]
-    fn failed_dependency() -> u16 { 424 }
+    fn failed_dependency() -> u16 {
+        424
+    }
     #[classattr]
-    fn too_early() -> u16 { 425 }
+    fn too_early() -> u16 {
+        425
+    }
     #[classattr]
-    fn upgrade_required() -> u16 { 426 }
+    fn upgrade_required() -> u16 {
+        426
+    }
     #[classattr]
-    fn precondition_required() -> u16 { 428 }
+    fn precondition_required() -> u16 {
+        428
+    }
     #[classattr]
-    fn too_many_requests() -> u16 { 429 }
+    fn too_many_requests() -> u16 {
+        429
+    }
     #[classattr]
-    fn request_header_fields_too_large() -> u16 { 431 }
+    fn request_header_fields_too_large() -> u16 {
+        431
+    }
     #[classattr]
-    fn unavailable_for_legal_reasons() -> u16 { 451 }
+    fn unavailable_for_legal_reasons() -> u16 {
+        451
+    }
     #[classattr]
-    fn internal_server_error() -> u16 { 500 }
+    fn internal_server_error() -> u16 {
+        500
+    }
     #[classattr]
-    fn not_implemented() -> u16 { 501 }
+    fn not_implemented() -> u16 {
+        501
+    }
     #[classattr]
-    fn bad_gateway() -> u16 { 502 }
+    fn bad_gateway() -> u16 {
+        502
+    }
     #[classattr]
-    fn service_unavailable() -> u16 { 503 }
+    fn service_unavailable() -> u16 {
+        503
+    }
     #[classattr]
-    fn gateway_timeout() -> u16 { 504 }
+    fn gateway_timeout() -> u16 {
+        504
+    }
     #[classattr]
-    fn http_version_not_supported() -> u16 { 505 }
+    fn http_version_not_supported() -> u16 {
+        505
+    }
     #[classattr]
-    fn variant_also_negotiates() -> u16 { 506 }
+    fn variant_also_negotiates() -> u16 {
+        506
+    }
     #[classattr]
-    fn insufficient_storage() -> u16 { 507 }
+    fn insufficient_storage() -> u16 {
+        507
+    }
     #[classattr]
-    fn loop_detected() -> u16 { 508 }
+    fn loop_detected() -> u16 {
+        508
+    }
     #[classattr]
-    fn not_extended() -> u16 { 510 }
+    fn not_extended() -> u16 {
+        510
+    }
     #[classattr]
-    fn network_authentication_required() -> u16 { 511 }
+    fn network_authentication_required() -> u16 {
+        511
+    }
 }

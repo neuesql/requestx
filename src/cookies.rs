@@ -23,9 +23,7 @@ pub struct Cookies {
 
 impl Cookies {
     pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+        Self { entries: Vec::new() }
     }
 
     pub fn from_reqwest(_jar: &reqwest::cookie::Jar, _url: &url::Url) -> Self {
@@ -137,10 +135,7 @@ impl Cookies {
                 for item_result in py_iter {
                     let item: Bound<'_, PyAny> = item_result?;
                     // Check if item has 'name', 'value', 'domain', 'path' attributes (Cookie object)
-                    if let (Ok(name), Ok(value)) = (
-                        item.getattr("name"),
-                        item.getattr("value"),
-                    ) {
+                    if let (Ok(name), Ok(value)) = (item.getattr("name"), item.getattr("value")) {
                         handled_as_jar = true;
                         let name_str: String = name.extract()?;
                         let value_str: String = value.extract()?;
@@ -168,13 +163,7 @@ impl Cookies {
     }
 
     #[pyo3(signature = (name, default=None, domain=None, path=None))]
-    fn get(
-        &self,
-        name: &str,
-        default: Option<&str>,
-        domain: Option<&str>,
-        path: Option<&str>,
-    ) -> PyResult<Option<String>> {
+    fn get(&self, name: &str, default: Option<&str>, domain: Option<&str>, path: Option<&str>) -> PyResult<Option<String>> {
         let matches = self.find_cookies(name, domain, path);
         match matches.len() {
             0 => Ok(default.map(|s| s.to_string())),
@@ -182,10 +171,7 @@ impl Cookies {
             _ => {
                 // Multiple matches without domain/path filter - error
                 if domain.is_none() && path.is_none() {
-                    Err(CookieConflict::new_err(format!(
-                        "Multiple cookies with name '{}' exist for different domains/paths",
-                        name
-                    )))
+                    Err(CookieConflict::new_err(format!("Multiple cookies with name '{}' exist for different domains/paths", name)))
                 } else {
                     // With filters, just return first match
                     Ok(Some(matches[0].value.clone()))
@@ -274,10 +260,7 @@ impl Cookies {
         match matches.len() {
             0 => Err(PyKeyError::new_err(name.to_string())),
             1 => Ok(matches[0].value.clone()),
-            _ => Err(CookieConflict::new_err(format!(
-                "Multiple cookies with name '{}' exist for different domains/paths",
-                name
-            ))),
+            _ => Err(CookieConflict::new_err(format!("Multiple cookies with name '{}' exist for different domains/paths", name))),
         }
     }
 
@@ -301,10 +284,7 @@ impl Cookies {
     }
 
     fn __iter__(&self) -> CookiesIterator {
-        CookiesIterator {
-            keys: self.keys(),
-            index: 0,
-        }
+        CookiesIterator::new(self.keys())
     }
 
     fn __len__(&self) -> usize {
@@ -462,10 +442,7 @@ impl Cookies {
         for part in parts.iter().skip(1) {
             let part = part.trim();
             let (attr_name, attr_value) = if let Some(eq_pos) = part.find('=') {
-                (
-                    part[..eq_pos].trim().to_lowercase(),
-                    part[eq_pos + 1..].trim().to_string(),
-                )
+                (part[..eq_pos].trim().to_lowercase(), part[eq_pos + 1..].trim().to_string())
             } else {
                 (part.to_lowercase(), String::new())
             };
@@ -508,10 +485,7 @@ impl Cookie {
         } else {
             format!("{} ", self.domain)
         };
-        format!(
-            "<Cookie {}={} for {}/>",
-            self.name, self.value, domain_display
-        )
+        format!("<Cookie {}={} for {}/>", self.name, self.value, domain_display)
     }
 }
 
@@ -524,10 +498,7 @@ pub struct CookieJar {
 #[pymethods]
 impl CookieJar {
     fn __iter__(&self) -> CookieJarIterator {
-        CookieJarIterator {
-            cookies: self.cookies.clone(),
-            index: 0,
-        }
+        CookieJarIterator::new(self.cookies.clone())
     }
 
     fn __len__(&self) -> usize {
@@ -535,48 +506,5 @@ impl CookieJar {
     }
 }
 
-#[pyclass]
-pub struct CookieJarIterator {
-    cookies: Vec<Cookie>,
-    index: usize,
-}
-
-#[pymethods]
-impl CookieJarIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<Cookie> {
-        if self.index < self.cookies.len() {
-            let cookie = self.cookies[self.index].clone();
-            self.index += 1;
-            Some(cookie)
-        } else {
-            None
-        }
-    }
-}
-
-#[pyclass]
-pub struct CookiesIterator {
-    keys: Vec<String>,
-    index: usize,
-}
-
-#[pymethods]
-impl CookiesIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<String> {
-        if self.index < self.keys.len() {
-            let key = self.keys[self.index].clone();
-            self.index += 1;
-            Some(key)
-        } else {
-            None
-        }
-    }
-}
+crate::common::impl_py_iterator!(CookieJarIterator, Cookie, cookies, "CookieJarIterator");
+crate::common::impl_py_iterator!(CookiesIterator, String, keys, "CookiesIterator");

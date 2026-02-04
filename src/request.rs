@@ -44,9 +44,9 @@ pub struct MutableHeaders {
 #[pymethods]
 impl MutableHeaders {
     fn __getitem__(&self, key: &str) -> PyResult<String> {
-        self.headers.get(key, None).ok_or_else(|| {
-            pyo3::exceptions::PyKeyError::new_err(key.to_string())
-        })
+        self.headers
+            .get(key, None)
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
     fn __setitem__(&mut self, key: &str, value: &str) {
@@ -56,7 +56,9 @@ impl MutableHeaders {
     fn __delitem__(&mut self, key: &str) {
         // Remove all entries with this key
         let key_lower = key.to_lowercase();
-        let new_inner: Vec<_> = self.headers.inner()
+        let new_inner: Vec<_> = self
+            .headers
+            .inner()
             .iter()
             .filter(|(k, _)| k.to_lowercase() != key_lower)
             .cloned()
@@ -71,7 +73,9 @@ impl MutableHeaders {
     fn __iter__(&self) -> MutableHeadersIter {
         // Get unique keys (lowercased for httpx compatibility)
         let mut seen = std::collections::HashSet::new();
-        let keys: Vec<String> = self.headers.inner()
+        let keys: Vec<String> = self
+            .headers
+            .inner()
             .iter()
             .filter_map(|(k, _)| {
                 let k_lower = k.to_lowercase();
@@ -82,7 +86,7 @@ impl MutableHeaders {
                 }
             })
             .collect();
-        MutableHeadersIter { keys, index: 0 }
+        MutableHeadersIter::new(keys)
     }
 
     #[pyo3(signature = (key, default=None))]
@@ -93,7 +97,8 @@ impl MutableHeaders {
     fn keys(&self) -> Vec<String> {
         // Return unique keys (lowercased for httpx compatibility)
         let mut seen = std::collections::HashSet::new();
-        self.headers.inner()
+        self.headers
+            .inner()
             .iter()
             .filter_map(|(k, _)| {
                 let k_lower = k.to_lowercase();
@@ -107,7 +112,11 @@ impl MutableHeaders {
     }
 
     fn values(&self) -> Vec<String> {
-        self.headers.inner().iter().map(|(_, v)| v.clone()).collect()
+        self.headers
+            .inner()
+            .iter()
+            .map(|(_, v)| v.clone())
+            .collect()
     }
 
     fn items(&self) -> Vec<(String, String)> {
@@ -118,7 +127,9 @@ impl MutableHeaders {
         for (key, _) in self.headers.inner() {
             let key_lower = key.to_lowercase();
             if seen.insert(key_lower.clone()) {
-                let values: Vec<&str> = self.headers.inner()
+                let values: Vec<&str> = self
+                    .headers
+                    .inner()
                     .iter()
                     .filter(|(k, _)| k.to_lowercase() == key_lower)
                     .map(|(_, v)| v.as_str())
@@ -131,7 +142,11 @@ impl MutableHeaders {
 
     fn multi_items(&self) -> Vec<(String, String)> {
         // Keys are lowercased for httpx compatibility
-        self.headers.inner().iter().map(|(k, v)| (k.to_lowercase(), v.clone())).collect()
+        self.headers
+            .inner()
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), v.clone()))
+            .collect()
     }
 
     /// Internal method returning items with original key casing (for proxy reconstruction)
@@ -144,7 +159,9 @@ impl MutableHeaders {
     #[getter]
     fn raw<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         use pyo3::types::PyBytes;
-        let items: Vec<_> = self.headers.inner()
+        let items: Vec<_> = self
+            .headers
+            .inner()
             .iter()
             .map(|(k, v)| {
                 let key_bytes = PyBytes::new(py, k.as_bytes());
@@ -218,28 +235,7 @@ impl MutableHeaders {
     }
 }
 
-#[pyclass]
-pub struct MutableHeadersIter {
-    keys: Vec<String>,
-    index: usize,
-}
-
-#[pymethods]
-impl MutableHeadersIter {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<String> {
-        if self.index < self.keys.len() {
-            let key = self.keys[self.index].clone();
-            self.index += 1;
-            Some(key)
-        } else {
-            None
-        }
-    }
-}
+crate::common::impl_py_iterator!(MutableHeadersIter, String, keys, "MutableHeadersIter");
 
 /// Stream mode for content
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -273,18 +269,16 @@ pub struct Request {
 
 impl Clone for Request {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| {
-            Self {
-                method: self.method.clone(),
-                url: self.url.clone(),
-                headers: self.headers.clone(),
-                content: self.content.clone(),
-                is_streaming: self.is_streaming,
-                is_stream_consumed: self.is_stream_consumed,
-                was_async_read: self.was_async_read,
-                stream_ref: self.stream_ref.as_ref().map(|obj| obj.clone_ref(py)),
-                stream_mode: self.stream_mode,
-            }
+        Python::with_gil(|py| Self {
+            method: self.method.clone(),
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            content: self.content.clone(),
+            is_streaming: self.is_streaming,
+            is_stream_consumed: self.is_stream_consumed,
+            was_async_read: self.was_async_read,
+            stream_ref: self.stream_ref.as_ref().map(|obj| obj.clone_ref(py)),
+            stream_mode: self.stream_mode,
         })
     }
 }
@@ -353,9 +347,7 @@ impl Request {
         } else if let Ok(url_str) = url.extract::<String>() {
             URL::new_impl(Some(&url_str), None, None, None, None, None, None, None, None, params, None, None)?
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "URL must be a string or URL object",
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("URL must be a string or URL object"));
         };
 
         let mut request = Self {
@@ -397,17 +389,15 @@ impl Request {
         if let Some(c) = content {
             if let Ok(bytes) = c.extract::<Vec<u8>>() {
                 request.content = Some(bytes);
-                request.stream_mode = StreamMode::Dual;  // bytes supports both sync and async
+                request.stream_mode = StreamMode::Dual; // bytes supports both sync and async
             } else if let Ok(s) = c.extract::<String>() {
                 request.content = Some(s.into_bytes());
-                request.stream_mode = StreamMode::Dual;  // str supports both sync and async
+                request.stream_mode = StreamMode::Dual; // str supports both sync and async
             } else {
                 // Check for invalid types first - int, float, dict should be rejected
                 let type_name = c.get_type().name()?.to_string();
                 if type_name == "int" || type_name == "float" || type_name == "dict" {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(
-                        format!("Invalid type for content: {}", type_name)
-                    ));
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for content: {}", type_name)));
                 }
 
                 // Check if it's an async iterator/generator (has __aiter__ and __anext__)
@@ -455,9 +445,7 @@ impl Request {
                         request.content = Some(s.into_bytes());
                         request.stream_mode = StreamMode::SyncOnly;
                     } else {
-                        return Err(pyo3::exceptions::PyTypeError::new_err(
-                            "File-like object read() must return bytes or str"
-                        ));
+                        return Err(pyo3::exceptions::PyTypeError::new_err("File-like object read() must return bytes or str"));
                     }
                 } else if has_next || is_gen_type {
                     // Sync iterator/generator - treat as streaming
@@ -471,33 +459,35 @@ impl Request {
                     request.stream_mode = StreamMode::SyncOnly;
                 } else {
                     // Invalid content type - must be bytes, str, or iterator
-                    return Err(pyo3::exceptions::PyTypeError::new_err(
-                        format!("Invalid type for content: {}", type_name)
-                    ));
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for content: {}", type_name)));
                 }
             }
         }
 
         // Handle JSON
         if let Some(j) = json {
-            let json_str = py_to_json_string(j)?;
+            let json_str = crate::common::py_to_json_string(j)?;
             request.content = Some(json_str.into_bytes());
             if !request.headers.contains("content-type") {
-                request.headers.set("Content-Type".to_string(), "application/json".to_string());
+                request
+                    .headers
+                    .set("Content-Type".to_string(), "application/json".to_string());
             }
         }
 
         // Handle multipart (files provided)
         // Check if files is not empty (dict or list)
-        let files_not_empty = files.map(|f| {
-            if let Ok(dict) = f.downcast::<PyDict>() {
-                !dict.is_empty()
-            } else if let Ok(list) = f.downcast::<PyList>() {
-                !list.is_empty()
-            } else {
-                true  // Unknown type, assume not empty
-            }
-        }).unwrap_or(false);
+        let files_not_empty = files
+            .map(|f| {
+                if let Ok(dict) = f.downcast::<PyDict>() {
+                    !dict.is_empty()
+                } else if let Ok(list) = f.downcast::<PyList>() {
+                    !list.is_empty()
+                } else {
+                    true // Unknown type, assume not empty
+                }
+            })
+            .unwrap_or(false);
 
         if files_not_empty {
             let f = files.unwrap();
@@ -531,11 +521,15 @@ impl Request {
             };
 
             request.content = Some(body);
-            request.headers.set("Content-Type".to_string(), content_type);
+            request
+                .headers
+                .set("Content-Type".to_string(), content_type);
 
             // Non-seekable files use Transfer-Encoding: chunked instead of Content-Length
             if has_non_seekable {
-                request.headers.set("Transfer-Encoding".to_string(), "chunked".to_string());
+                request
+                    .headers
+                    .set("Transfer-Encoding".to_string(), "chunked".to_string());
             }
         } else if let Some(d) = data {
             // Handle form data (no files)
@@ -558,10 +552,9 @@ impl Request {
                     }
                     request.content = Some(form_data.join("&").into_bytes());
                     if !request.headers.contains("content-type") {
-                        request.headers.set(
-                            "Content-Type".to_string(),
-                            "application/x-www-form-urlencoded".to_string(),
-                        );
+                        request
+                            .headers
+                            .set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
                     }
                 }
             } else {
@@ -612,15 +605,21 @@ impl Request {
         if request.is_streaming {
             // Streaming content - set Transfer-Encoding: chunked unless Content-Length is already set
             if !request.headers.contains("content-length") && !request.headers.contains("Content-Length") {
-                request.headers.set("Transfer-Encoding".to_string(), "chunked".to_string());
+                request
+                    .headers
+                    .set("Transfer-Encoding".to_string(), "chunked".to_string());
             }
         } else if request.headers.contains("transfer-encoding") || request.headers.contains("Transfer-Encoding") {
             // Transfer-Encoding already set (e.g., for non-seekable multipart files)
             // Don't set Content-Length
         } else if let Some(ref content) = request.content {
-            request.headers.set("Content-Length".to_string(), content.len().to_string());
+            request
+                .headers
+                .set("Content-Length".to_string(), content.len().to_string());
         } else if matches!(request.method.as_str(), "POST" | "PUT" | "PATCH") {
-            request.headers.set("Content-Length".to_string(), "0".to_string());
+            request
+                .headers
+                .set("Content-Length".to_string(), "0".to_string());
         }
 
         // Set Host header only if not already set by user
@@ -777,7 +776,7 @@ impl Request {
 
             self.content = Some(result.clone());
             self.is_stream_consumed = true;
-            self.stream_ref = None;  // Clear the stream reference
+            self.stream_ref = None; // Clear the stream reference
             Ok(result)
         } else {
             Ok(self.content.clone().unwrap_or_default())
@@ -914,7 +913,10 @@ async def _return_bytes(data):
 
         self.is_streaming = state.get_item("is_streaming")?.unwrap().extract()?;
         self.is_stream_consumed = state.get_item("is_stream_consumed")?.unwrap().extract()?;
-        self.was_async_read = state.get_item("was_async_read")?.map(|v| v.extract().unwrap_or(false)).unwrap_or(false);
+        self.was_async_read = state
+            .get_item("was_async_read")?
+            .map(|v| v.extract().unwrap_or(false))
+            .unwrap_or(false);
 
         // Stream reference is not pickled - it's gone after unpickling
         // If it was streaming and not consumed, it will raise StreamClosed on read attempts
@@ -927,77 +929,6 @@ async def _return_bytes(data):
     fn __getnewargs__(&self) -> (&str, String) {
         (&self.method, self.url.to_string())
     }
-}
-
-/// Convert Python object to JSON string
-/// Uses Python's json module for serialization to preserve dict insertion order
-/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact)
-fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let py = obj.py();
-    let json_mod = py.import("json")?;
-
-    // Use httpx's default JSON settings:
-    // - ensure_ascii=False (allows non-ASCII characters)
-    // - allow_nan=False (raises ValueError for NaN/Inf)
-    // - separators=(',', ':') (compact representation)
-    let kwargs = pyo3::types::PyDict::new(py);
-    kwargs.set_item("ensure_ascii", false)?;
-    kwargs.set_item("allow_nan", false)?;
-    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
-    kwargs.set_item("separators", separators)?;
-
-    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
-    result.extract::<String>()
-}
-
-/// Convert Python object to sonic_rs::Value
-fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
-    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString};
-
-    if obj.is_none() {
-        return Ok(sonic_rs::Value::default());
-    }
-
-    if let Ok(b) = obj.downcast::<PyBool>() {
-        return Ok(sonic_rs::json!(b.is_true()));
-    }
-
-    if let Ok(i) = obj.downcast::<PyInt>() {
-        let val: i64 = i.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(f) = obj.downcast::<PyFloat>() {
-        let val: f64 = f.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(s) = obj.downcast::<PyString>() {
-        let val: String = s.extract()?;
-        return Ok(sonic_rs::json!(val));
-    }
-
-    if let Ok(list) = obj.downcast::<PyList>() {
-        let mut arr = Vec::new();
-        for item in list.iter() {
-            arr.push(py_to_json_value(&item)?);
-        }
-        return Ok(sonic_rs::Value::from(arr));
-    }
-
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut obj = sonic_rs::Object::new();
-        for (k, v) in dict.iter() {
-            let key: String = k.extract()?;
-            let value = py_to_json_value(&v)?;
-            obj.insert(&key, value);
-        }
-        return Ok(sonic_rs::Value::from(obj));
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "Unsupported type for JSON serialization",
-    ))
 }
 
 /// Emit a DeprecationWarning from Python

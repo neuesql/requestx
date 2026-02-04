@@ -97,11 +97,7 @@ pub fn convert_reqwest_error_with_context(e: reqwest::Error, timeout_context: Op
             if let Some(url) = e.url() {
                 let scheme = url.scheme();
                 if scheme != "http" && scheme != "https" {
-                    return UnsupportedProtocol::new_err(format!(
-                        "Request URL has unsupported protocol '{}://': {}",
-                        scheme,
-                        url
-                    ));
+                    return UnsupportedProtocol::new_err(format!("Request URL has unsupported protocol '{}://': {}", scheme, url));
                 }
             }
             // Generic unsupported protocol for builder URL errors
@@ -129,12 +125,7 @@ pub fn convert_reqwest_error_with_context(e: reqwest::Error, timeout_context: Op
 
         // Check error message for connect-related indicators
         // Non-routable IPs and DNS failures indicate connect timeout
-        if lower_error.contains("connect")
-            || lower_error.contains("dns")
-            || lower_error.contains("resolve")
-            || lower_error.contains("10.255.255")
-            || lower_error.contains("connection refused")
-        {
+        if lower_error.contains("connect") || lower_error.contains("dns") || lower_error.contains("resolve") || lower_error.contains("10.255.255") || lower_error.contains("connection refused") {
             return ConnectTimeout::new_err(error_str);
         }
 
@@ -145,10 +136,7 @@ pub fn convert_reqwest_error_with_context(e: reqwest::Error, timeout_context: Op
 
         // Check for write-related indicators
         // "sending request" or "request body" indicates write phase
-        if lower_error.contains("sending request")
-            || lower_error.contains("request body")
-            || lower_error.contains("send body")
-        {
+        if lower_error.contains("sending request") || lower_error.contains("request body") || lower_error.contains("send body") {
             // Only classify as WriteTimeout if we're sure it's during write
             // Check if it's body-related but not response-related
             if !lower_error.contains("response") && !lower_error.contains("decoding") {
@@ -157,10 +145,7 @@ pub fn convert_reqwest_error_with_context(e: reqwest::Error, timeout_context: Op
         }
 
         // Check for read-related indicators
-        if lower_error.contains("response body")
-            || lower_error.contains("decoding")
-            || lower_error.contains("receiving")
-        {
+        if lower_error.contains("response body") || lower_error.contains("decoding") || lower_error.contains("receiving") {
             return ReadTimeout::new_err(error_str);
         }
 

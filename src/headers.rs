@@ -42,9 +42,7 @@ fn encode_to_bytes(s: &str, encoding: &str) -> Vec<u8> {
 fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     // Check for None first
     if obj.is_none() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(
-            format!("Header value must be str or bytes, not {}", obj.get_type())
-        ));
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!("Header value must be str or bytes, not {}", obj.get_type())));
     }
     // Try string first
     if let Ok(s) = obj.downcast::<PyString>() {
@@ -67,11 +65,9 @@ fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)>
         return Ok((s, "iso-8859-1".to_string()));
     }
     // Try extracting as string - if this fails, give a better error
-    obj.extract::<String>().map_err(|_| {
-        pyo3::exceptions::PyTypeError::new_err(
-            format!("Header value must be str or bytes, not {}", obj.get_type())
-        )
-    }).map(|s| (s, "ascii".to_string()))
+    obj.extract::<String>()
+        .map_err(|_| pyo3::exceptions::PyTypeError::new_err(format!("Header value must be str or bytes, not {}", obj.get_type())))
+        .map(|s| (s, "ascii".to_string()))
 }
 
 /// Extract key from either str or bytes, returning (string, encoding)
@@ -95,11 +91,19 @@ pub struct Headers {
 
 impl Headers {
     pub fn new() -> Self {
-        Self { inner: Vec::new(), from_dict: false, encoding: "ascii".to_string() }
+        Self {
+            inner: Vec::new(),
+            from_dict: false,
+            encoding: "ascii".to_string(),
+        }
     }
 
     pub fn from_vec(headers: Vec<(String, String)>) -> Self {
-        Self { inner: headers, from_dict: false, encoding: "ascii".to_string() }
+        Self {
+            inner: headers,
+            from_dict: false,
+            encoding: "ascii".to_string(),
+        }
     }
 
     pub fn get_all(&self, key: &str) -> Vec<&str> {
@@ -114,10 +118,7 @@ impl Headers {
     pub fn to_reqwest(&self) -> reqwest::header::HeaderMap {
         let mut map = reqwest::header::HeaderMap::new();
         for (key, value) in &self.inner {
-            if let (Ok(name), Ok(val)) = (
-                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                reqwest::header::HeaderValue::from_str(value),
-            ) {
+            if let (Ok(name), Ok(val)) = (reqwest::header::HeaderName::from_bytes(key.as_bytes()), reqwest::header::HeaderValue::from_str(value)) {
                 map.append(name, val);
             }
         }
@@ -127,14 +128,13 @@ impl Headers {
     pub fn from_reqwest(headers: &reqwest::header::HeaderMap) -> Self {
         let inner: Vec<(String, String)> = headers
             .iter()
-            .map(|(k, v)| {
-                (
-                    k.as_str().to_string(),
-                    v.to_str().unwrap_or("").to_string(),
-                )
-            })
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
-        Self { inner, from_dict: false, encoding: "ascii".to_string() }
+        Self {
+            inner,
+            from_dict: false,
+            encoding: "ascii".to_string(),
+        }
     }
 
     pub fn inner(&self) -> &Vec<(String, String)> {
@@ -165,13 +165,16 @@ impl Headers {
     /// Check if a header exists
     pub fn contains(&self, key: &str) -> bool {
         let key_lower = key.to_lowercase();
-        self.inner.iter().any(|(k, _)| k.to_lowercase() == key_lower)
+        self.inner
+            .iter()
+            .any(|(k, _)| k.to_lowercase() == key_lower)
     }
 
     /// Get a header value (returns comma-separated if multiple values exist)
     pub fn get(&self, key: &str, default: Option<&str>) -> Option<String> {
         let key_lower = key.to_lowercase();
-        let values: Vec<&str> = self.inner
+        let values: Vec<&str> = self
+            .inner
             .iter()
             .filter(|(k, _)| k.to_lowercase() == key_lower)
             .map(|(_, v)| v.as_str())
@@ -256,7 +259,8 @@ impl Headers {
     #[pyo3(signature = (key, split_commas=false))]
     fn get_list(&self, key: &str, split_commas: bool) -> Vec<String> {
         let key_lower = key.to_lowercase();
-        let values: Vec<String> = self.inner
+        let values: Vec<String> = self
+            .inner
             .iter()
             .filter(|(k, _)| k.to_lowercase() == key_lower)
             .map(|(_, v)| v.clone())
@@ -294,7 +298,8 @@ impl Headers {
         for key in self.keys() {
             let key_lower = key.to_lowercase();
             if seen.insert(key_lower.clone()) {
-                let values: Vec<&str> = self.inner
+                let values: Vec<&str> = self
+                    .inner
                     .iter()
                     .filter(|(k, _)| k.to_lowercase() == key_lower)
                     .map(|(_, v)| v.as_str())
@@ -307,7 +312,8 @@ impl Headers {
 
     fn setdefault(&mut self, key: String, default: Option<String>) -> String {
         let key_lower = key.to_lowercase();
-        if let Some(existing) = self.inner
+        if let Some(existing) = self
+            .inner
             .iter()
             .find(|(k, _)| k.to_lowercase() == key_lower)
             .map(|(_, v)| v.clone())
@@ -328,7 +334,8 @@ impl Headers {
         for (key, _) in &self.inner {
             let key_lower = key.to_lowercase();
             if seen.insert(key_lower.clone()) {
-                let values: Vec<&str> = self.inner
+                let values: Vec<&str> = self
+                    .inner
                     .iter()
                     .filter(|(k, _)| k.to_lowercase() == key_lower)
                     .map(|(_, v)| v.as_str())
@@ -341,7 +348,10 @@ impl Headers {
 
     fn multi_items(&self) -> Vec<(String, String)> {
         // Keys are lowercased for httpx compatibility
-        self.inner.iter().map(|(k, v)| (k.to_lowercase(), v.clone())).collect()
+        self.inner
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), v.clone()))
+            .collect()
     }
 
     /// Internal method returning items with original key casing (for proxy reconstruction)
@@ -360,7 +370,8 @@ impl Headers {
 
     fn __getitem__(&self, key: &str) -> PyResult<String> {
         let key_lower = key.to_lowercase();
-        let values: Vec<&str> = self.inner
+        let values: Vec<&str> = self
+            .inner
             .iter()
             .filter(|(k, _)| k.to_lowercase() == key_lower)
             .map(|(_, v)| v.as_str())
@@ -415,14 +426,13 @@ impl Headers {
 
     fn __contains__(&self, key: &str) -> bool {
         let key_lower = key.to_lowercase();
-        self.inner.iter().any(|(k, _)| k.to_lowercase() == key_lower)
+        self.inner
+            .iter()
+            .any(|(k, _)| k.to_lowercase() == key_lower)
     }
 
     fn __iter__(&self) -> HeadersIterator {
-        HeadersIterator {
-            keys: self.keys(),
-            index: 0,
-        }
+        HeadersIterator::new(self.keys())
     }
 
     fn __len__(&self) -> usize {
@@ -512,7 +522,10 @@ impl Headers {
         } else {
             // Check if we have duplicate keys - if so, use list format
             let mut seen = std::collections::HashSet::new();
-            let has_duplicates = self.inner.iter().any(|(k, _)| !seen.insert(k.to_lowercase()));
+            let has_duplicates = self
+                .inner
+                .iter()
+                .any(|(k, _)| !seen.insert(k.to_lowercase()));
 
             if has_duplicates {
                 let items: Vec<String> = self
@@ -577,25 +590,4 @@ impl Headers {
     }
 }
 
-#[pyclass]
-pub struct HeadersIterator {
-    keys: Vec<String>,
-    index: usize,
-}
-
-#[pymethods]
-impl HeadersIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<String> {
-        if self.index < self.keys.len() {
-            let key = self.keys[self.index].clone();
-            self.index += 1;
-            Some(key)
-        } else {
-            None
-        }
-    }
-}
+crate::common::impl_py_iterator!(HeadersIterator, String, keys, "HeadersIterator");

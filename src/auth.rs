@@ -33,11 +33,7 @@ impl Auth {
     /// Called to get authentication flow generator
     /// Returns an iterator that yields requests
     #[pyo3(signature = (request))]
-    fn auth_flow<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyList>> {
+    fn auth_flow<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyList>> {
         // Return a list that can be iterated
         // Subclasses can override this
         let request = request.clone();
@@ -46,20 +42,12 @@ impl Auth {
     }
 
     /// Sync auth flow - calls auth_flow and iterates
-    fn sync_auth_flow<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyList>> {
+    fn sync_auth_flow<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyList>> {
         self.auth_flow(py, request)
     }
 
     /// Async auth flow - calls auth_flow and iterates asynchronously
-    fn async_auth_flow<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyList>> {
+    fn async_auth_flow<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyList>> {
         self.auth_flow(py, request)
     }
 
@@ -92,11 +80,7 @@ impl FunctionAuth {
     }
 
     #[pyo3(signature = (request))]
-    fn auth_flow<'py>(
-        &self,
-        py: Python<'py>,
-        request: &Request,
-    ) -> PyResult<Bound<'py, PyList>> {
+    fn auth_flow<'py>(&self, py: Python<'py>, request: &Request) -> PyResult<Bound<'py, PyList>> {
         // Call the function with the request
         let result = self.func.call1(py, (request.clone(),))?;
 

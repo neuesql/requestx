@@ -49,8 +49,12 @@ impl QueryParams {
                 let key = parts.next()?;
                 let value = parts.next().unwrap_or("");
                 Some((
-                    urlencoding::decode(key).unwrap_or_else(|_| key.into()).into_owned(),
-                    urlencoding::decode(value).unwrap_or_else(|_| value.into()).into_owned(),
+                    urlencoding::decode(key)
+                        .unwrap_or_else(|_| key.into())
+                        .into_owned(),
+                    urlencoding::decode(value)
+                        .unwrap_or_else(|_| value.into())
+                        .into_owned(),
                 ))
             })
             .collect();
@@ -205,9 +209,7 @@ impl QueryParams {
 
     /// Deprecated: use set/add/remove instead
     fn update(&self, _other: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "QueryParams are immutable. Use `q = q.set(...)` instead of `q.update(...)`."
-        ))
+        Err(pyo3::exceptions::PyRuntimeError::new_err("QueryParams are immutable. Use `q = q.set(...)` instead of `q.update(...)`."))
     }
 
     fn get_list(&self, key: &str) -> Vec<String> {
@@ -276,7 +278,7 @@ impl QueryParams {
 
     fn __setitem__(&self, _key: &str, _value: &str) -> PyResult<()> {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "QueryParams are immutable. Use `q = q.set(...)` instead of `q[\"a\"] = \"value\"`."
+            "QueryParams are immutable. Use `q = q.set(...)` instead of `q[\"a\"] = \"value\"`.",
         ))
     }
 
@@ -285,10 +287,7 @@ impl QueryParams {
     }
 
     fn __iter__(&self) -> QueryParamsIterator {
-        QueryParamsIterator {
-            keys: self.keys(),
-            index: 0,
-        }
+        QueryParamsIterator::new(self.keys())
     }
 
     fn __len__(&self) -> usize {
@@ -336,25 +335,4 @@ impl QueryParams {
     }
 }
 
-#[pyclass]
-pub struct QueryParamsIterator {
-    keys: Vec<String>,
-    index: usize,
-}
-
-#[pymethods]
-impl QueryParamsIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self) -> Option<String> {
-        if self.index < self.keys.len() {
-            let key = self.keys[self.index].clone();
-            self.index += 1;
-            Some(key)
-        } else {
-            None
-        }
-    }
-}
+crate::common::impl_py_iterator!(QueryParamsIterator, String, keys, "QueryParamsIterator");

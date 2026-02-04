@@ -21,9 +21,7 @@ fn extract_url_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
     if let Ok(s) = url.str() {
         return Ok(s.to_string());
     }
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "url must be a string or URL object",
-    ))
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("url must be a string or URL object"))
 }
 
 /// Perform a GET request

@@ -52,11 +52,7 @@ fn is_non_seekable_filelike(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 
 /// Build multipart body with auto-generated boundary
 /// Returns (body, boundary, has_non_seekable_file)
-pub fn build_multipart_body(
-    py: Python<'_>,
-    data: Option<&Bound<'_, PyDict>>,
-    files: Option<&Bound<'_, PyAny>>,
-) -> PyResult<(Vec<u8>, String, bool)> {
+pub fn build_multipart_body(py: Python<'_>, data: Option<&Bound<'_, PyDict>>, files: Option<&Bound<'_, PyAny>>) -> PyResult<(Vec<u8>, String, bool)> {
     let boundary = generate_boundary();
     let (body, _, has_non_seekable) = build_multipart_body_with_boundary(py, data, files, &boundary)?;
     Ok((body, boundary, has_non_seekable))
@@ -64,12 +60,7 @@ pub fn build_multipart_body(
 
 /// Build multipart body with specified boundary
 /// Returns (body, boundary, has_non_seekable_file)
-pub fn build_multipart_body_with_boundary(
-    py: Python<'_>,
-    data: Option<&Bound<'_, PyDict>>,
-    files: Option<&Bound<'_, PyAny>>,
-    boundary: &str,
-) -> PyResult<(Vec<u8>, String, bool)> {
+pub fn build_multipart_body_with_boundary(py: Python<'_>, data: Option<&Bound<'_, PyDict>>, files: Option<&Bound<'_, PyAny>>, boundary: &str) -> PyResult<(Vec<u8>, String, bool)> {
     let mut body = Vec::new();
     let boundary_bytes = boundary.as_bytes();
     let mut has_non_seekable = false;
@@ -79,10 +70,7 @@ pub fn build_multipart_body_with_boundary(
         for (key, value) in d.iter() {
             // Validate key type - must be str
             if !key.is_instance_of::<pyo3::types::PyString>() {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Invalid type for name {}. Expected str.",
-                    key.repr()?.to_str()?
-                )));
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for name {}. Expected str.", key.repr()?.to_str()?)));
             }
             let k: String = key.extract()?;
             // Handle different value types
@@ -135,16 +123,10 @@ pub fn build_multipart_body_with_boundary(
             // Build Content-Disposition header with escaped filename
             if let Some(ref fname) = filename {
                 let escaped_fname = escape_filename(fname);
-                body.extend_from_slice(format!(
-                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                    field_name, escaped_fname
-                ).as_bytes());
+                body.extend_from_slice(format!("Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n", field_name, escaped_fname).as_bytes());
             } else {
                 // No filename - just field name
-                body.extend_from_slice(format!(
-                    "Content-Disposition: form-data; name=\"{}\"\r\n",
-                    field_name
-                ).as_bytes());
+                body.extend_from_slice(format!("Content-Disposition: form-data; name=\"{}\"\r\n", field_name).as_bytes());
             }
 
             // Add extra headers first (before Content-Type), but skip Content-Type if in headers
@@ -187,13 +169,7 @@ pub fn build_multipart_body_with_boundary(
 }
 
 /// Add a data field to the multipart body
-fn add_data_field(
-    py: Python<'_>,
-    body: &mut Vec<u8>,
-    boundary_bytes: &[u8],
-    key: &str,
-    value: &Bound<'_, PyAny>,
-) -> PyResult<()> {
+fn add_data_field(py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[u8], key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
     // Check if value is a list - if so, add multiple fields with same name
     if let Ok(list) = value.downcast::<PyList>() {
         for item in list.iter() {
@@ -207,22 +183,13 @@ fn add_data_field(
 }
 
 /// Add a single data field to the multipart body
-fn add_single_data_field(
-    _py: Python<'_>,
-    body: &mut Vec<u8>,
-    boundary_bytes: &[u8],
-    key: &str,
-    value: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyBytes as PyBytesType};
+fn add_single_data_field(_py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[u8], key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    use pyo3::types::{PyBool, PyBytes as PyBytesType, PyFloat, PyInt, PyString};
 
     // Validate value type - must be str, bytes, int, float, bool, or None
     // Check for dict explicitly to give proper error message
     if value.downcast::<PyDict>().is_ok() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Invalid type for value: {}. Expected str.",
-            value.get_type().name()?
-        )));
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for value: {}. Expected str.", value.get_type().name()?)));
     }
 
     // Handle different value types
@@ -233,23 +200,22 @@ fn add_single_data_field(
     } else if value.downcast::<PyBool>().is_ok() {
         // Check bool before int (since bool is subclass of int in Python)
         let b: bool = value.extract()?;
-        if b { b"true".to_vec() } else { b"false".to_vec() }
+        if b {
+            b"true".to_vec()
+        } else {
+            b"false".to_vec()
+        }
     } else if let Ok(i) = value.extract::<i64>() {
         i.to_string().into_bytes()
     } else if let Ok(f) = value.extract::<f64>() {
         f.to_string().into_bytes()
     } else if value.is_none() {
         b"".to_vec()
-    } else if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytesType>()
-           || value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>()
-           || value.is_instance_of::<PyBool>() {
+    } else if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytesType>() || value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>() || value.is_instance_of::<PyBool>() {
         value.str()?.to_string().into_bytes()
     } else {
         // Invalid type - raise TypeError
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Invalid type for value: {}. Expected str.",
-            value.get_type().name()?
-        )));
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for value: {}. Expected str.", value.get_type().name()?)));
     };
 
     body.extend_from_slice(b"--");
@@ -265,11 +231,7 @@ fn add_single_data_field(
 
 /// Parse a file value which can be a file-like object or tuple
 /// Returns (filename, content, content_type, extra_headers, is_non_seekable)
-fn parse_file_value(
-    py: Python<'_>,
-    value: &Bound<'_, PyAny>,
-    field_name: &str,
-) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
+fn parse_file_value(py: Python<'_>, value: &Bound<'_, PyAny>, field_name: &str) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
     // Check if it's a tuple: (filename, content) or (filename, content, content_type) or (filename, content, content_type, headers)
     if let Ok(tuple) = value.downcast::<PyTuple>() {
         let len = tuple.len();
@@ -278,7 +240,12 @@ fn parse_file_value(
             let filename: Option<String> = if tuple.get_item(0)?.is_none() {
                 None
             } else {
-                Some(tuple.get_item(0)?.extract::<String>().unwrap_or_else(|_| "upload".to_string()))
+                Some(
+                    tuple
+                        .get_item(0)?
+                        .extract::<String>()
+                        .unwrap_or_else(|_| "upload".to_string()),
+                )
             };
 
             // Get content
@@ -292,7 +259,9 @@ fn parse_file_value(
                 if ct_item.is_none() {
                     guess_content_type(filename.as_deref().unwrap_or(""))
                 } else {
-                    ct_item.extract::<String>().unwrap_or_else(|_| guess_content_type(filename.as_deref().unwrap_or("")))
+                    ct_item
+                        .extract::<String>()
+                        .unwrap_or_else(|_| guess_content_type(filename.as_deref().unwrap_or("")))
                 }
             } else {
                 guess_content_type(filename.as_deref().unwrap_or(""))
@@ -343,16 +312,14 @@ pub fn read_file_content(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<V
     let io_mod = py.import("io")?;
     let string_io_type = io_mod.getattr("StringIO")?;
     if value.is_instance(&string_io_type)? {
-        return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Multipart file uploads require 'io.IOBase', not 'io.StringIO'."
-        ));
+        return Err(pyo3::exceptions::PyTypeError::new_err("Multipart file uploads require 'io.IOBase', not 'io.StringIO'."));
     }
 
     // Check if it's a text mode file (TextIOWrapper)
     let text_io_wrapper_type = io_mod.getattr("TextIOWrapper")?;
     if value.is_instance(&text_io_wrapper_type)? {
         return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Attempted to upload a file-like object without 'rb' mode. Make sure to open the file with 'rb' mode."
+            "Attempted to upload a file-like object without 'rb' mode. Make sure to open the file with 'rb' mode.",
         ));
     }
 
@@ -369,15 +336,11 @@ pub fn read_file_content(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<V
         }
         // If read() returns string, it's text mode - raise TypeError
         if content.extract::<String>().is_ok() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Multipart file uploads must be opened in binary mode."
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err("Multipart file uploads must be opened in binary mode."));
         }
     }
 
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "File content must be bytes, str, or a file-like object with read() method"
-    ))
+    Err(pyo3::exceptions::PyTypeError::new_err("File content must be bytes, str, or a file-like object with read() method"))
 }
 
 /// Escape filename for Content-Disposition header (HTML5/RFC 5987)

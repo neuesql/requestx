@@ -8,6 +8,7 @@ mod api;
 mod async_client;
 mod auth;
 mod client;
+mod common;
 mod cookies;
 mod exceptions;
 mod headers;
@@ -27,11 +28,8 @@ use cookies::{Cookie, CookieJar, Cookies};
 use exceptions::*;
 use headers::Headers;
 use queryparams::QueryParams;
-use request::{Request, MutableHeaders, MutableHeadersIter};
-use response::{
-    Response, BytesIterator, TextIterator, LinesIterator, RawIterator,
-    AsyncRawIterator, AsyncBytesIterator, AsyncTextIterator, AsyncLinesIterator,
-};
+use request::{MutableHeaders, MutableHeadersIter, Request};
+use response::{AsyncBytesIterator, AsyncLinesIterator, AsyncRawIterator, AsyncTextIterator, BytesIterator, LinesIterator, RawIterator, Response, TextIterator};
 use timeout::{Limits, Proxy, Timeout};
 use transport::{AsyncHTTPTransport, AsyncMockTransport, HTTPTransport, MockTransport, WSGITransport};
 use types::*;
