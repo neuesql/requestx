@@ -60,7 +60,7 @@ impl Timeout {
 
     pub fn to_duration(&self) -> Option<Duration> {
         // Use the minimum of all timeouts as the overall timeout
-        let timeouts = [self.connect, self.read, self.write, self.pool];
+        let timeouts = [self.connect, self.read, self.write];
         let min_timeout = timeouts
             .iter()
             .filter_map(|&t| t)

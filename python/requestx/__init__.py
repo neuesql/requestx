@@ -2749,6 +2749,23 @@ class AsyncClient:
 
     def __init__(self, *args, **kwargs):
         import os
+        import asyncio as _asyncio_mod
+
+        # Extract limits and timeout for pool semaphore before Rust consumes them
+        _limits_arg = kwargs.get('limits', None)
+        _timeout_arg = kwargs.get('timeout', None)
+
+        _max_connections = None
+        if _limits_arg is not None and hasattr(_limits_arg, 'max_connections'):
+            _max_connections = _limits_arg.max_connections
+
+        _pool_timeout = None
+        if _timeout_arg is not None and hasattr(_timeout_arg, 'pool'):
+            _pool_timeout = _timeout_arg.pool
+
+        self._pool_semaphore = _asyncio_mod.Semaphore(_max_connections) if _max_connections is not None else None
+        self._pool_timeout = _pool_timeout
+
         # Extract auth from kwargs before passing to Rust client
         auth = kwargs.pop('auth', None)
         # Validate and convert auth value
@@ -3041,6 +3058,24 @@ class AsyncClient:
         if self._is_closed:
             raise RuntimeError("Cannot send request on a closed client")
 
+    async def _acquire_pool_permit(self):
+        """Acquire a connection slot from the pool semaphore."""
+        if self._pool_semaphore is None:
+            return
+        import asyncio as _asyncio_mod
+        if self._pool_timeout is not None:
+            try:
+                await _asyncio_mod.wait_for(self._pool_semaphore.acquire(), timeout=self._pool_timeout)
+            except _asyncio_mod.TimeoutError:
+                raise PoolTimeout("Timed out waiting for a connection from the pool")
+        else:
+            await self._pool_semaphore.acquire()
+
+    def _release_pool_permit(self):
+        """Release a connection slot back to the pool semaphore."""
+        if self._pool_semaphore is not None:
+            self._pool_semaphore.release()
+
     def _warn_per_request_cookies(self, cookies):
         """Emit deprecation warning for per-request cookies."""
         if cookies is not None:
@@ -3291,10 +3326,14 @@ class AsyncClient:
 
     async def send(self, request, **kwargs):
         """Send a Request object."""
-        auth = kwargs.pop('auth', None)
-        if auth is not None:
-            return await self._send_with_auth(request, auth)
-        return await self._send_single_request(request)
+        await self._acquire_pool_permit()
+        try:
+            auth = kwargs.pop('auth', None)
+            if auth is not None:
+                return await self._send_with_auth(request, auth)
+            return await self._send_single_request(request)
+        finally:
+            self._release_pool_permit()
 
     async def _send_single_request(self, request):
         """Send a single request, handling transport properly."""
@@ -3584,35 +3623,39 @@ class AsyncClient:
                   auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
         """HTTP GET with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        # Extract auth from URL userinfo if no explicit auth provided
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # Determine follow_redirects behavior
-        actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
-
-        # If we have a custom transport, route through redirect handling
-        if self._custom_transport is not None:
-            request = self.build_request("GET", url, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth, follow_redirects=bool(actual_follow))
-            return await self._send_handling_redirects(request, follow_redirects=bool(actual_follow))
-
-        if actual_auth is not None:
-            result = await self._handle_auth("GET", url, actual_auth, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.get(url, params=params, headers=headers, cookies=cookies,
-                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            # Extract auth from URL userinfo if no explicit auth provided
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # Determine follow_redirects behavior
+            actual_follow = follow_redirects if follow_redirects is not None else self._follow_redirects
+
+            # If we have a custom transport, route through redirect handling
+            if self._custom_transport is not None:
+                request = self.build_request("GET", url, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth, follow_redirects=bool(actual_follow))
+                return await self._send_handling_redirects(request, follow_redirects=bool(actual_follow))
+
+            if actual_auth is not None:
+                result = await self._handle_auth("GET", url, actual_auth, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.get(url, params=params, headers=headers, cookies=cookies,
+                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     def _build_redirect_request(self, request, response):
         """Build the next request for following a redirect."""
@@ -3751,225 +3794,253 @@ class AsyncClient:
                 # Keep the async iterator for stream tracking (for auth retry detection)
                 async_stream = content
                 content = None  # Don't pass to Rust, keep in Python wrapper
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("POST", url, content=content, data=data, files=files,
-                                        json=json, params=params, headers=headers)
-            # If we had an async stream, wrap the request to track it
-            if async_stream is not None and isinstance(request, _WrappedRequest):
-                request._async_stream = async_stream
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("POST", url, actual_auth, content=content, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.post(url, content=content, data=data, files=files, json=json,
-                                           params=params, headers=headers, cookies=cookies,
-                                           auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("POST", url, content=content, data=data, files=files,
+                                            json=json, params=params, headers=headers)
+                # If we had an async stream, wrap the request to track it
+                if async_stream is not None and isinstance(request, _WrappedRequest):
+                    request._async_stream = async_stream
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("POST", url, actual_auth, content=content, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.post(url, content=content, data=data, files=files, json=json,
+                                               params=params, headers=headers, cookies=cookies,
+                                               auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def put(self, url, *, content=None, data=None, files=None, json=None,
                   params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
                   follow_redirects=None, timeout=None):
         """HTTP PUT with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("PUT", url, content=content, data=data, files=files,
-                                        json=json, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("PUT", url, actual_auth, content=content, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.put(url, content=content, data=data, files=files, json=json,
-                                          params=params, headers=headers, cookies=cookies,
-                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("PUT", url, content=content, data=data, files=files,
+                                            json=json, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("PUT", url, actual_auth, content=content, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.put(url, content=content, data=data, files=files, json=json,
+                                              params=params, headers=headers, cookies=cookies,
+                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def patch(self, url, *, content=None, data=None, files=None, json=None,
                     params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
                     follow_redirects=None, timeout=None):
         """HTTP PATCH with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("PATCH", url, content=content, data=data, files=files,
-                                        json=json, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("PATCH", url, actual_auth, content=content, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.patch(url, content=content, data=data, files=files, json=json,
-                                            params=params, headers=headers, cookies=cookies,
-                                            auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("PATCH", url, content=content, data=data, files=files,
+                                            json=json, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("PATCH", url, actual_auth, content=content, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.patch(url, content=content, data=data, files=files, json=json,
+                                                params=params, headers=headers, cookies=cookies,
+                                                auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def delete(self, url, *, params=None, headers=None, cookies=None,
                      auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
         """HTTP DELETE with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("DELETE", url, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("DELETE", url, actual_auth, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.delete(url, params=params, headers=headers, cookies=cookies,
-                                             auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("DELETE", url, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("DELETE", url, actual_auth, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.delete(url, params=params, headers=headers, cookies=cookies,
+                                                 auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def head(self, url, *, params=None, headers=None, cookies=None,
                    auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
         """HTTP HEAD with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("HEAD", url, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("HEAD", url, actual_auth, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.head(url, params=params, headers=headers, cookies=cookies,
-                                           auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("HEAD", url, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("HEAD", url, actual_auth, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.head(url, params=params, headers=headers, cookies=cookies,
+                                               auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def options(self, url, *, params=None, headers=None, cookies=None,
                       auth=USE_CLIENT_DEFAULT, follow_redirects=None, timeout=None):
         """HTTP OPTIONS with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request("OPTIONS", url, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth("OPTIONS", url, actual_auth, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.options(url, params=params, headers=headers, cookies=cookies,
-                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request("OPTIONS", url, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth("OPTIONS", url, actual_auth, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.options(url, params=params, headers=headers, cookies=cookies,
+                                                  auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     async def request(self, method, url, *, content=None, data=None, files=None, json=None,
                       params=None, headers=None, cookies=None, auth=USE_CLIENT_DEFAULT,
                       follow_redirects=None, timeout=None):
         """HTTP request with proper auth sentinel handling."""
         self._check_closed()
-        actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
-        if actual_auth is None:
-            actual_auth = _extract_auth_from_url(str(url))
-
-        # If we have a custom transport, route through _send_single_request
-        if self._custom_transport is not None:
-            request = self.build_request(method, url, content=content, data=data, files=files,
-                                        json=json, params=params, headers=headers)
-            if actual_auth is not None:
-                return await self._send_with_auth(request, actual_auth)
-            return await self._send_single_request(request)
-
-        if actual_auth is not None:
-            result = await self._handle_auth(method, url, actual_auth, content=content, params=params, headers=headers)
-            if result is not None:
-                return result
+        await self._acquire_pool_permit()
         try:
-            response = await self._client.request(method, url, content=content, data=data, files=files,
-                                              json=json, params=params, headers=headers, cookies=cookies,
-                                              auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-            return Response(response)
-        except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                _LocalProtocolError, _RemoteProtocolError) as e:
-            raise _convert_exception(e) from None
+            actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
+            if actual_auth is None:
+                actual_auth = _extract_auth_from_url(str(url))
+
+            # If we have a custom transport, route through _send_single_request
+            if self._custom_transport is not None:
+                request = self.build_request(method, url, content=content, data=data, files=files,
+                                            json=json, params=params, headers=headers)
+                if actual_auth is not None:
+                    return await self._send_with_auth(request, actual_auth)
+                return await self._send_single_request(request)
+
+            if actual_auth is not None:
+                result = await self._handle_auth(method, url, actual_auth, content=content, params=params, headers=headers)
+                if result is not None:
+                    return result
+            try:
+                response = await self._client.request(method, url, content=content, data=data, files=files,
+                                                  json=json, params=params, headers=headers, cookies=cookies,
+                                                  auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                return Response(response)
+            except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                    _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                    _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                    _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                    _LocalProtocolError, _RemoteProtocolError) as e:
+                raise _convert_exception(e) from None
+        finally:
+            self._release_pool_permit()
 
     @_contextlib.asynccontextmanager
     async def stream(self, method, url, *, content=None, data=None, files=None, json=None,
@@ -3979,8 +4050,9 @@ class AsyncClient:
         actual_auth = _normalize_auth(auth if auth is not USE_CLIENT_DEFAULT else self._auth)
         if actual_auth is None:
             actual_auth = _extract_auth_from_url(str(url))
-        response = None
+        await self._acquire_pool_permit()
         try:
+            response = None
             if actual_auth is not None:
                 # Build request with auth - build_request only supports certain params
                 build_kwargs = {}
@@ -4002,16 +4074,24 @@ class AsyncClient:
                     modified = actual_auth(request)
                     response = await self._send_single_request(modified if modified is not None else request)
             if response is None:
-                response = await self.request(method, url, content=content, data=data, files=files,
-                                            json=json, params=params, headers=headers, cookies=cookies,
-                                            auth=auth, follow_redirects=follow_redirects, timeout=timeout)
+                # Call Rust client directly to avoid double pool acquisition from self.request()
+                try:
+                    resp = await self._client.request(method, url, content=content, data=data, files=files,
+                                                      json=json, params=params, headers=headers, cookies=cookies,
+                                                      auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                    response = Response(resp)
+                except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                        _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                        _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                        _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                        _LocalProtocolError, _RemoteProtocolError) as e:
+                    raise _convert_exception(e) from None
             # Mark as a streaming response that requires aread() before content access
             response._stream_not_read = True
             response._is_stream = True
             yield response
         finally:
-            # Cleanup if needed
-            pass
+            self._release_pool_permit()
 
 
 # Wrap sync Client to support auth=None vs auth not specified
