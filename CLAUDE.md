@@ -150,7 +150,7 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ---
 
-## Test Status: 19 failed / 1387 passed / 1 skipped (Total: 1407)
+## Test Status: 9 failed / 1397 passed / 1 skipped (Total: 1407)
 
 ### Recent Improvements
 - **Redirect handling** (31/31 tests passing): Malformed redirect URL with explicit port preserved, streaming body redirect raises StreamConsumed, cookie persistence across redirects with proper expiration handling
@@ -176,19 +176,21 @@ pytest tests_requestx/ -v  # ALL PASSED
 - **Transport lifecycle**: Mounted transports properly enter/exit with context manager
 - Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars
 - Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
+- **URL encoding** (90/90 tests passing): raw_path encoding, host percent-escape, kwargs validation, non-printable/long component checks
+- **Headers encoding** (27/27 tests passing): Explicit encoding re-decode when `headers.encoding` is set
 
 | ID | Test File | Failed | Features | Status | Priority | Effort |
 |----|-----------|--------|----------|--------|----------|--------|
 | 1 | client/test_auth.py | 0 | Basic auth URL, custom auth, netrc, digest, streaming | ✅ Done | - | - |
 | 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
-| 3 | models/test_url.py | 10 | Query/fragment encoding, percent escape, validation | 🟡 Partial | P1 | M |
+| 3 | models/test_url.py | 0 | Query/fragment encoding, percent escape, validation | ✅ Done | - | - |
 | 4 | test_timeouts.py | 1 | Pool timeout not firing | 🟢 Mostly | P2 | L |
-| 5 | client/test_event_hooks.py | 6 | Hooks not firing on redirects | 🟡 Partial | P2 | M |
+| 5 | client/test_event_hooks.py | 0 | Hooks firing on redirects | ✅ Done | - | - |
 | 6 | client/test_redirects.py | 0 | Streaming body, malformed, cookies | ✅ Done | - | - |
 | 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
 | 8 | models/test_cookies.py | 0 | Domain/path support, repr | ✅ Done | - | - |
 | 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
-| 10 | models/test_headers.py | 1 | Explicit encoding decode | 🟢 Mostly | P2 | M |
+| 10 | models/test_headers.py | 0 | Explicit encoding decode | ✅ Done | - | - |
 | 11 | client/test_headers.py | 0 | Auth extraction from URL | ✅ Done | - | - |
 | 12 | test_multipart.py | 1 | Non-seekable file-like | 🟢 Mostly | P2 | M |
 | 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
@@ -213,16 +215,15 @@ pytest tests_requestx/ -v  # ALL PASSED
 **Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
 ### Top Failing Categories
-1. **URL edge cases** (10 failures): Query encoding, percent escape host, validation, path encoding
-2. **Event hooks** (6 failures): Hooks not firing on redirect responses
-3. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
-4. **Digest auth** (2 failures): RFC 7616 cnonce format for MD5 and SHA-256
-5. **Timeouts** (1 failure): Pool timeout not firing correctly
+1. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
+2. **Digest auth** (2 failures): RFC 7616 cnonce format for MD5 and SHA-256
+3. **Timeouts** (1 failure): Pool timeout not firing correctly
+4. **Multipart** (1 failure): Non-seekable file-like transfer encoding
+5. **SSLContext** (1 failure): Passing SSLContext to request methods
 
 ### Known Issues (Priority Order)
-1. **URL encoding**: Query/path encoding not matching httpx behavior exactly (M)
-2. **Event hooks on redirect**: Hooks need to fire for each redirect response (M)
-3. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
-4. **Digest auth cnonce**: RFC 7616 cnonce format not matching expected pattern (L)
-5. **Headers explicit encoding**: Lazy re-decode when encoding property is changed (M)
-6. **SSLContext**: Passing SSLContext to request methods needs support (M)
+1. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+2. **Digest auth cnonce**: RFC 7616 cnonce format not matching expected pattern (L)
+3. **SSLContext**: Passing SSLContext to request methods needs support (M)
+4. **Pool timeout**: Pool timeout not firing correctly (L)
+5. **Non-seekable multipart**: Transfer-Encoding should be chunked for non-seekable files (M)

@@ -99,11 +99,11 @@ impl URL {
             return result;
         }
 
-        // If we have an original_host for IPv6, we need to reconstruct the URL with it
+        // If we have an original_host for IPv6 or percent-encoded hosts, reconstruct the URL
         // For IDNA, use the inner (punycode) format
         let s = if let Some(ref orig_host) = self.original_host {
-            // Only reconstruct for IPv6 (contains :), not IDNA
-            if orig_host.contains(':') {
+            // Reconstruct for IPv6 (contains :) or percent-encoded hosts (contains %)
+            if orig_host.contains(':') || orig_host.contains('%') {
                 // Reconstruct URL with original host format
                 let mut result = String::new();
 
@@ -125,10 +125,15 @@ impl URL {
                     result.push('@');
                 }
 
-                // Add host with original format (IPv6 needs brackets)
-                result.push('[');
-                result.push_str(orig_host);
-                result.push(']');
+                // Add host with original format
+                if orig_host.contains(':') {
+                    // IPv6 needs brackets
+                    result.push('[');
+                    result.push_str(orig_host);
+                    result.push(']');
+                } else {
+                    result.push_str(orig_host);
+                }
 
                 // Add port if present
                 if let Some(port) = self.inner.port() {
@@ -444,26 +449,51 @@ impl URL {
                 }
             }
 
-            // Pre-process URL to percent-encode spaces in the host
-            // This handles URLs like "https://exam le.com/" which should become "https://exam%20le.com/"
-            let url_str_processed = if let Some(authority_start) = url_str.find("://") {
+            // Pre-process URL to handle spaces in the host
+            // URLs like "https://exam le.com/" should create a URL with host="exam%20le.com"
+            // The url crate rejects percent-encoded hosts, so we use a placeholder and store the encoded host
+            let (url_str_processed, space_encoded_host) = if let Some(authority_start) = url_str.find("://") {
                 let scheme_part = &url_str[..authority_start + 3];
                 let after_scheme = &url_str[authority_start + 3..];
 
-                // Find the end of the host (first / ? or #)
-                let host_end = after_scheme.find(&['/', '?', '#'][..]).unwrap_or(after_scheme.len());
-                let host_part = &after_scheme[..host_end];
-                let rest_part = &after_scheme[host_end..];
+                // Find the authority portion (before first / ? or #)
+                let authority_end = after_scheme.find(&['/', '?', '#'][..]).unwrap_or(after_scheme.len());
+                let authority_part = &after_scheme[..authority_end];
+                let rest_part = &after_scheme[authority_end..];
 
-                // Check if host contains spaces that need encoding
-                if host_part.contains(' ') {
-                    let encoded_host = host_part.replace(' ', "%20");
-                    format!("{}{}{}", scheme_part, encoded_host, rest_part)
+                // Skip userinfo: find last @ to get the actual host portion
+                let host_start_in_authority = if let Some(at_pos) = authority_part.rfind('@') {
+                    at_pos + 1
                 } else {
-                    url_str.to_string()
+                    0
+                };
+                let host_and_port = &authority_part[host_start_in_authority..];
+                let userinfo_part = &authority_part[..host_start_in_authority]; // includes trailing @
+
+                // Separate host from port
+                let host_only = if let Some(colon_pos) = host_and_port.rfind(':') {
+                    let potential_port = &host_and_port[colon_pos + 1..];
+                    if !potential_port.is_empty() && potential_port.chars().all(|c| c.is_ascii_digit()) {
+                        &host_and_port[..colon_pos]
+                    } else {
+                        host_and_port
+                    }
+                } else {
+                    host_and_port
+                };
+
+                // Check if host (not userinfo, not port) contains spaces
+                if host_only.contains(' ') {
+                    let encoded_host = host_only.replace(' ', "%20");
+                    // Reconstruct authority with placeholder host but preserve userinfo and port
+                    let port_part = &host_and_port[host_only.len()..]; // e.g., ":8080" or ""
+                    let processed = format!("{}{}placeholder-space-host.invalid{}{}", scheme_part, userinfo_part, port_part, rest_part);
+                    (processed, Some(encoded_host))
+                } else {
+                    (url_str.to_string(), None)
                 }
             } else {
-                url_str.to_string()
+                (url_str.to_string(), None)
             };
             let url_str = url_str_processed.as_str();
 
@@ -481,7 +511,7 @@ impl URL {
             match parsed {
                 Ok(mut parsed_url) => {
                     // Apply params if provided and not empty
-                    if let Some(params_obj) = params {
+                    let params_applied = if let Some(params_obj) = params {
                         let query_params = QueryParams::from_py(params_obj)?;
                         let query_string = query_params.to_query_string();
                         // Only set query if params is not empty
@@ -491,7 +521,10 @@ impl URL {
                             // If empty params, also clear any existing query from URL
                             parsed_url.set_query(None);
                         }
-                    }
+                        true
+                    } else {
+                        false
+                    };
 
                     // Track if original URL had a trailing slash
                     // For root paths, check if original ended with /
@@ -506,10 +539,20 @@ impl URL {
                     };
 
                     let frag = decode_fragment(parsed_url.fragment().unwrap_or(""));
-                    // Extract original host from URL string for IDNA/IPv6
-                    let original_host = extract_original_host(url_str);
-                    // Extract original raw_path (path + query) from the URL string to preserve exact encoding
-                    let original_raw_path = extract_original_raw_path(url_str);
+                    // If host had spaces, use the percent-encoded host as original_host
+                    // Otherwise extract original host from URL string for IDNA/IPv6
+                    let original_host = if let Some(ref encoded) = space_encoded_host {
+                        Some(encoded.clone())
+                    } else {
+                        extract_original_host(url_str)
+                    };
+                    // Extract original raw_path to preserve exact encoding (e.g., unencoded single quotes)
+                    // But if params were applied, they override the query, so don't use original raw_path
+                    let original_raw_path = if params_applied {
+                        None
+                    } else {
+                        extract_original_raw_path(url_str)
+                    };
                     return Ok(Self {
                         inner: parsed_url,
                         fragment: frag,
@@ -759,12 +802,44 @@ fn extract_original_raw_path(url_str: &str) -> Option<String> {
                 path_and_rest
             };
 
-            // Always store the original raw_path to preserve exact encoding
-            // The url crate may encode characters differently than expected
-            return Some(raw_path.to_string());
+            // Normalize: encode spaces and non-ASCII while preserving
+            // already-encoded %XX sequences and safe chars (like single quotes)
+            return Some(normalize_raw_path(raw_path));
         }
     }
     None
+}
+
+/// Normalize a raw path string: percent-encode spaces and non-ASCII chars,
+/// preserve already-encoded %XX sequences and all other characters.
+fn normalize_raw_path(raw: &str) -> String {
+    let mut result = String::with_capacity(raw.len() * 2);
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'%' && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
+            // Already-encoded sequence - preserve as-is (keep original case)
+            result.push('%');
+            result.push(bytes[i + 1] as char);
+            result.push(bytes[i + 2] as char);
+            i += 3;
+        } else if b == b' ' {
+            result.push_str("%20");
+            i += 1;
+        } else if b > 127 {
+            // Non-ASCII byte - percent encode
+            result.push_str(&format!("%{:02X}", b));
+            i += 1;
+        } else {
+            result.push(b as char);
+            i += 1;
+        }
+    }
+    result
 }
 
 /// Check if a string looks like an IPv4 address (all digits and dots)
@@ -900,22 +975,127 @@ fn is_valid_idna(s: &str) -> bool {
 #[pymethods]
 impl URL {
     #[new]
-    #[pyo3(signature = (url=None, *, scheme=None, host=None, port=None, path=None, query=None, fragment=None, username=None, password=None, params=None, netloc=None, raw_path=None))]
+    #[pyo3(signature = (url=None, **kwargs))]
     fn py_new(
-        url: Option<&str>,
-        scheme: Option<&str>,
-        host: Option<&str>,
-        port: Option<u16>,
-        path: Option<&str>,
-        query: Option<&[u8]>,
-        fragment: Option<&str>,
-        username: Option<&str>,
-        password: Option<&str>,
-        params: Option<&Bound<'_, PyAny>>,
-        netloc: Option<&[u8]>,
-        raw_path: Option<&[u8]>,
+        url: Option<&Bound<'_, PyAny>>,
+        kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        Self::new_impl(url, scheme, host, port, path, query, fragment, username, password, params, netloc, raw_path)
+        // Validate and extract url argument
+        let url_str: Option<String> = match url {
+            None => None,
+            Some(obj) => {
+                if obj.is_none() {
+                    None
+                } else {
+                    match obj.extract::<String>() {
+                        Ok(s) => Some(s),
+                        Err(_) => {
+                            let type_name = obj.get_type().qualname()?;
+                            return Err(PyTypeError::new_err(format!(
+                                "Invalid type for url. Expected str but got {}",
+                                type_name
+                            )));
+                        }
+                    }
+                }
+            }
+        };
+
+        // Valid keyword arguments
+        const VALID_KWARGS: &[&str] = &[
+            "scheme", "host", "port", "path", "query", "fragment",
+            "username", "password", "params", "netloc", "raw_path",
+        ];
+
+        let mut scheme_owned: Option<String> = None;
+        let mut host_owned: Option<String> = None;
+        let mut port: Option<u16> = None;
+        let mut path_owned: Option<String> = None;
+        let mut query_owned: Option<Vec<u8>> = None;
+        let mut fragment_owned: Option<String> = None;
+        let mut username_owned: Option<String> = None;
+        let mut password_owned: Option<String> = None;
+        let mut params_obj: Option<Bound<'_, PyAny>> = None;
+        let mut netloc_owned: Option<Vec<u8>> = None;
+        let mut raw_path_owned: Option<Vec<u8>> = None;
+
+        if let Some(kw) = kwargs {
+            for (key, value) in kw.iter() {
+                let key_str: String = key.extract()?;
+                if !VALID_KWARGS.contains(&key_str.as_str()) {
+                    return Err(PyTypeError::new_err(format!(
+                        "'{}' is an invalid keyword argument for URL()",
+                        key_str
+                    )));
+                }
+                match key_str.as_str() {
+                    "scheme" => scheme_owned = Some(value.extract()?),
+                    "host" => host_owned = Some(value.extract()?),
+                    "port" => {
+                        if value.is_none() {
+                            port = None;
+                        } else {
+                            port = Some(value.extract()?);
+                        }
+                    },
+                    "path" => path_owned = Some(value.extract()?),
+                    "query" => query_owned = Some(value.extract()?),
+                    "fragment" => fragment_owned = Some(value.extract()?),
+                    "username" => username_owned = Some(value.extract()?),
+                    "password" => password_owned = Some(value.extract()?),
+                    "params" => params_obj = Some(value.clone()),
+                    "netloc" => netloc_owned = Some(value.extract()?),
+                    "raw_path" => raw_path_owned = Some(value.extract()?),
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        // Early validation of component kwargs (even when url string is provided)
+        if let Some(ref p) = path_owned {
+            if p.len() > MAX_URL_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'path' too long",
+                ));
+            }
+            for (i, c) in p.chars().enumerate() {
+                if c.is_control() && c != '\t' {
+                    return Err(crate::exceptions::InvalidURL::new_err(format!(
+                        "Invalid non-printable ASCII character in URL path component, {:?} at position {}.",
+                        c, i
+                    )));
+                }
+            }
+        }
+        if let Some(ref q) = query_owned {
+            if q.len() > MAX_URL_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'query' too long",
+                ));
+            }
+        }
+        if let Some(ref f) = fragment_owned {
+            if f.len() > MAX_URL_LENGTH {
+                return Err(crate::exceptions::InvalidURL::new_err(
+                    "URL component 'fragment' too long",
+                ));
+            }
+        }
+
+        Self::new_impl(
+            url_str.as_deref(),
+            scheme_owned.as_deref(),
+            host_owned.as_deref(),
+            port,
+            path_owned.as_deref(),
+            query_owned.as_deref(),
+            fragment_owned.as_deref(),
+            username_owned.as_deref(),
+            password_owned.as_deref(),
+            params_obj.as_ref(),
+            netloc_owned.as_deref(),
+            raw_path_owned.as_deref(),
+        )
     }
 
     #[getter]
@@ -978,6 +1158,15 @@ impl URL {
 
     #[getter]
     fn query<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        // Use original_raw_path to preserve exact query encoding (e.g., unencoded single quotes)
+        if let Some(ref orig_raw) = self.original_raw_path {
+            if let Some(query_pos) = orig_raw.find('?') {
+                let q = &orig_raw[query_pos + 1..];
+                return PyBytes::new(py, q.as_bytes());
+            }
+            // original_raw_path exists but no query
+            return PyBytes::new(py, b"");
+        }
         let q = self.inner.query().unwrap_or("");
         PyBytes::new(py, q.as_bytes())
     }
@@ -1012,11 +1201,11 @@ impl URL {
 
     #[getter]
     fn raw_host<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        // For IPv6 addresses with original_host, return the original format
+        // For IPv6 addresses or percent-encoded hosts with original_host, return the original format
         // For IDNA, use the punycode-encoded form from inner
         if let Some(ref orig) = self.original_host {
-            // Only use original_host for IPv6 (contains :), not IDNA
-            if orig.contains(':') {
+            // Use original_host for IPv6 (contains :) or percent-encoded hosts (contains %)
+            if orig.contains(':') || orig.contains('%') {
                 return PyBytes::new(py, orig.as_bytes());
             }
         }
@@ -1042,12 +1231,15 @@ impl URL {
 
     #[getter]
     fn netloc<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        // Use original host only for IPv6, use inner (punycode) for IDNA
+        // Use original host for IPv6 or percent-encoded hosts, use inner (punycode) for IDNA
         let raw_host = self.inner.host_str().unwrap_or("");
         let host = if let Some(ref orig) = self.original_host {
-            // Only use original_host for IPv6 (contains :), not IDNA
             if orig.contains(':') {
+                // IPv6 needs brackets
                 format!("[{}]", orig)
+            } else if orig.contains('%') {
+                // Percent-encoded host (e.g., spaces encoded as %20)
+                orig.clone()
             } else {
                 // For IDNA, use the punycode-encoded form from inner
                 raw_host.to_string()
