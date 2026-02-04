@@ -4074,18 +4074,23 @@ class AsyncClient:
                     modified = actual_auth(request)
                     response = await self._send_single_request(modified if modified is not None else request)
             if response is None:
-                # Call Rust client directly to avoid double pool acquisition from self.request()
-                try:
-                    resp = await self._client.request(method, url, content=content, data=data, files=files,
-                                                      json=json, params=params, headers=headers, cookies=cookies,
-                                                      auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
-                    response = Response(resp)
-                except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
-                        _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
-                        _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
-                        _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
-                        _LocalProtocolError, _RemoteProtocolError) as e:
-                    raise _convert_exception(e) from None
+                if self._custom_transport is not None:
+                    request = self.build_request(method, url, content=content, data=data, files=files,
+                                                json=json, params=params, headers=headers)
+                    response = await self._send_single_request(request)
+                else:
+                    # Call Rust client directly to avoid double pool acquisition from self.request()
+                    try:
+                        resp = await self._client.request(method, url, content=content, data=data, files=files,
+                                                          json=json, params=params, headers=headers, cookies=cookies,
+                                                          auth=_convert_auth(auth), follow_redirects=follow_redirects, timeout=timeout)
+                        response = Response(resp)
+                    except (_RequestError, _TransportError, _TimeoutException, _NetworkError,
+                            _ConnectError, _ReadError, _WriteError, _CloseError, _ProxyError,
+                            _ProtocolError, _UnsupportedProtocol, _DecodingError, _TooManyRedirects,
+                            _StreamError, _ConnectTimeout, _ReadTimeout, _WriteTimeout, _PoolTimeout,
+                            _LocalProtocolError, _RemoteProtocolError) as e:
+                        raise _convert_exception(e) from None
             # Mark as a streaming response that requires aread() before content access
             response._stream_not_read = True
             response._is_stream = True
