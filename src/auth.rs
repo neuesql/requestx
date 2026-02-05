@@ -204,7 +204,7 @@ impl FunctionAuth {
 
         // Otherwise assume it's already a list/iterable and convert to list
         let bound = result.bind(py);
-        if let Ok(list) = bound.downcast::<PyList>() {
+        if let Ok(list) = bound.cast::<PyList>() {
             return Ok(list.clone());
         }
 
@@ -212,6 +212,6 @@ impl FunctionAuth {
         let builtins = py.import("builtins")?;
         let list_func = builtins.getattr("list")?;
         let py_list = list_func.call1((bound,))?;
-        Ok(py_list.downcast::<PyList>()?.clone())
+        Ok(py_list.cast::<PyList>()?.clone())
     }
 }

@@ -108,7 +108,7 @@ impl Cookies {
             }
 
             // Handle dict
-            if let Ok(dict) = obj.downcast::<PyDict>() {
+            if let Ok(dict) = obj.cast::<PyDict>() {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
@@ -118,9 +118,9 @@ impl Cookies {
             }
 
             // Handle list of tuples
-            if let Ok(list) = obj.downcast::<PyList>() {
+            if let Ok(list) = obj.cast::<PyList>() {
                 for item in list.iter() {
-                    let tuple = item.downcast::<PyTuple>()?;
+                    let tuple = item.cast::<PyTuple>()?;
                     let k: String = tuple.get_item(0)?.extract()?;
                     let v: String = tuple.get_item(1)?.extract()?;
                     c.set_with_domain_path(&k, &v, "", "/");
@@ -308,7 +308,7 @@ impl Cookies {
                 }
             }
             Ok(true)
-        } else if let Ok(dict) = other.downcast::<PyDict>() {
+        } else if let Ok(dict) = other.cast::<PyDict>() {
             // Compare as simple name->value dict (ignoring domain/path)
             let self_map = self.inner();
             let mut other_map = std::collections::HashMap::new();
@@ -340,7 +340,7 @@ impl Cookies {
     }
 
     fn update(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
-        if let Ok(dict) = other.downcast::<PyDict>() {
+        if let Ok(dict) = other.cast::<PyDict>() {
             for (key, value) in dict.iter() {
                 let k: String = key.extract()?;
                 let v: String = value.extract()?;
@@ -389,7 +389,7 @@ impl Cookies {
             if let Ok(py_iter) = multi_items.try_iter() {
                 for item_result in py_iter {
                     let item: Bound<'_, PyAny> = item_result?;
-                    let tuple = item.downcast::<PyTuple>()?;
+                    let tuple = item.cast::<PyTuple>()?;
                     let key: String = tuple.get_item(0)?.extract()?;
                     if key.to_lowercase() == "set-cookie" {
                         let value: String = tuple.get_item(1)?.extract()?;

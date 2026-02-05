@@ -84,6 +84,7 @@ impl NetRCAuth {
 }
 
 /// HTTP status codes - provides flexible access patterns
+#[allow(non_camel_case_types)]
 #[pyclass(name = "codes", subclass)]
 pub struct codes;
 

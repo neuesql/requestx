@@ -159,7 +159,7 @@ impl Timeout {
         }
 
         // Try tuple format: Timeout(timeout=(connect, read, write, pool))
-        if let Ok(tuple) = timeout.downcast::<PyTuple>() {
+        if let Ok(tuple) = timeout.cast::<PyTuple>() {
             let len = tuple.len();
             if len != 4 {
                 return Err(pyo3::exceptions::PyValueError::new_err("timeout tuple must have 4 elements (connect, read, write, pool)"));

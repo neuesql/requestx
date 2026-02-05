@@ -81,14 +81,14 @@ pub fn build_multipart_body_with_boundary(py: Python<'_>, data: Option<&Bound<'_
     // Add file fields
     if let Some(f) = files {
         // Handle both dict and list of tuples
-        let file_items: Vec<(String, Bound<'_, PyAny>)> = if let Ok(dict) = f.downcast::<PyDict>() {
+        let file_items: Vec<(String, Bound<'_, PyAny>)> = if let Ok(dict) = f.cast::<PyDict>() {
             dict.iter()
                 .map(|(k, v)| (k.extract::<String>().unwrap_or_default(), v))
                 .collect()
-        } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
+        } else if let Ok(list) = f.cast::<pyo3::types::PyList>() {
             list.iter()
                 .filter_map(|item| {
-                    if let Ok(tuple) = item.downcast::<PyTuple>() {
+                    if let Ok(tuple) = item.cast::<PyTuple>() {
                         if tuple.len() >= 2 {
                             let name = tuple.get_item(0).ok()?.extract::<String>().ok()?;
                             let value = tuple.get_item(1).ok()?;
@@ -171,7 +171,7 @@ pub fn build_multipart_body_with_boundary(py: Python<'_>, data: Option<&Bound<'_
 /// Add a data field to the multipart body
 fn add_data_field(py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[u8], key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
     // Check if value is a list - if so, add multiple fields with same name
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         for item in list.iter() {
             add_single_data_field(py, body, boundary_bytes, key, &item)?;
         }
@@ -188,7 +188,7 @@ fn add_single_data_field(_py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[
 
     // Validate value type - must be str, bytes, int, float, bool, or None
     // Check for dict explicitly to give proper error message
-    if value.downcast::<PyDict>().is_ok() {
+    if value.cast::<PyDict>().is_ok() {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!("Invalid type for value: {}. Expected str.", value.get_type().name()?)));
     }
 
@@ -197,7 +197,7 @@ fn add_single_data_field(_py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[
         s.into_bytes()
     } else if let Ok(b) = value.extract::<Vec<u8>>() {
         b
-    } else if value.downcast::<PyBool>().is_ok() {
+    } else if value.cast::<PyBool>().is_ok() {
         // Check bool before int (since bool is subclass of int in Python)
         let b: bool = value.extract()?;
         if b {
@@ -233,7 +233,7 @@ fn add_single_data_field(_py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[
 /// Returns (filename, content, content_type, extra_headers, is_non_seekable)
 fn parse_file_value(py: Python<'_>, value: &Bound<'_, PyAny>, field_name: &str) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
     // Check if it's a tuple: (filename, content) or (filename, content, content_type) or (filename, content, content_type, headers)
-    if let Ok(tuple) = value.downcast::<PyTuple>() {
+    if let Ok(tuple) = value.cast::<PyTuple>() {
         let len = tuple.len();
         if len >= 2 {
             // Get filename (can be None)
@@ -270,7 +270,7 @@ fn parse_file_value(py: Python<'_>, value: &Bound<'_, PyAny>, field_name: &str) 
             // Get extra headers if provided
             let extra_headers = if len >= 4 {
                 let headers_item = tuple.get_item(3)?;
-                if let Ok(dict) = headers_item.downcast::<PyDict>() {
+                if let Ok(dict) = headers_item.cast::<PyDict>() {
                     let mut headers = Vec::new();
                     for (k, v) in dict.iter() {
                         headers.push((k.extract::<String>()?, v.extract::<String>()?));

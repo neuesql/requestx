@@ -642,7 +642,7 @@ start_response = StartResponse(status_holder, headers_holder, exc_info_holder)
         if exc_info_bound.len() > 0 {
             // Re-raise the exception
             let exc_tuple = exc_info_bound.get_item(0)?;
-            let exc_tuple = exc_tuple.downcast::<PyTuple>()?;
+            let exc_tuple = exc_tuple.cast::<PyTuple>()?;
             let exc_value = exc_tuple.get_item(1)?;
             // Raise the exception
             return Err(PyErr::from_value(exc_value.unbind().into_bound(py)));
@@ -667,7 +667,7 @@ start_response = StartResponse(status_holder, headers_holder, exc_info_holder)
         // Set headers
         let headers_bound = headers_holder.bind(py);
         for header in headers_bound.iter() {
-            let tuple = header.downcast::<PyTuple>()?;
+            let tuple = header.cast::<PyTuple>()?;
             let name: String = tuple.get_item(0)?.extract()?;
             let value: String = tuple.get_item(1)?.extract()?;
             response.set_header(&name, &value);

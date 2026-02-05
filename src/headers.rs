@@ -45,11 +45,11 @@ fn extract_string_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)>
         return Err(pyo3::exceptions::PyTypeError::new_err(format!("Header value must be str or bytes, not {}", obj.get_type())));
     }
     // Try string first
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         return Ok((s.to_string(), "ascii".to_string()));
     }
     // Try bytes
-    if let Ok(b) = obj.downcast::<PyBytes>() {
+    if let Ok(b) = obj.cast::<PyBytes>() {
         let bytes = b.as_bytes();
         // Try to detect encoding
         // First try ASCII (all bytes < 128)
@@ -231,12 +231,10 @@ impl Headers {
     #[new]
     #[pyo3(signature = (headers=None))]
     fn py_new(headers: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
-        use pyo3::types::PyBytes;
-
         let mut h = Self::new();
 
         if let Some(obj) = headers {
-            if let Ok(dict) = obj.downcast::<PyDict>() {
+            if let Ok(dict) = obj.cast::<PyDict>() {
                 h.from_dict = true;
                 for (key, value) in dict.iter() {
                     // Handle both string and bytes keys/values (keys are lowercased)
@@ -253,9 +251,9 @@ impl Headers {
                         }
                     }
                 }
-            } else if let Ok(list) = obj.downcast::<PyList>() {
+            } else if let Ok(list) = obj.cast::<PyList>() {
                 for item in list.iter() {
-                    let tuple = item.downcast::<PyTuple>()?;
+                    let tuple = item.cast::<PyTuple>()?;
                     let (k, k_encoding) = extract_key_or_bytes(&tuple.get_item(0)?)?;
                     let (v, v_encoding) = extract_string_or_bytes(&tuple.get_item(1)?)?;
                     h.lower_keys.push(k.to_lowercase());
@@ -493,7 +491,7 @@ impl Headers {
             self_items.sort();
             other_items.sort();
             Ok(self_items == other_items)
-        } else if let Ok(dict) = other.downcast::<PyDict>() {
+        } else if let Ok(dict) = other.cast::<PyDict>() {
             let self_map: HashMap<String, String> = self
                 .lower_keys
                 .iter()
@@ -507,7 +505,7 @@ impl Headers {
                 other_map.insert(key.to_lowercase(), value);
             }
             Ok(self_map == other_map)
-        } else if let Ok(list) = other.downcast::<PyList>() {
+        } else if let Ok(list) = other.cast::<PyList>() {
             // Compare with list of tuples
             let mut self_items: Vec<(String, String)> = self
                 .lower_keys
@@ -517,7 +515,7 @@ impl Headers {
                 .collect();
             let mut other_items: Vec<(String, String)> = Vec::new();
             for item in list.iter() {
-                let tuple = item.downcast::<PyTuple>()?;
+                let tuple = item.cast::<PyTuple>()?;
                 let k: String = tuple.get_item(0)?.extract()?;
                 let v: String = tuple.get_item(1)?.extract()?;
                 other_items.push((k.to_lowercase(), v));
@@ -606,7 +604,7 @@ impl Headers {
     }
 
     fn update(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
-        if let Ok(dict) = other.downcast::<PyDict>() {
+        if let Ok(dict) = other.cast::<PyDict>() {
             for (key, value) in dict.iter() {
                 let k: String = key.extract()?;
                 let v: String = value.extract()?;

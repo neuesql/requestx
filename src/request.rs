@@ -15,18 +15,18 @@ pub fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         return Ok(String::new());
     }
     // Check bool before int (since bool is subclass of int in Python)
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(if b.is_true() { "true" } else { "false" }.to_string());
     }
-    if let Ok(i) = obj.downcast::<PyInt>() {
+    if let Ok(i) = obj.cast::<PyInt>() {
         let val: i64 = i.extract()?;
         return Ok(val.to_string());
     }
-    if let Ok(f) = obj.downcast::<PyFloat>() {
+    if let Ok(f) = obj.cast::<PyFloat>() {
         let val: f64 = f.extract()?;
         return Ok(val.to_string());
     }
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         return Ok(s.extract::<String>()?);
     }
     // Fall back to str() representation
@@ -181,7 +181,7 @@ impl MutableHeaders {
             for (k, v) in mh.headers.inner() {
                 self.headers.set(k.clone(), v.clone());
             }
-        } else if let Ok(dict) = other.downcast::<PyDict>() {
+        } else if let Ok(dict) = other.cast::<PyDict>() {
             for (key, value) in dict.iter() {
                 let k: String = key.extract()?;
                 let v: String = value.extract()?;
@@ -198,7 +198,7 @@ impl MutableHeaders {
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         use pyo3::types::PyDict;
         // Compare with dict
-        if let Ok(dict) = other.downcast::<PyDict>() {
+        if let Ok(dict) = other.cast::<PyDict>() {
             // Build dict from our headers
             let our_items: Vec<(String, String)> = self.headers.inner().clone();
             // Convert to lowercase-keyed map for comparison
@@ -262,7 +262,7 @@ pub struct Request {
     /// Whether aread() was called (for returning async stream)
     was_async_read: bool,
     /// Python stream object (for pickle/stream tracking)
-    stream_ref: Option<PyObject>,
+    stream_ref: Option<Py<PyAny>>,
     /// Stream mode (dual, sync-only, or async-only)
     stream_mode: StreamMode,
 }
@@ -366,7 +366,7 @@ impl Request {
         if let Some(h) = headers {
             if let Ok(headers_obj) = h.extract::<Headers>() {
                 request.headers = headers_obj;
-            } else if let Ok(dict) = h.downcast::<PyDict>() {
+            } else if let Ok(dict) = h.cast::<PyDict>() {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
@@ -479,9 +479,9 @@ impl Request {
         // Check if files is not empty (dict or list)
         let files_not_empty = files
             .map(|f| {
-                if let Ok(dict) = f.downcast::<PyDict>() {
+                if let Ok(dict) = f.cast::<PyDict>() {
                     !dict.is_empty()
-                } else if let Ok(list) = f.downcast::<PyList>() {
+                } else if let Ok(list) = f.cast::<PyList>() {
                     !list.is_empty()
                 } else {
                     true // Unknown type, assume not empty
@@ -494,7 +494,7 @@ impl Request {
             // Check if boundary was already set in headers BEFORE reading files
             let existing_ct = request.headers.get("content-type", None);
             // Get data dict if provided
-            let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.downcast::<PyDict>().ok());
+            let data_dict: Option<&Bound<'_, PyDict>> = data.and_then(|d| d.cast::<PyDict>().ok());
 
             let (body, content_type, has_non_seekable) = if let Some(ref ct) = existing_ct {
                 if ct.contains("boundary=") {
@@ -533,14 +533,14 @@ impl Request {
             }
         } else if let Some(d) = data {
             // Handle form data (no files)
-            if let Ok(dict) = d.downcast::<PyDict>() {
+            if let Ok(dict) = d.cast::<PyDict>() {
                 // Only process if dict is not empty
                 if !dict.is_empty() {
                     let mut form_data = Vec::new();
                     for (key, value) in dict.iter() {
                         let k: String = key.extract()?;
                         // Handle lists - create multiple key=value pairs
-                        if let Ok(list) = value.downcast::<PyList>() {
+                        if let Ok(list) = value.cast::<PyList>() {
                             for item in list.iter() {
                                 let v = py_value_to_form_str(&item)?;
                                 form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
@@ -654,7 +654,7 @@ impl Request {
 
     /// Get the stream reference (for iterators/generators)
     #[getter]
-    fn stream_ref(&self, py: Python<'_>) -> Option<PyObject> {
+    fn stream_ref(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.stream_ref.as_ref().map(|obj| obj.clone_ref(py))
     }
 
@@ -677,7 +677,7 @@ impl Request {
             self.headers = h;
         } else if let Ok(mh) = headers.extract::<MutableHeaders>() {
             self.headers = mh.headers;
-        } else if let Ok(dict) = headers.downcast::<PyDict>() {
+        } else if let Ok(dict) = headers.cast::<PyDict>() {
             self.headers = Headers::new();
             for (key, value) in dict.iter() {
                 let k: String = key.extract()?;
@@ -704,8 +704,6 @@ impl Request {
 
     #[getter]
     fn stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        use crate::types::AsyncByteStream;
-
         // If content has been read, return a stream from the content
         // The stream needs to support both sync and async iteration based on how it was read
         if self.is_stream_consumed || !self.is_streaming {
@@ -728,7 +726,7 @@ impl Request {
     }
 
     #[getter]
-    fn extensions(&self) -> std::collections::HashMap<String, PyObject> {
+    fn extensions(&self) -> std::collections::HashMap<String, Py<PyAny>> {
         std::collections::HashMap::new()
     }
 
@@ -871,7 +869,7 @@ async def _return_bytes(data):
     }
 
     /// Pickle support - get state
-    fn __getstate__(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn __getstate__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = PyDict::new(py);
         state.set_item("method", &self.method)?;
         state.set_item("url", self.url.to_string())?;

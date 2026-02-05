@@ -10,18 +10,18 @@ fn py_to_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         return Ok(String::new());
     }
     // Check bool before int (since bool is subclass of int in Python)
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(if b.is_true() { "true" } else { "false" }.to_string());
     }
-    if let Ok(i) = obj.downcast::<PyInt>() {
+    if let Ok(i) = obj.cast::<PyInt>() {
         let val: i64 = i.extract()?;
         return Ok(val.to_string());
     }
-    if let Ok(f) = obj.downcast::<PyFloat>() {
+    if let Ok(f) = obj.cast::<PyFloat>() {
         let val: f64 = f.extract()?;
         return Ok(val.to_string());
     }
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         return Ok(s.extract::<String>()?);
     }
     // Fall back to str() representation
@@ -64,16 +64,16 @@ impl QueryParams {
     pub fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut params = Self::new();
 
-        if let Ok(dict) = obj.downcast::<PyDict>() {
+        if let Ok(dict) = obj.cast::<PyDict>() {
             for (key, value) in dict.iter() {
                 let k = py_to_str(&key)?;
                 // Handle both single values and lists/tuples
-                if let Ok(list) = value.downcast::<PyList>() {
+                if let Ok(list) = value.cast::<PyList>() {
                     for item in list.iter() {
                         let v = py_to_str(&item)?;
                         params.inner.push((k.clone(), v));
                     }
-                } else if let Ok(tuple) = value.downcast::<PyTuple>() {
+                } else if let Ok(tuple) = value.cast::<PyTuple>() {
                     for item in tuple.iter() {
                         let v = py_to_str(&item)?;
                         params.inner.push((k.clone(), v));
@@ -83,17 +83,17 @@ impl QueryParams {
                     params.inner.push((k, v));
                 }
             }
-        } else if let Ok(list) = obj.downcast::<PyList>() {
+        } else if let Ok(list) = obj.cast::<PyList>() {
             for item in list.iter() {
-                let tuple = item.downcast::<PyTuple>()?;
+                let tuple = item.cast::<PyTuple>()?;
                 let k = py_to_str(&tuple.get_item(0)?)?;
                 let v = py_to_str(&tuple.get_item(1)?)?;
                 params.inner.push((k, v));
             }
-        } else if let Ok(tuple) = obj.downcast::<PyTuple>() {
+        } else if let Ok(tuple) = obj.cast::<PyTuple>() {
             // Handle tuple of tuples
             for item in tuple.iter() {
-                let inner_tuple = item.downcast::<PyTuple>()?;
+                let inner_tuple = item.cast::<PyTuple>()?;
                 let k = py_to_str(&inner_tuple.get_item(0)?)?;
                 let v = py_to_str(&inner_tuple.get_item(1)?)?;
                 params.inner.push((k, v));
@@ -102,7 +102,7 @@ impl QueryParams {
             params.inner = qp.inner;
         } else if let Ok(s) = obj.extract::<String>() {
             params = Self::from_query_string(&s);
-        } else if let Ok(bytes) = obj.downcast::<pyo3::types::PyBytes>() {
+        } else if let Ok(bytes) = obj.cast::<pyo3::types::PyBytes>() {
             // Handle bytes input - decode as UTF-8
             let s = String::from_utf8_lossy(bytes.as_bytes());
             params = Self::from_query_string(&s);

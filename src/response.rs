@@ -28,7 +28,7 @@ pub struct Response {
     text_accessed: bool,
     elapsed: Duration,
     /// The original stream object (async or sync iterator)
-    stream: Option<PyObject>,
+    stream: Option<Py<PyAny>>,
     /// Whether the stream is async (true) or sync (false)
     is_async_stream: bool,
 }
@@ -199,16 +199,16 @@ impl Response {
         if let Some(h) = headers {
             if let Ok(headers_obj) = h.extract::<Headers>() {
                 response.headers = headers_obj;
-            } else if let Ok(dict) = h.downcast::<PyDict>() {
+            } else if let Ok(dict) = h.cast::<PyDict>() {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
                     response.headers.set(k, v);
                 }
-            } else if let Ok(list) = h.downcast::<PyList>() {
+            } else if let Ok(list) = h.cast::<PyList>() {
                 // Handle list of tuples [(key, value), ...]
                 for item in list.iter() {
-                    if let Ok(tuple) = item.downcast::<PyTuple>() {
+                    if let Ok(tuple) = item.cast::<PyTuple>() {
                         if tuple.len() == 2 {
                             // Extract key and value, handling both bytes and string
                             let key_item = tuple.get_item(0)?;
@@ -239,7 +239,7 @@ impl Response {
                 response.content = bytes;
             } else if let Ok(s) = c.extract::<String>() {
                 response.content = s.into_bytes();
-            } else if let Ok(list) = c.downcast::<pyo3::types::PyList>() {
+            } else if let Ok(list) = c.cast::<pyo3::types::PyList>() {
                 // Handle list of byte chunks
                 let mut content_bytes = Vec::new();
                 for item in list.iter() {
@@ -250,7 +250,7 @@ impl Response {
                     }
                 }
                 response.content = content_bytes;
-            } else if let Ok(tuple) = c.downcast::<pyo3::types::PyTuple>() {
+            } else if let Ok(tuple) = c.cast::<pyo3::types::PyTuple>() {
                 // Handle tuple of byte chunks
                 let mut content_bytes = Vec::new();
                 for item in tuple.iter() {
@@ -384,7 +384,7 @@ impl Response {
         }
     }
 
-    fn json(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    fn json(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let text = self.text()?;
         json_to_py(py, &text)
     }
@@ -506,7 +506,7 @@ impl Response {
     }
 
     #[getter]
-    fn extensions(&self, py: Python<'_>) -> std::collections::HashMap<String, PyObject> {
+    fn extensions(&self, py: Python<'_>) -> std::collections::HashMap<String, Py<PyAny>> {
         let mut extensions = std::collections::HashMap::new();
         // Only add http_version if it was set from a real HTTP response
         if self.has_real_http_version {
@@ -693,7 +693,7 @@ impl Response {
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn iter_raw<'py>(&mut self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+    fn iter_raw<'py>(&mut self, py: Python<'py>, chunk_size: Option<usize>) -> PyResult<Py<PyAny>> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
@@ -735,7 +735,7 @@ impl Response {
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn iter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+    fn iter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<Py<PyAny>> {
         // Check if this is an async stream - if so, raise RuntimeError
         if self.stream.is_some() && self.is_async_stream {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call a sync iterator method on an async stream."));
@@ -854,7 +854,7 @@ impl Response {
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn aiter_raw(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+    fn aiter_raw(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<Py<PyAny>> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
@@ -895,7 +895,7 @@ impl Response {
     }
 
     #[pyo3(signature = (chunk_size=None))]
-    fn aiter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<PyObject> {
+    fn aiter_bytes(&mut self, py: Python<'_>, chunk_size: Option<usize>) -> PyResult<Py<PyAny>> {
         // Check if this is a sync stream - if so, raise RuntimeError
         if self.stream.is_some() && !self.is_async_stream {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
@@ -1298,7 +1298,7 @@ impl AsyncLinesIterator {
 /// Sync iterator that wraps a Python sync stream for raw bytes
 #[pyclass]
 pub struct SyncStreamRawIterator {
-    stream: Option<PyObject>,
+    stream: Option<Py<PyAny>>,
     chunk_size: usize,
     buffer: Vec<u8>,
 }
@@ -1350,7 +1350,7 @@ impl SyncStreamRawIterator {
 /// Sync iterator that wraps a Python sync stream for decoded bytes
 #[pyclass]
 pub struct SyncStreamBytesIterator {
-    stream: Option<PyObject>,
+    stream: Option<Py<PyAny>>,
     chunk_size: usize,
     buffer: Vec<u8>,
 }
@@ -1402,8 +1402,8 @@ impl SyncStreamBytesIterator {
 /// Async iterator that wraps a Python async stream for raw bytes
 #[pyclass]
 pub struct AsyncStreamRawIterator {
-    stream: Option<PyObject>, // The original async generator/iterator
-    aiter: Option<PyObject>,  // The __aiter__ result (stored after first call)
+    stream: Option<Py<PyAny>>, // The original async generator/iterator
+    aiter: Option<Py<PyAny>>,  // The __aiter__ result (stored after first call)
     chunk_size: usize,
     buffer: Vec<u8>,
 }
@@ -1435,8 +1435,8 @@ impl AsyncStreamRawIterator {
 /// Async iterator that wraps a Python async stream for decoded bytes
 #[pyclass]
 pub struct AsyncStreamBytesIterator {
-    stream: Option<PyObject>,
-    aiter: Option<PyObject>,
+    stream: Option<Py<PyAny>>,
+    aiter: Option<Py<PyAny>>,
     chunk_size: usize,
     buffer: Vec<u8>,
 }
@@ -1617,7 +1617,7 @@ fn status_code_to_reason(code: u16) -> &'static str {
 }
 
 /// Parse JSON string to Python object
-fn json_to_py(py: Python<'_>, json_str: &str) -> PyResult<PyObject> {
+fn json_to_py(py: Python<'_>, json_str: &str) -> PyResult<Py<PyAny>> {
     let value: sonic_rs::Value = sonic_rs::from_str(json_str).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
     json_value_to_py(py, &value)
 }
@@ -1625,7 +1625,7 @@ fn json_to_py(py: Python<'_>, json_str: &str) -> PyResult<PyObject> {
 /// Detect JSON encoding from BOM or null-byte patterns, decode bytes to string,
 /// strip BOM character, and parse JSON using sonic-rs. Returns a Python object.
 #[pyfunction]
-pub fn json_from_bytes(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+pub fn json_from_bytes(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
     if data.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err("JSON parse error: empty content"));
     }
@@ -1794,7 +1794,7 @@ fn decode_utf32(data: &[u8], big_endian: bool) -> PyResult<String> {
 }
 
 /// Convert sonic_rs::Value to Python object
-fn json_value_to_py(py: Python<'_>, value: &sonic_rs::Value) -> PyResult<PyObject> {
+fn json_value_to_py(py: Python<'_>, value: &sonic_rs::Value) -> PyResult<Py<PyAny>> {
     use pyo3::types::{PyDict, PyList};
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 

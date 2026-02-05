@@ -1,10 +1,9 @@
 //! URL type implementation
 
 use percent_encoding::percent_decode_str;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use std::collections::HashMap;
 use url::Url;
 
 use crate::queryparams::QueryParams;

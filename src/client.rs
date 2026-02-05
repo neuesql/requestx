@@ -293,7 +293,7 @@ impl Client {
                 for (k, v) in headers_obj.inner() {
                     builder = builder.header(k.as_str(), v.as_str());
                 }
-            } else if let Ok(dict) = h.downcast::<PyDict>() {
+            } else if let Ok(dict) = h.cast::<PyDict>() {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
@@ -355,7 +355,7 @@ impl Client {
         // Execute request (release GIL during I/O) and measure elapsed time
         let start = std::time::Instant::now();
         let response = py
-            .allow_threads(|| builder.send())
+            .detach(|| builder.send())
             .map_err(convert_reqwest_error)?;
         let elapsed = start.elapsed();
 
@@ -400,7 +400,7 @@ impl Client {
         let headers_obj = if let Some(h) = headers {
             if let Ok(headers_obj) = h.extract::<Headers>() {
                 Some(headers_obj)
-            } else if let Ok(dict) = h.downcast::<PyDict>() {
+            } else if let Ok(dict) = h.cast::<PyDict>() {
                 let mut hdr = Headers::new();
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
@@ -419,7 +419,7 @@ impl Client {
             // Try to extract as Cookies first
             if let Ok(cookies_obj) = c.extract::<Cookies>() {
                 Some(cookies_obj)
-            } else if let Ok(dict) = c.downcast::<PyDict>() {
+            } else if let Ok(dict) = c.cast::<PyDict>() {
                 // Handle Python dict
                 let mut cookies = Cookies::new();
                 for (key, value) in dict.iter() {
@@ -491,14 +491,14 @@ impl Client {
         // Parse event_hooks dict if provided
         if let Some(hooks_dict) = event_hooks {
             if let Some(request_hooks) = hooks_dict.get_item("request")? {
-                if let Ok(list) = request_hooks.downcast::<PyList>() {
+                if let Ok(list) = request_hooks.cast::<PyList>() {
                     for item in list.iter() {
                         client.event_hooks.request.push(item.unbind());
                     }
                 }
             }
             if let Some(response_hooks) = hooks_dict.get_item("response")? {
-                if let Ok(list) = response_hooks.downcast::<PyList>() {
+                if let Ok(list) = response_hooks.cast::<PyList>() {
                     for item in list.iter() {
                         client.event_hooks.response.push(item.unbind());
                     }
@@ -783,15 +783,15 @@ impl Client {
                 for (k, v) in headers_obj.inner() {
                     all_headers.set(k.clone(), v.clone());
                 }
-            } else if let Ok(dict) = h.downcast::<pyo3::types::PyDict>() {
+            } else if let Ok(dict) = h.cast::<pyo3::types::PyDict>() {
                 for (key, value) in dict.iter() {
                     if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                         all_headers.set(k, v);
                     }
                 }
-            } else if let Ok(list) = h.downcast::<pyo3::types::PyList>() {
+            } else if let Ok(list) = h.cast::<pyo3::types::PyList>() {
                 for item in list.iter() {
-                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                    if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>() {
                         if tuple.len() == 2 {
                             if let (Ok(k), Ok(v)) = (tuple.get_item(0).and_then(|i| i.extract::<String>()), tuple.get_item(1).and_then(|i| i.extract::<String>())) {
                                 all_headers.append(k, v);
@@ -816,7 +816,7 @@ impl Client {
                 for (k, v) in cookies_obj.inner() {
                     all_cookies.set(&k, &v);
                 }
-            } else if let Ok(dict) = c.downcast::<pyo3::types::PyDict>() {
+            } else if let Ok(dict) = c.cast::<pyo3::types::PyDict>() {
                 for (key, value) in dict.iter() {
                     if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                         all_cookies.set(&k, &v);
@@ -854,9 +854,9 @@ impl Client {
         } else if files.is_some() {
             // Check if files is not empty
             let f = files.unwrap();
-            let files_not_empty = if let Ok(dict) = f.downcast::<pyo3::types::PyDict>() {
+            let files_not_empty = if let Ok(dict) = f.cast::<pyo3::types::PyDict>() {
                 !dict.is_empty()
-            } else if let Ok(list) = f.downcast::<pyo3::types::PyList>() {
+            } else if let Ok(list) = f.cast::<pyo3::types::PyList>() {
                 !list.is_empty()
             } else {
                 true // Unknown type, assume not empty
@@ -900,7 +900,7 @@ impl Client {
                     let mut form_data = Vec::new();
                     for (key, value) in d.iter() {
                         let k: String = key.extract()?;
-                        if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+                        if let Ok(list) = value.cast::<pyo3::types::PyList>() {
                             for item in list.iter() {
                                 let v = py_value_to_form_str(&item)?;
                                 form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
@@ -928,7 +928,7 @@ impl Client {
                 for (key, value) in d.iter() {
                     let k: String = key.extract()?;
                     // Handle lists - create multiple key=value pairs
-                    if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+                    if let Ok(list) = value.cast::<pyo3::types::PyList>() {
                         for item in list.iter() {
                             let v = py_value_to_form_str(&item)?;
                             form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
@@ -1052,7 +1052,7 @@ impl Client {
     fn set_headers(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(headers) = value.extract::<Headers>() {
             self.headers = headers;
-        } else if let Ok(dict) = value.downcast::<PyDict>() {
+        } else if let Ok(dict) = value.cast::<PyDict>() {
             let mut headers = Headers::default();
             for (key, val) in dict.iter() {
                 let k: String = key.extract()?;
@@ -1077,7 +1077,7 @@ impl Client {
     fn set_cookies(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(cookies) = value.extract::<Cookies>() {
             self.cookies = cookies;
-        } else if let Ok(dict) = value.downcast::<PyDict>() {
+        } else if let Ok(dict) = value.cast::<PyDict>() {
             let mut cookies = Cookies::default();
             for (key, val) in dict.iter() {
                 let k: String = key.extract()?;

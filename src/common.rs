@@ -24,12 +24,12 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Ok(());
     }
 
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         buf.push_str(if b.is_true() { "true" } else { "false" });
         return Ok(());
     }
 
-    if let Ok(i) = obj.downcast::<PyInt>() {
+    if let Ok(i) = obj.cast::<PyInt>() {
         if let Ok(val) = i.extract::<i64>() {
             buf.push_str(&val.to_string());
             return Ok(());
@@ -42,7 +42,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Err(pyo3::exceptions::PyOverflowError::new_err(format!("Integer {} too large for JSON", s)));
     }
 
-    if let Ok(f) = obj.downcast::<PyFloat>() {
+    if let Ok(f) = obj.cast::<PyFloat>() {
         let val: f64 = f.extract()?;
         if val.is_nan() || val.is_infinite() {
             return Err(pyo3::exceptions::PyValueError::new_err("Out of range float values are not JSON compliant"));
@@ -53,7 +53,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Ok(());
     }
 
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         let val: String = s.extract()?;
         // Use sonic-rs for proper JSON string escaping
         let v = sonic_rs::json!(&val);
@@ -61,7 +61,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Ok(());
     }
 
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         buf.push('[');
         for (i, item) in list.iter().enumerate() {
             if i > 0 {
@@ -73,7 +73,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Ok(());
     }
 
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         buf.push('[');
         for (i, item) in tuple.iter().enumerate() {
             if i > 0 {
@@ -85,7 +85,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
         return Ok(());
     }
 
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         buf.push('{');
         for (i, (k, v)) in dict.iter().enumerate() {
             if i > 0 {
@@ -132,11 +132,11 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Ok(sonic_rs::Value::default());
     }
 
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(sonic_rs::json!(b.is_true()));
     }
 
-    if let Ok(i) = obj.downcast::<PyInt>() {
+    if let Ok(i) = obj.cast::<PyInt>() {
         // Try i64 first, then u64 for large unsigned values
         if let Ok(val) = i.extract::<i64>() {
             return Ok(sonic_rs::json!(val));
@@ -149,7 +149,7 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Err(pyo3::exceptions::PyOverflowError::new_err(format!("Integer {} too large for JSON", s)));
     }
 
-    if let Ok(f) = obj.downcast::<PyFloat>() {
+    if let Ok(f) = obj.cast::<PyFloat>() {
         let val: f64 = f.extract()?;
         // Check for NaN and Inf - not allowed by default in JSON
         if val.is_nan() || val.is_infinite() {
@@ -158,12 +158,12 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Ok(sonic_rs::json!(val));
     }
 
-    if let Ok(s) = obj.downcast::<PyString>() {
+    if let Ok(s) = obj.cast::<PyString>() {
         let val: String = s.extract()?;
         return Ok(sonic_rs::json!(val));
     }
 
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut arr = Vec::with_capacity(list.len());
         for item in list.iter() {
             arr.push(py_to_json_value(&item)?);
@@ -171,7 +171,7 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Ok(sonic_rs::Value::from(arr));
     }
 
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         // JSON doesn't have tuples; serialize as array (same as Python's json.dumps)
         let mut arr = Vec::with_capacity(tuple.len());
         for item in tuple.iter() {
@@ -180,7 +180,7 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Ok(sonic_rs::Value::from(arr));
     }
 
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut obj_map = sonic_rs::Object::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;

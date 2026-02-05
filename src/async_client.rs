@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::client_common::{apply_basic_auth, apply_url_auth, create_event_hooks_dict, extract_auth_action, parse_event_hooks_dict, AuthAction};
 use crate::cookies::Cookies;
-use crate::exceptions::{convert_reqwest_error, convert_reqwest_error_with_context};
+use crate::exceptions::convert_reqwest_error_with_context;
 use crate::headers::Headers;
 use crate::request::Request;
 use crate::response::Response;
@@ -179,7 +179,7 @@ impl AsyncClient {
         let headers_obj = if let Some(h) = headers {
             if let Ok(headers_obj) = h.extract::<Headers>() {
                 Some(headers_obj)
-            } else if let Ok(dict) = h.downcast::<PyDict>() {
+            } else if let Ok(dict) = h.cast::<PyDict>() {
                 let mut hdr = Headers::new();
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
@@ -240,14 +240,14 @@ impl AsyncClient {
         // Parse event_hooks dict if provided
         if let Some(hooks_dict) = event_hooks {
             if let Some(request_hooks) = hooks_dict.get_item("request")? {
-                if let Ok(list) = request_hooks.downcast::<PyList>() {
+                if let Ok(list) = request_hooks.cast::<PyList>() {
                     for item in list.iter() {
                         client.event_hooks.request.push(item.unbind());
                     }
                 }
             }
             if let Some(response_hooks) = hooks_dict.get_item("response")? {
-                if let Ok(list) = response_hooks.downcast::<PyList>() {
+                if let Ok(list) = response_hooks.cast::<PyList>() {
                     for item in list.iter() {
                         client.event_hooks.response.push(item.unbind());
                     }
@@ -291,12 +291,12 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "GET".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
@@ -308,15 +308,15 @@ impl AsyncClient {
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        files: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        files: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "POST".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
@@ -328,15 +328,15 @@ impl AsyncClient {
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        files: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        files: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "PUT".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
@@ -348,15 +348,15 @@ impl AsyncClient {
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        files: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        files: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "PATCH".to_string(), url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
@@ -367,12 +367,12 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "DELETE".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
@@ -383,12 +383,12 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "HEAD".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
@@ -399,12 +399,12 @@ impl AsyncClient {
         &self,
         py: Python<'py>,
         url: &Bound<'_, PyAny>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, "OPTIONS".to_string(), url_str, None, None, None, params, headers, cookies, auth, follow_redirects, timeout)
@@ -417,15 +417,15 @@ impl AsyncClient {
         method: String,
         url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        files: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        files: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let url_str = extract_url_string(url)?;
         self.async_request(py, method, url_str, content, data, json, params, headers, cookies, auth, follow_redirects, timeout)
@@ -438,15 +438,15 @@ impl AsyncClient {
         method: String,
         url: &Bound<'_, PyAny>,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        files: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        files: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<AsyncStreamContextManager> {
         let url_str = extract_url_string(url)?;
 
@@ -510,15 +510,15 @@ impl AsyncClient {
                 for (k, v) in headers_obj.inner() {
                     all_headers.set(k.clone(), v.clone());
                 }
-            } else if let Ok(dict) = h.downcast::<pyo3::types::PyDict>() {
+            } else if let Ok(dict) = h.cast::<pyo3::types::PyDict>() {
                 for (key, value) in dict.iter() {
                     if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                         all_headers.set(k, v);
                     }
                 }
-            } else if let Ok(list) = h.downcast::<pyo3::types::PyList>() {
+            } else if let Ok(list) = h.cast::<pyo3::types::PyList>() {
                 for item in list.iter() {
-                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                    if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>() {
                         if tuple.len() == 2 {
                             if let (Ok(k), Ok(v)) = (tuple.get_item(0).and_then(|i| i.extract::<String>()), tuple.get_item(1).and_then(|i| i.extract::<String>())) {
                                 all_headers.append(k, v);
@@ -762,14 +762,14 @@ impl AsyncClient {
         method: String,
         url: String,
         content: Option<Vec<u8>>,
-        data: Option<PyObject>,
-        json: Option<PyObject>,
-        params: Option<PyObject>,
-        headers: Option<PyObject>,
-        cookies: Option<PyObject>,
-        auth: Option<PyObject>,
+        data: Option<Py<PyAny>>,
+        json: Option<Py<PyAny>>,
+        params: Option<Py<PyAny>>,
+        headers: Option<Py<PyAny>>,
+        cookies: Option<Py<PyAny>>,
+        auth: Option<Py<PyAny>>,
         follow_redirects: Option<bool>,
-        timeout: Option<PyObject>,
+        timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let default_headers = self.headers.clone();
         let default_cookies = self.cookies.clone();
@@ -813,7 +813,7 @@ impl AsyncClient {
                     for (k, v) in headers_obj.inner() {
                         request_headers.set(k.clone(), v.clone());
                     }
-                } else if let Ok(dict) = h_bound.downcast::<PyDict>() {
+                } else if let Ok(dict) = h_bound.cast::<PyDict>() {
                     for (key, value) in dict.iter() {
                         if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                             request_headers.set(k, v);
@@ -844,7 +844,7 @@ impl AsyncClient {
         } else if let Some(d) = &data {
             Python::attach(|py| {
                 let d_bound = d.bind(py);
-                if let Ok(dict) = d_bound.downcast::<PyDict>() {
+                if let Ok(dict) = d_bound.cast::<PyDict>() {
                     let mut form_data = Vec::new();
                     for (key, value) in dict.iter() {
                         if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
@@ -1013,14 +1013,14 @@ pub struct AsyncStreamContextManager {
     method: String,
     url: String,
     content: Option<Vec<u8>>,
-    data: Option<PyObject>,
-    json: Option<PyObject>,
-    params: Option<PyObject>,
-    headers: Option<PyObject>,
-    cookies: Option<PyObject>,
-    auth: Option<PyObject>,
+    data: Option<Py<PyAny>>,
+    json: Option<Py<PyAny>>,
+    params: Option<Py<PyAny>>,
+    headers: Option<Py<PyAny>>,
+    cookies: Option<Py<PyAny>>,
+    auth: Option<Py<PyAny>>,
     follow_redirects: Option<bool>,
-    timeout: Option<PyObject>,
+    timeout: Option<Py<PyAny>>,
     response: Option<Response>,
 }
 

@@ -132,16 +132,16 @@ pub fn merge_headers_from_py(source: &Bound<'_, PyAny>, target: &mut Headers) ->
         for (k, v) in headers_obj.inner() {
             target.set(k.clone(), v.clone());
         }
-    } else if let Ok(dict) = source.downcast::<PyDict>() {
+    } else if let Ok(dict) = source.cast::<PyDict>() {
         for (key, value) in dict.iter() {
             let k: String = key.extract()?;
             let v: String = value.extract()?;
             target.set(k, v);
         }
-    } else if let Ok(list) = source.downcast::<PyList>() {
+    } else if let Ok(list) = source.cast::<PyList>() {
         // Handle list of tuples (for repeated headers)
         for item in list.iter() {
-            let tuple = item.downcast::<PyTuple>()?;
+            let tuple = item.cast::<PyTuple>()?;
             let k: String = tuple.get_item(0)?.extract()?;
             let v: String = tuple.get_item(1)?.extract()?;
             // For repeated headers, we need to append not replace
@@ -157,7 +157,7 @@ pub fn merge_cookies_from_py(source: &Bound<'_, PyAny>, target: &mut Cookies) ->
         for (k, v) in cookies_obj.inner() {
             target.set(&k, &v);
         }
-    } else if let Ok(dict) = source.downcast::<PyDict>() {
+    } else if let Ok(dict) = source.cast::<PyDict>() {
         for (key, value) in dict.iter() {
             if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                 target.set(&k, &v);
@@ -188,7 +188,7 @@ pub fn parse_event_hooks_dict(hooks: &Bound<'_, PyDict>) -> PyResult<(Vec<Py<PyA
     let mut response_hooks = Vec::new();
 
     if let Some(request_list) = hooks.get_item("request")? {
-        if let Ok(list) = request_list.downcast::<PyList>() {
+        if let Ok(list) = request_list.cast::<PyList>() {
             for item in list.iter() {
                 request_hooks.push(item.unbind());
             }
@@ -196,7 +196,7 @@ pub fn parse_event_hooks_dict(hooks: &Bound<'_, PyDict>) -> PyResult<(Vec<Py<PyA
     }
 
     if let Some(response_list) = hooks.get_item("response")? {
-        if let Ok(list) = response_list.downcast::<PyList>() {
+        if let Ok(list) = response_list.cast::<PyList>() {
             for item in list.iter() {
                 response_hooks.push(item.unbind());
             }
