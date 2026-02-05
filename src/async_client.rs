@@ -565,7 +565,7 @@ impl AsyncClient {
             let transport = transport.clone_ref(py);
             let request_clone = request.clone();
             return future_into_py(py, async move {
-                Python::with_gil(|py| -> PyResult<Response> {
+                Python::attach(|py| -> PyResult<Response> {
                     let result = transport.call_method1(py, "handle_async_request", (request_clone.clone(),))?;
                     // Check if it's a coroutine
                     let inspect = py.import("inspect")?;
@@ -809,7 +809,7 @@ impl AsyncClient {
 
         // Process params
         let final_url = if let Some(p) = &params {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let p_bound = p.bind(py);
                 let qp = crate::queryparams::QueryParams::from_py(p_bound)?;
                 let qs = qp.to_query_string();
@@ -828,7 +828,7 @@ impl AsyncClient {
         // Build headers for request
         let mut request_headers = default_headers.clone();
         if let Some(h) = &headers {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let h_bound = h.bind(py);
                 if let Ok(headers_obj) = h_bound.extract::<Headers>() {
                     for (k, v) in headers_obj.inner() {
@@ -854,7 +854,7 @@ impl AsyncClient {
         let body_content = if let Some(c) = content {
             Some(c)
         } else if let Some(j) = &json {
-            let json_str = Python::with_gil(|py| {
+            let json_str = Python::attach(|py| {
                 let j_bound = j.bind(py);
                 crate::common::py_to_json_string(j_bound)
             })?;
@@ -863,7 +863,7 @@ impl AsyncClient {
             }
             Some(json_str.into_bytes())
         } else if let Some(d) = &data {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let d_bound = d.bind(py);
                 if let Ok(dict) = d_bound.downcast::<PyDict>() {
                     let mut form_data = Vec::new();
@@ -898,7 +898,7 @@ impl AsyncClient {
         }
 
         let auth_action = if let Some(a) = &auth {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let a_bound = a.bind(py);
                 // Check type name for sentinels
                 if let Ok(type_name) = a_bound.get_type().name() {
@@ -1010,7 +1010,7 @@ impl AsyncClient {
                 return pyo3_async_runtimes::tokio::into_future(coro).map(|fut| {
                     pyo3_async_runtimes::tokio::future_into_py(py, async move {
                         let response = fut.await?;
-                        Python::with_gil(|py| {
+                        Python::attach(|py| {
                             let mut resp = response.extract::<Response>(py)?;
                             resp.set_request_attr(Some(request_clone));
                             Ok(resp)
@@ -1021,7 +1021,7 @@ impl AsyncClient {
 
             // Fall back to handle_request for sync-only transports
             return future_into_py(py, async move {
-                Python::with_gil(|py| -> PyResult<Response> {
+                Python::attach(|py| -> PyResult<Response> {
                     let transport_bound: &Bound<'_, PyAny> = transport.bind(py);
 
                     // Try handle_request (for MockTransport with sync handlers)

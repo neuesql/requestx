@@ -100,6 +100,16 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(api::request, m)?)?;
     m.add_function(wrap_pyfunction!(api::stream, m)?)?;
 
+    // Utility functions
+    m.add_function(wrap_pyfunction!(response::json_from_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(response::decompress, m)?)?;
+    m.add_function(wrap_pyfunction!(response::guess_json_utf, m)?)?;
+    m.add_function(wrap_pyfunction!(auth::basic_auth_header, m)?)?;
+    m.add_function(wrap_pyfunction!(auth::generate_cnonce, m)?)?;
+    m.add_function(wrap_pyfunction!(auth::digest_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(auth::compute_digest_response, m)?)?;
+    m.add_function(wrap_pyfunction!(cookies::parse_set_cookie, m)?)?;
+
     // Exceptions
     register_exceptions(m)?;
 

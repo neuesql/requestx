@@ -88,7 +88,7 @@ impl MockTransport {
 
                 return future_into_py(py, async move {
                     let py_result = fut.await?;
-                    Python::with_gil(|py| -> PyResult<Response> {
+                    Python::attach(|py| -> PyResult<Response> {
                         // Try direct extraction first
                         if let Ok(response) = py_result.extract::<Response>(py) {
                             return Ok(response);
@@ -163,7 +163,7 @@ impl AsyncMockTransport {
         let request = request.clone();
 
         future_into_py(py, async move {
-            Python::with_gil(|py| -> PyResult<Response> {
+            Python::attach(|py| -> PyResult<Response> {
                 let handler = handler_arc.lock();
                 if let Some(ref h) = *handler {
                     let result = h.call1(py, (request,))?;

@@ -1,7 +1,6 @@
 # RequestX - Utility functions and classes
 
 import os
-import re
 import typing
 from urllib.parse import urlparse
 
@@ -39,7 +38,7 @@ class URLPattern:
             # Parse normally
             parsed = urlparse(pattern)
             scheme = parsed.scheme or None
-            rest = pattern[len(scheme) + 3:] if scheme else pattern
+            rest = pattern[len(scheme) + 3 :] if scheme else pattern
 
         # Empty rest means match any host
         if not rest:
@@ -53,7 +52,7 @@ class URLPattern:
         # Handle wildcards in host
         if rest.startswith("*"):
             host_pattern = rest.split("/")[0] if "/" in rest else rest
-            path_pattern = rest[len(host_pattern):] if "/" in rest else ""
+            path_pattern = rest[len(host_pattern) :] if "/" in rest else ""
             port = None
         else:
             parts = rest.split("/", 1)
@@ -189,6 +188,7 @@ class URLPattern:
 def _is_ip_address(host: str) -> bool:
     """Check if host is an IP address."""
     import ipaddress
+
     try:
         # Remove brackets for IPv6
         if host.startswith("[") and host.endswith("]"):
@@ -244,7 +244,7 @@ def get_environment_proxies() -> typing.Dict[str, typing.Optional[str]]:
                     proxies[f"all://[{host}]"] = None
                 else:
                     proxies[f"all://{host}"] = None
-            elif host == "localhost" or not "." in host:
+            elif host == "localhost" or "." not in host:
                 # localhost or single-label hostname - no wildcard
                 proxies[f"all://{host}"] = None
             else:
@@ -260,7 +260,9 @@ def get_no_proxy_list() -> typing.List[str]:
     return [host.strip() for host in no_proxy.split(",") if host.strip()]
 
 
-def should_not_use_proxy(url: str, no_proxy_list: typing.Optional[typing.List[str]] = None) -> bool:
+def should_not_use_proxy(
+    url: str, no_proxy_list: typing.Optional[typing.List[str]] = None
+) -> bool:
     """
     Check if a URL should bypass the proxy based on NO_PROXY settings.
     """
@@ -373,7 +375,7 @@ def parse_content_type(content_type: str) -> typing.Tuple[str, typing.Dict[str, 
         if "=" in part:
             key, value = part.split("=", 1)
             # Remove quotes if present
-            value = value.strip('"\'')
+            value = value.strip("\"'")
             params[key.strip().lower()] = value
 
     return media_type, params
@@ -396,52 +398,9 @@ def guess_json_utf(data: bytes) -> typing.Optional[str]:
     Returns the encoding name suitable for Python's decode(), or None if
     the data appears to be plain UTF-8 (no BOM needed).
     """
-    if len(data) < 2:
-        return None
+    from ._core import guess_json_utf as _guess_json_utf
 
-    # Check for BOM (Byte Order Mark)
-    # UTF-32 BOMs must be checked before UTF-16 since UTF-32 LE starts with FF FE 00 00
-    if data[:4] == b'\x00\x00\xfe\xff':
-        return 'utf-32-be'
-    if data[:4] == b'\xff\xfe\x00\x00':
-        return 'utf-32-le'
-    if data[:2] == b'\xfe\xff':
-        return 'utf-16-be'
-    if data[:2] == b'\xff\xfe':
-        return 'utf-16-le'
-    if data[:3] == b'\xef\xbb\xbf':
-        return 'utf-8-sig'
-
-    # No BOM found, detect by null byte patterns
-    # JSON must start with ASCII character: { [ " or whitespace
-    # Look at the pattern of null bytes in the first 4 bytes
-
-    if len(data) >= 4:
-        null_count = sum(1 for b in data[:4] if b == 0)
-
-        # UTF-32: 3 null bytes per character
-        if null_count == 3:
-            if data[0] == 0 and data[1] == 0 and data[2] == 0:
-                return 'utf-32-be'
-            if data[1] == 0 and data[2] == 0 and data[3] == 0:
-                return 'utf-32-le'
-
-        # UTF-16: 1 null byte per character (for ASCII range)
-        if null_count >= 1:
-            if data[0] == 0 and data[2] == 0:
-                return 'utf-16-be'
-            if data[1] == 0 and data[3] == 0:
-                return 'utf-16-le'
-
-    elif len(data) >= 2:
-        # For shorter data, check UTF-16 patterns
-        if data[0] == 0:
-            return 'utf-16-be'
-        if data[1] == 0:
-            return 'utf-16-le'
-
-    # Default to UTF-8 (no special encoding needed)
-    return None
+    return _guess_json_utf(data)
 
 
 # Re-export at module level for direct access

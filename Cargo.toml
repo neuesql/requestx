@@ -60,6 +60,19 @@ futures = "0.3"
 # Base64 encoding
 base64 = "0.22"
 
+# Compression (already transitive deps from reqwest, declared explicitly for direct use)
+flate2 = "1"
+brotli = "8"
+zstd = "0.13"
+
+# Hashing (for digest auth)
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+digest = "0.10"
+rand = "0.8"
+hex = "0.4"
+
 # Thread-safe primitives
 parking_lot = "0.12"
 

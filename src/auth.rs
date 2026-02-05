@@ -1,9 +1,121 @@
 //! Authentication implementations
 
+use base64::Engine;
+use digest::Digest;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use rand::RngCore;
 
 use crate::request::Request;
+
+/// Build a Basic auth header value: "Basic <base64(username:password)>".
+#[pyfunction]
+pub fn basic_auth_header(username: &str, password: &str) -> String {
+    let credentials = format!("{}:{}", username, password);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+    format!("Basic {}", encoded)
+}
+
+/// Generate a client nonce for digest auth.
+/// Returns a 16-character hex string.
+#[pyfunction]
+pub fn generate_cnonce() -> String {
+    let mut bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    // SHA1 hash of random bytes, take first 16 hex chars
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(&bytes);
+    let result = hasher.finalize();
+    hex::encode(&result[..8])
+}
+
+/// Compute a digest hash using the specified algorithm.
+/// Supported algorithms: MD5, SHA, SHA-256, SHA-512 (and their -SESS variants).
+#[pyfunction]
+pub fn digest_hash(data: &str, algorithm: &str) -> String {
+    let algo = algorithm.to_uppercase();
+    let algo = algo.trim_end_matches("-SESS");
+
+    match algo {
+        "MD5" => {
+            let mut hasher = md5::Md5::new();
+            hasher.update(data.as_bytes());
+            hex::encode(hasher.finalize())
+        }
+        "SHA" => {
+            let mut hasher = sha1::Sha1::new();
+            hasher.update(data.as_bytes());
+            hex::encode(hasher.finalize())
+        }
+        "SHA-256" => {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(data.as_bytes());
+            hex::encode(hasher.finalize())
+        }
+        "SHA-512" => {
+            let mut hasher = sha2::Sha512::new();
+            hasher.update(data.as_bytes());
+            hex::encode(hasher.finalize())
+        }
+        _ => {
+            // Default to MD5
+            let mut hasher = md5::Md5::new();
+            hasher.update(data.as_bytes());
+            hex::encode(hasher.finalize())
+        }
+    }
+}
+
+/// Build the Digest auth response value.
+/// Returns the response hash and the qop value used (if any).
+#[pyfunction]
+#[pyo3(signature = (username, password, realm, nonce, nc, cnonce, qop, method, uri, algorithm))]
+pub fn compute_digest_response(
+    username: &str,
+    password: &str,
+    realm: &str,
+    nonce: &str,
+    nc: &str,
+    cnonce: &str,
+    qop: &str,
+    method: &str,
+    uri: &str,
+    algorithm: &str,
+) -> PyResult<(String, Option<String>)> {
+    // Calculate A1
+    let a1_base = format!("{}:{}:{}", username, realm, password);
+    let ha1 = if algorithm.to_uppercase().ends_with("-SESS") {
+        let ha1_base = digest_hash(&a1_base, algorithm);
+        digest_hash(&format!("{}:{}:{}", ha1_base, nonce, cnonce), algorithm)
+    } else {
+        digest_hash(&a1_base, algorithm)
+    };
+
+    // Calculate A2
+    let a2 = format!("{}:{}", method, uri);
+    let ha2 = digest_hash(&a2, algorithm);
+
+    // Calculate response
+    let (response, qop_value) = if !qop.is_empty() {
+        // Parse qop options
+        let qop_options: Vec<&str> = qop.split(',').map(|s| s.trim()).collect();
+        if qop_options.contains(&"auth") {
+            let qop_value = "auth".to_string();
+            let response_data = format!("{}:{}:{}:{}:{}:{}", ha1, nonce, nc, cnonce, qop_value, ha2);
+            (digest_hash(&response_data, algorithm), Some(qop_value))
+        } else if qop_options.contains(&"auth-int") {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err("Digest auth qop=auth-int is not implemented"));
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!("Unsupported Digest auth qop value: {}", qop)));
+        }
+    } else {
+        // RFC 2069 style
+        let response_data = format!("{}:{}:{}", ha1, nonce, ha2);
+        (digest_hash(&response_data, algorithm), None)
+    };
+
+    Ok((response, qop_value))
+}
 
 /// Base Auth class that can be subclassed in Python
 #[pyclass(name = "Auth", subclass)]

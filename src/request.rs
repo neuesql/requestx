@@ -269,7 +269,7 @@ pub struct Request {
 
 impl Clone for Request {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             method: self.method.clone(),
             url: self.url.clone(),
             headers: self.headers.clone(),

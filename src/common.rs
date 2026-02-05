@@ -6,30 +6,127 @@ use pyo3::types::PyDict;
 use crate::headers::Headers;
 use crate::url::URL;
 
-/// Convert Python object to JSON string.
-/// Uses Python's json module for serialization to preserve dict insertion order
-/// and match httpx's default behavior (ensure_ascii=False, allow_nan=False, compact).
+/// Convert Python object to JSON string, preserving dict insertion order.
+/// Uses sonic-rs for primitive serialization but walks the Python structure directly
+/// to maintain key order (sonic_rs::Object may reorder keys).
 pub(crate) fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let py = obj.py();
-    let json_mod = py.import("json")?;
+    let mut buf = String::new();
+    py_to_json_string_impl(obj, &mut buf)?;
+    Ok(buf)
+}
 
-    // Use httpx's default JSON settings:
-    // - ensure_ascii=False (allows non-ASCII characters)
-    // - allow_nan=False (raises ValueError for NaN/Inf)
-    // - separators=(',', ':') (compact representation)
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("ensure_ascii", false)?;
-    kwargs.set_item("allow_nan", false)?;
-    let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
-    kwargs.set_item("separators", separators)?;
+/// Recursive JSON string builder that preserves Python dict insertion order.
+fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<()> {
+    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString, PyTuple};
 
-    let result = json_mod.call_method("dumps", (obj,), Some(&kwargs))?;
-    result.extract::<String>()
+    if obj.is_none() {
+        buf.push_str("null");
+        return Ok(());
+    }
+
+    if let Ok(b) = obj.downcast::<PyBool>() {
+        buf.push_str(if b.is_true() { "true" } else { "false" });
+        return Ok(());
+    }
+
+    if let Ok(i) = obj.downcast::<PyInt>() {
+        if let Ok(val) = i.extract::<i64>() {
+            buf.push_str(&val.to_string());
+            return Ok(());
+        }
+        if let Ok(val) = i.extract::<u64>() {
+            buf.push_str(&val.to_string());
+            return Ok(());
+        }
+        let s = obj.str()?.to_string();
+        return Err(pyo3::exceptions::PyOverflowError::new_err(format!("Integer {} too large for JSON", s)));
+    }
+
+    if let Ok(f) = obj.downcast::<PyFloat>() {
+        let val: f64 = f.extract()?;
+        if val.is_nan() || val.is_infinite() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Out of range float values are not JSON compliant"));
+        }
+        // Use sonic-rs for float formatting (matches JSON spec)
+        let v = sonic_rs::json!(val);
+        buf.push_str(&sonic_rs::to_string(&v).unwrap_or_else(|_| val.to_string()));
+        return Ok(());
+    }
+
+    if let Ok(s) = obj.downcast::<PyString>() {
+        let val: String = s.extract()?;
+        // Use sonic-rs for proper JSON string escaping
+        let v = sonic_rs::json!(&val);
+        buf.push_str(&sonic_rs::to_string(&v).unwrap_or_else(|_| format!("\"{}\"", val)));
+        return Ok(());
+    }
+
+    if let Ok(list) = obj.downcast::<PyList>() {
+        buf.push('[');
+        for (i, item) in list.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            py_to_json_string_impl(&item, buf)?;
+        }
+        buf.push(']');
+        return Ok(());
+    }
+
+    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+        buf.push('[');
+        for (i, item) in tuple.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            py_to_json_string_impl(&item, buf)?;
+        }
+        buf.push(']');
+        return Ok(());
+    }
+
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        buf.push('{');
+        for (i, (k, v)) in dict.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            let key: String = k.extract()?;
+            let key_v = sonic_rs::json!(&key);
+            buf.push_str(&sonic_rs::to_string(&key_v).unwrap_or_else(|_| format!("\"{}\"", key)));
+            buf.push(':');
+            py_to_json_string_impl(&v, buf)?;
+        }
+        buf.push('}');
+        return Ok(());
+    }
+
+    // Try generic iterable (e.g. generators, sets, etc.) - serialize as array
+    if let Ok(iter) = obj.try_iter() {
+        buf.push('[');
+        let mut first = true;
+        for item in iter {
+            if !first {
+                buf.push(',');
+            }
+            first = false;
+            py_to_json_string_impl(&item?, buf)?;
+        }
+        buf.push(']');
+        return Ok(());
+    }
+
+    let type_name = obj
+        .get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    Err(pyo3::exceptions::PyTypeError::new_err(format!("Object of type {} is not JSON serializable", type_name)))
 }
 
 /// Convert Python object to sonic_rs::Value.
 pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
-    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString};
+    use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString, PyTuple};
 
     if obj.is_none() {
         return Ok(sonic_rs::Value::default());
@@ -40,8 +137,16 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
     }
 
     if let Ok(i) = obj.downcast::<PyInt>() {
-        let val: i64 = i.extract()?;
-        return Ok(sonic_rs::json!(val));
+        // Try i64 first, then u64 for large unsigned values
+        if let Ok(val) = i.extract::<i64>() {
+            return Ok(sonic_rs::json!(val));
+        }
+        if let Ok(val) = i.extract::<u64>() {
+            return Ok(sonic_rs::json!(val));
+        }
+        // For very large ints, fall back to string representation parsed as number
+        let s = obj.str()?.to_string();
+        return Err(pyo3::exceptions::PyOverflowError::new_err(format!("Integer {} too large for JSON", s)));
     }
 
     if let Ok(f) = obj.downcast::<PyFloat>() {
@@ -59,8 +164,17 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
     }
 
     if let Ok(list) = obj.downcast::<PyList>() {
-        let mut arr = Vec::new();
+        let mut arr = Vec::with_capacity(list.len());
         for item in list.iter() {
+            arr.push(py_to_json_value(&item)?);
+        }
+        return Ok(sonic_rs::Value::from(arr));
+    }
+
+    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+        // JSON doesn't have tuples; serialize as array (same as Python's json.dumps)
+        let mut arr = Vec::with_capacity(tuple.len());
+        for item in tuple.iter() {
             arr.push(py_to_json_value(&item)?);
         }
         return Ok(sonic_rs::Value::from(arr));
@@ -76,7 +190,21 @@ pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Val
         return Ok(sonic_rs::Value::from(obj_map));
     }
 
-    Err(pyo3::exceptions::PyTypeError::new_err("Unsupported type for JSON serialization"))
+    // Try generic iterable (e.g. generators, sets, etc.) - serialize as array
+    if let Ok(iter) = obj.try_iter() {
+        let mut arr = Vec::new();
+        for item in iter {
+            arr.push(py_to_json_value(&item?)?);
+        }
+        return Ok(sonic_rs::Value::from(arr));
+    }
+
+    let type_name = obj
+        .get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    Err(pyo3::exceptions::PyTypeError::new_err(format!("Object of type {} is not JSON serializable", type_name)))
 }
 
 /// Build the Host header value from a URL.

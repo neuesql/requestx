@@ -16,21 +16,23 @@ from ._exceptions import _convert_exception, _RUST_EXCEPTIONS
 
 def _prepare_content(kwargs):
     """Prepare content argument, consuming iterators/generators to bytes."""
-    import inspect
     import types
-    content = kwargs.get('content')
+
+    content = kwargs.get("content")
     if content is not None:
         # Check if it's a generator or iterator (but not bytes, str, or file-like)
         if isinstance(content, types.GeneratorType):
             # Consume generator to bytes
-            kwargs['content'] = b''.join(content)
-        elif hasattr(content, '__iter__') and hasattr(content, '__next__'):
+            kwargs["content"] = b"".join(content)
+        elif hasattr(content, "__iter__") and hasattr(content, "__next__"):
             # It's an iterator - consume it
-            kwargs['content'] = b''.join(content)
-        elif hasattr(content, '__iter__') and not isinstance(content, (bytes, str, list, tuple, dict)):
+            kwargs["content"] = b"".join(content)
+        elif hasattr(content, "__iter__") and not isinstance(
+            content, (bytes, str, list, tuple, dict)
+        ):
             # It's an iterable object (like SyncByteStream) - consume it
             try:
-                kwargs['content'] = b''.join(content)
+                kwargs["content"] = b"".join(content)
             except TypeError:
                 pass  # Let Rust handle it if join fails
     return kwargs

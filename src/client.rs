@@ -925,17 +925,8 @@ impl Client {
             headers_mut.set("Content-Length".to_string(), content_len.to_string());
             request.set_headers(headers_mut);
         } else if let Some(j) = json {
-            // Handle JSON body
-            let py = j.py();
-            let json_mod = py.import("json")?;
-            let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("ensure_ascii", false)?;
-            kwargs.set_item("allow_nan", false)?;
-            let separators = pyo3::types::PyTuple::new(py, [",", ":"])?;
-            kwargs.set_item("separators", separators)?;
-            let json_str: String = json_mod
-                .call_method("dumps", (j,), Some(&kwargs))?
-                .extract()?;
+            // Handle JSON body using sonic-rs via common
+            let json_str = crate::common::py_to_json_string(j)?;
             let json_bytes = json_str.into_bytes();
             let content_len = json_bytes.len();
             request.set_content(json_bytes);

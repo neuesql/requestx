@@ -66,6 +66,7 @@ class MockTransport(AsyncBaseTransport):
         """Handle a sync request by calling the handler."""
         # Import here to avoid circular imports
         from ._response import Response
+
         if self._handler is None:
             return Response(200)
         result = self._handler(request)
@@ -78,8 +79,10 @@ class MockTransport(AsyncBaseTransport):
     async def handle_async_request(self, request):
         """Handle an async request by calling the handler."""
         import inspect
+
         # Import here to avoid circular imports
         from ._response import Response
+
         if self._handler is None:
             return Response(200)
         result = self._handler(request)
@@ -145,26 +148,26 @@ class ASGITransport(AsyncBaseTransport):
         headers = request.headers
 
         # Build ASGI scope
-        scheme = url.scheme if hasattr(url, 'scheme') else 'http'
-        host = url.host if hasattr(url, 'host') else 'localhost'
+        scheme = url.scheme if hasattr(url, "scheme") else "http"
+        host = url.host if hasattr(url, "host") else "localhost"
         port = url.port
-        path = url.path if hasattr(url, 'path') else '/'
-        query_string = url.query if hasattr(url, 'query') else b''
+        path = url.path if hasattr(url, "path") else "/"
+        query_string = url.query if hasattr(url, "query") else b""
 
         # Handle query as bytes
         if isinstance(query_string, str):
-            query_string = query_string.encode('utf-8')
+            query_string = query_string.encode("utf-8")
 
         # Get raw_path (path without query string, percent-encoded)
-        raw_path = path.encode('utf-8') if isinstance(path, str) else path
+        raw_path = path.encode("utf-8") if isinstance(path, str) else path
 
         # Build headers list for ASGI (Host header should be first)
         asgi_headers = []
         host_header = None
         for key, value in headers.items():
-            key_bytes = key.encode('latin-1') if isinstance(key, str) else key
-            value_bytes = value.encode('latin-1') if isinstance(value, str) else value
-            if key.lower() == 'host':
+            key_bytes = key.encode("latin-1") if isinstance(key, str) else key
+            value_bytes = value.encode("latin-1") if isinstance(value, str) else value
+            if key.lower() == "host":
                 host_header = [key_bytes, value_bytes]
             else:
                 asgi_headers.append([key_bytes, value_bytes])
@@ -174,7 +177,7 @@ class ASGITransport(AsyncBaseTransport):
 
         # Determine server tuple
         if port is None:
-            port = 443 if scheme == 'https' else 80
+            port = 443 if scheme == "https" else 80
 
         scope = {
             "type": "http",
@@ -193,9 +196,9 @@ class ASGITransport(AsyncBaseTransport):
         }
 
         # Get request body
-        body = request.content if hasattr(request, 'content') else b''
+        body = request.content if hasattr(request, "content") else b""
         if body is None:
-            body = b''
+            body = b""
 
         # State for receive/send
         body_sent = False
@@ -220,7 +223,12 @@ class ASGITransport(AsyncBaseTransport):
                 return {"type": "http.disconnect"}
 
         async def send(message):
-            nonlocal response_started, response_complete, status_code, response_headers, body_parts
+            nonlocal \
+                response_started, \
+                response_complete, \
+                status_code, \
+                response_headers, \
+                body_parts
 
             if message["type"] == "http.response.start":
                 response_started = True
@@ -228,8 +236,14 @@ class ASGITransport(AsyncBaseTransport):
                 # Convert headers
                 for h in message.get("headers", []):
                     if isinstance(h, (list, tuple)) and len(h) == 2:
-                        key = h[0].decode('latin-1') if isinstance(h[0], bytes) else h[0]
-                        value = h[1].decode('latin-1') if isinstance(h[1], bytes) else str(h[1])
+                        key = (
+                            h[0].decode("latin-1") if isinstance(h[0], bytes) else h[0]
+                        )
+                        value = (
+                            h[1].decode("latin-1")
+                            if isinstance(h[1], bytes)
+                            else str(h[1])
+                        )
                         response_headers.append((key, value))
 
             elif message["type"] == "http.response.body":
@@ -242,7 +256,7 @@ class ASGITransport(AsyncBaseTransport):
         # Run the ASGI app
         try:
             await self.app(scope, receive, send)
-        except Exception as exc:
+        except Exception:
             if self.raise_app_exceptions:
                 raise
             # Return 500 error if app raises
@@ -267,7 +281,7 @@ class ASGITransport(AsyncBaseTransport):
 
         # Set request on response
         response._request = request
-        response._url = request.url if hasattr(request, 'url') else None
+        response._url = request.url if hasattr(request, "url") else None
 
         return response
 

@@ -19,7 +19,9 @@ from ._streams import (
 class _WrappedRequest:
     """Wrapper for Rust Request that provides mutable headers."""
 
-    def __init__(self, rust_request, async_stream=None, sync_stream=None, explicit_url=None):
+    def __init__(
+        self, rust_request, async_stream=None, sync_stream=None, explicit_url=None
+    ):
         self._rust_request = rust_request
         self._headers_modified = False
         self._async_stream = async_stream  # Original async iterator if any
@@ -88,7 +90,7 @@ class _WrappedAsyncByteStream(AsyncByteStream):
         chunks = []
         async for chunk in self:
             chunks.append(chunk)
-        return b''.join(chunks)
+        return b"".join(chunks)
 
 
 class _WrappedRequestHeadersProxy:
@@ -271,8 +273,8 @@ class Request(_Request):
                 return _DualIteratorStream(stream_ref, self)
 
         # If async-read was done, return an async-compatible stream
-        if getattr(self, '_py_was_async_read', False):
-            content = getattr(self, '_py_async_content', None)
+        if getattr(self, "_py_was_async_read", False):
+            content = getattr(self, "_py_async_content", None)
             if content is not None:
                 return AsyncByteStream(content)
             try:
@@ -297,20 +299,20 @@ class Request(_Request):
     def content(self):
         """Get the request body content."""
         # If async content is available (from aread), return it
-        content = getattr(self, '_py_async_content', None)
+        content = getattr(self, "_py_async_content", None)
         if content is not None:
             return content
         return super().content
 
     async def aread(self):
         """Async read method that stores content after reading."""
-        object.__setattr__(self, '_py_was_async_read', True)
+        object.__setattr__(self, "_py_was_async_read", True)
         # Call parent aread which returns a coroutine
         result = await super().aread()
         # Store the result in Rust side for proper pickling
         if result:
             self._set_content_from_aread(result)
-            object.__setattr__(self, '_py_async_content', result)
+            object.__setattr__(self, "_py_async_content", result)
         return result
 
     @property

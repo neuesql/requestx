@@ -3,6 +3,7 @@
 from ._core import (
     Response as _Response,
     HTTPStatusError as _HTTPStatusError,
+    decompress as _decompress,
 )
 from ._exceptions import (
     DecodingError,
@@ -44,9 +45,20 @@ class Response:
     Can be constructed either by wrapping a Rust Response or directly with status_code.
     """
 
-    def __init__(self, status_code_or_response=None, *, content=None, headers=None,
-                 text=None, html=None, json=None, stream=None, request=None,
-                 default_encoding=None, status_code=None):
+    def __init__(
+        self,
+        status_code_or_response=None,
+        *,
+        content=None,
+        headers=None,
+        text=None,
+        html=None,
+        json=None,
+        stream=None,
+        request=None,
+        default_encoding=None,
+        status_code=None,
+    ):
         # Initialize attributes
         self._history = []
         self._url = None
@@ -63,7 +75,9 @@ class Response:
         self._is_stream = False  # Track if this is a streaming response
         self._unpickled_stream_not_read = False  # Track if unpickled from unread stream
         self._text_accessed = False  # Track if .text was accessed
-        self._stream_not_read = False  # Track if streaming response needs aread() before accessing content
+        self._stream_not_read = (
+            False  # Track if streaming response needs aread() before accessing content
+        )
         self._stream_object = None  # Reference to stream object for aclose()
 
         # Handle status_code as keyword argument
@@ -72,7 +86,7 @@ class Response:
 
         # Unwrap _WrappedRequest to get the underlying Rust request
         rust_request = request
-        if request is not None and hasattr(request, '_rust_request'):
+        if request is not None and hasattr(request, "_rust_request"):
             rust_request = request._rust_request
             # Store the wrapped request for later access
             self._request = request
@@ -85,37 +99,39 @@ class Response:
             # If stream is provided, it takes precedence over content
             if stream is not None and content is None:
                 # Check if stream is an async iterator
-                if hasattr(stream, '__aiter__'):
+                if hasattr(stream, "__aiter__"):
                     self._stream_content = stream
                     self._is_stream = True
                     self._stream_object = stream  # Keep reference for aclose()
                     self._response = _Response(
                         status_code_or_response,
-                        content=b'',
+                        content=b"",
                         headers=headers,
                         request=rust_request,
                     )
                     return
-                elif hasattr(stream, '__iter__'):
+                elif hasattr(stream, "__iter__"):
                     self._sync_stream_content = stream
                     self._is_stream = True
                     self._stream_object = stream  # Keep reference for close()
                     self._response = _Response(
                         status_code_or_response,
-                        content=b'',
+                        content=b"",
                         headers=headers,
                         request=rust_request,
                     )
                     return
 
             # Check if content is an async iterator or sync iterator
-            is_async_iter = hasattr(content, '__aiter__') and hasattr(content, '__anext__')
+            is_async_iter = hasattr(content, "__aiter__") and hasattr(
+                content, "__anext__"
+            )
             # Check for sync iterator/iterable (has __iter__ but not a built-in type)
             # This handles both generators (__iter__ + __next__) and iterables (just __iter__)
             is_sync_iter = (
-                hasattr(content, '__iter__') and
-                not isinstance(content, (bytes, str, list, dict, type(None))) and
-                not hasattr(content, '__aiter__')  # Not an async iterable
+                hasattr(content, "__iter__")
+                and not isinstance(content, (bytes, str, list, dict, type(None)))
+                and not hasattr(content, "__aiter__")  # Not an async iterable
             )
 
             if is_async_iter:
@@ -126,11 +142,17 @@ class Response:
                 has_content_length = False
                 if headers is not None:
                     if isinstance(headers, dict):
-                        has_content_length = any(k.lower() == 'content-length' for k in headers.keys())
+                        has_content_length = any(
+                            k.lower() == "content-length" for k in headers.keys()
+                        )
                     elif isinstance(headers, list):
-                        has_content_length = any(k.lower() == 'content-length' for k, v in headers)
+                        has_content_length = any(
+                            k.lower() == "content-length" for k, v in headers
+                        )
                     else:
-                        has_content_length = any(k.lower() == 'content-length' for k, v in headers.items())
+                        has_content_length = any(
+                            k.lower() == "content-length" for k, v in headers.items()
+                        )
                 # Only add Transfer-Encoding: chunked if Content-Length is not provided
                 if has_content_length:
                     stream_headers = headers
@@ -139,13 +161,17 @@ class Response:
                 elif isinstance(headers, list):
                     stream_headers = list(headers) + [("transfer-encoding", "chunked")]
                 elif isinstance(headers, dict):
-                    stream_headers = list(headers.items()) + [("transfer-encoding", "chunked")]
+                    stream_headers = list(headers.items()) + [
+                        ("transfer-encoding", "chunked")
+                    ]
                 else:
-                    stream_headers = list(headers.items()) + [("transfer-encoding", "chunked")]
+                    stream_headers = list(headers.items()) + [
+                        ("transfer-encoding", "chunked")
+                    ]
                 # Create response without content - will be filled in aread()
                 self._response = _Response(
                     status_code_or_response,
-                    content=b'',
+                    content=b"",
                     headers=stream_headers,
                     text=text,
                     html=html,
@@ -161,11 +187,17 @@ class Response:
                 has_content_length = False
                 if headers is not None:
                     if isinstance(headers, dict):
-                        has_content_length = any(k.lower() == 'content-length' for k in headers.keys())
+                        has_content_length = any(
+                            k.lower() == "content-length" for k in headers.keys()
+                        )
                     elif isinstance(headers, list):
-                        has_content_length = any(k.lower() == 'content-length' for k, v in headers)
+                        has_content_length = any(
+                            k.lower() == "content-length" for k, v in headers
+                        )
                     else:
-                        has_content_length = any(k.lower() == 'content-length' for k, v in headers.items())
+                        has_content_length = any(
+                            k.lower() == "content-length" for k, v in headers.items()
+                        )
                 # Only add Transfer-Encoding: chunked if Content-Length is not provided
                 if has_content_length:
                     stream_headers = headers
@@ -174,12 +206,16 @@ class Response:
                 elif isinstance(headers, list):
                     stream_headers = list(headers) + [("transfer-encoding", "chunked")]
                 elif isinstance(headers, dict):
-                    stream_headers = list(headers.items()) + [("transfer-encoding", "chunked")]
+                    stream_headers = list(headers.items()) + [
+                        ("transfer-encoding", "chunked")
+                    ]
                 else:
-                    stream_headers = list(headers.items()) + [("transfer-encoding", "chunked")]
+                    stream_headers = list(headers.items()) + [
+                        ("transfer-encoding", "chunked")
+                    ]
                 self._response = _Response(
                     status_code_or_response,
-                    content=b'',
+                    content=b"",
                     headers=stream_headers,
                     text=text,
                     html=html,
@@ -189,7 +225,7 @@ class Response:
                 )
             elif isinstance(content, list):
                 # Content is a list of bytes chunks
-                consumed_content = b''.join(content)
+                consumed_content = b"".join(content)
                 self._raw_content = consumed_content
                 self._response = _Response(
                     status_code_or_response,
@@ -216,7 +252,11 @@ class Response:
 
         # Eagerly decode content if provided directly (not streaming)
         # This ensures DecodingError is raised during construction for invalid data
-        if content is not None and not hasattr(content, '__aiter__') and not hasattr(content, '__next__'):
+        if (
+            content is not None
+            and not hasattr(content, "__aiter__")
+            and not hasattr(content, "__next__")
+        ):
             if isinstance(content, (bytes, str, list)):
                 # Trigger decompression to catch errors early
                 _ = self.content
@@ -236,10 +276,18 @@ class Response:
             return _ResponseAsyncIteratorStream(self._stream_content, self)
         # Check if stream was already consumed (but content is not available)
         # If content is available, we can still return a ByteStream
-        if self._stream_consumed and self._raw_content is None and not self._response.content:
+        if (
+            self._stream_consumed
+            and self._raw_content is None
+            and not self._response.content
+        ):
             raise StreamConsumed()
         # Regular content - return dual-mode stream
-        content = self._raw_content if self._raw_content is not None else self._response.content
+        content = (
+            self._raw_content
+            if self._raw_content is not None
+            else self._response.content
+        )
         return ByteStream(content)
 
     @property
@@ -277,22 +325,26 @@ class Response:
             return self._decoded_content
 
         # Use raw_content if we consumed a stream, otherwise use response content
-        raw_content = self._raw_content if self._raw_content is not None else self._response.content
+        raw_content = (
+            self._raw_content
+            if self._raw_content is not None
+            else self._response.content
+        )
         if not raw_content:
             return raw_content
 
         # Check Content-Encoding header for decompression
-        content_encoding = self.headers.get('content-encoding', '').lower()
-        if not content_encoding or content_encoding == 'identity':
+        content_encoding = self.headers.get("content-encoding", "").lower()
+        if not content_encoding or content_encoding == "identity":
             return raw_content
 
         # Decode content based on encoding(s) - handle multiple encodings
         decompressed = raw_content
-        encodings = [e.strip() for e in content_encoding.split(',')]
+        encodings = [e.strip() for e in content_encoding.split(",")]
 
         # Process encodings in reverse order (last applied first)
         for encoding in reversed(encodings):
-            if encoding == 'identity':
+            if encoding == "identity":
                 continue
             decompressed = self._decompress(decompressed, encoding)
 
@@ -300,74 +352,29 @@ class Response:
         return decompressed
 
     def _decompress(self, data, encoding):
-        """Decompress data based on encoding."""
-        import zlib
-
+        """Decompress data based on encoding. Delegates to Rust."""
         if not data:
             return data
-
-        encoding = encoding.lower().strip()
-
-        if encoding == 'gzip':
-            try:
-                import gzip
-                return gzip.decompress(data)
-            except Exception as e:
-                raise DecodingError(f"Failed to decode gzip content: {e}")
-
-        elif encoding == 'deflate':
-            # Deflate can be raw deflate or zlib-wrapped
-            try:
-                # Try raw deflate first
-                return zlib.decompress(data, -zlib.MAX_WBITS)
-            except zlib.error:
-                try:
-                    # Try zlib-wrapped deflate
-                    return zlib.decompress(data)
-                except zlib.error as e:
-                    raise DecodingError(f"Failed to decode deflate content: {e}")
-
-        elif encoding == 'br':
-            try:
-                import brotli
-                return brotli.decompress(data)
-            except Exception as e:
-                raise DecodingError(f"Failed to decode brotli content: {e}")
-
-        elif encoding == 'zstd':
-            try:
-                import zstandard as zstd
-                # Use streaming decompression to handle multiple frames
-                dctx = zstd.ZstdDecompressor()
-                # Handle BytesIO or bytes
-                if hasattr(data, 'read'):
-                    reader = dctx.stream_reader(data)
-                    result = reader.read()
-                    reader.close()
-                    return result
-                else:
-                    # For bytes, use decompress with allow multiple frames
-                    import io
-                    reader = dctx.stream_reader(io.BytesIO(data))
-                    result = reader.read()
-                    reader.close()
-                    return result
-            except Exception as e:
-                raise DecodingError(f"Failed to decode zstd content: {e}")
-
-        # Unknown encoding - return as-is
-        return data
+        try:
+            return _decompress(data, encoding)
+        except Exception as e:
+            # Convert Rust DecodingError to Python DecodingError
+            raise DecodingError(str(e)) from None
 
     @property
     def text(self):
         # Mark text as accessed (for encoding setter validation)
         self._text_accessed = True
         # If we have consumed raw content, decode it ourselves
-        raw_content = self._raw_content if self._raw_content is not None else self._response.content
+        raw_content = (
+            self._raw_content
+            if self._raw_content is not None
+            else self._response.content
+        )
         if not raw_content:
-            return ''
+            return ""
         encoding = self._get_encoding()
-        return raw_content.decode(encoding, errors='replace')
+        return raw_content.decode(encoding, errors="replace")
 
     @property
     def encoding(self):
@@ -377,20 +384,13 @@ class Response:
     @property
     def charset_encoding(self):
         """Get the charset from the Content-Type header, or None if not specified."""
-        content_type = self.headers.get('content-type', '')
-        # Parse charset from Content-Type header: text/plain; charset=utf-8
-        for part in content_type.split(';'):
-            part = part.strip()
-            if part.lower().startswith('charset='):
-                charset = part[8:].strip().strip('"').strip("'")
-                return charset if charset else None
-        return None
+        return self._response._extract_charset()
 
     @encoding.setter
     def encoding(self, value):
         """Set explicit encoding for text decoding."""
         # If text was already accessed, raise ValueError
-        if getattr(self, '_text_accessed', False):
+        if getattr(self, "_text_accessed", False):
             raise ValueError(
                 "The encoding cannot be set after .text has been accessed."
             )
@@ -401,24 +401,19 @@ class Response:
 
     def _get_encoding(self):
         """Get the encoding for text decoding."""
-        import codecs
         # First check explicit encoding set via property
-        if hasattr(self, '_explicit_encoding') and self._explicit_encoding is not None:
+        if hasattr(self, "_explicit_encoding") and self._explicit_encoding is not None:
             return self._explicit_encoding
-        # Check Content-Type header for charset
-        content_type = self.headers.get('content-type', '')
-        if 'charset=' in content_type:
-            for part in content_type.split(';'):
-                part = part.strip()
-                if part.lower().startswith('charset='):
-                    charset = part[8:].strip('"\'')
-                    # Validate the encoding - if invalid, fall back to utf-8
-                    try:
-                        codecs.lookup(charset)
-                        return charset
-                    except LookupError:
-                        # Invalid encoding, fall back to utf-8
-                        return 'utf-8'
+        # Delegate charset extraction from Content-Type to Rust
+        charset = self._response._extract_charset()
+        if charset is not None:
+            import codecs
+
+            try:
+                codecs.lookup(charset)
+                return charset
+            except LookupError:
+                return "utf-8"
         # Use default_encoding if provided
         if self._default_encoding is not None:
             if callable(self._default_encoding):
@@ -427,7 +422,7 @@ class Response:
                     return detected
             else:
                 return self._default_encoding
-        return 'utf-8'
+        return "utf-8"
 
     @property
     def request(self):
@@ -511,41 +506,43 @@ class Response:
             except RuntimeError:
                 request = None
         return {
-            'status_code': self.status_code,
-            'headers': list(self.headers.multi_items()),
-            'content': self.content if not self._is_stream or self._raw_content else b'',
-            'request': request,
-            'url': self._url,
-            'history': self._history,
-            'default_encoding': self._default_encoding,
-            'is_stream': self._is_stream,
-            'stream_consumed': self._stream_consumed,
-            'is_closed': self.is_closed,
-            'has_stream_content': self._stream_content is not None,
+            "status_code": self.status_code,
+            "headers": list(self.headers.multi_items()),
+            "content": self.content
+            if not self._is_stream or self._raw_content
+            else b"",
+            "request": request,
+            "url": self._url,
+            "history": self._history,
+            "default_encoding": self._default_encoding,
+            "is_stream": self._is_stream,
+            "stream_consumed": self._stream_consumed,
+            "is_closed": self.is_closed,
+            "has_stream_content": self._stream_content is not None,
         }
 
     def __setstate__(self, state):
         """Pickle support - restore state."""
         # Create a new Rust response with the saved state
         self._response = _Response(
-            state['status_code'],
-            content=state['content'],
-            headers=state['headers'],
-            request=state['request'],
+            state["status_code"],
+            content=state["content"],
+            headers=state["headers"],
+            request=state["request"],
         )
-        self._request = state['request']
-        self._url = state['url']
-        self._history = state['history']
-        self._default_encoding = state['default_encoding']
-        self._is_stream = state['is_stream']
+        self._request = state["request"]
+        self._url = state["url"]
+        self._history = state["history"]
+        self._default_encoding = state["default_encoding"]
+        self._is_stream = state["is_stream"]
         # If we have content, mark stream as consumed (content is available)
         # If no content but it was a stream that wasn't read, keep original state
-        if state['content']:
+        if state["content"]:
             self._stream_consumed = True
         else:
-            self._stream_consumed = state['stream_consumed']
+            self._stream_consumed = state["stream_consumed"]
         self._stream_content = None  # Can't pickle stream content
-        self._raw_content = state['content'] if state['content'] else None
+        self._raw_content = state["content"] if state["content"] else None
         self._raw_chunks = None
         self._decoded_content = None
         self._next_request = None
@@ -554,7 +551,9 @@ class Response:
         self._text_accessed = False  # Text hasn't been accessed after unpickling
         self._stream_not_read = False  # Not a live stream after unpickling
         # Track if this was an async stream that wasn't read before pickling
-        self._unpickled_stream_not_read = state.get('has_stream_content') and not state['content']
+        self._unpickled_stream_not_read = (
+            state.get("has_stream_content") and not state["content"]
+        )
         # Mark Rust response as closed/consumed (since we have the content)
         self._response.read()
 
@@ -569,7 +568,7 @@ class Response:
         # If we have a pending sync stream, consume it
         if self._sync_stream_content is not None:
             chunks = list(self._sync_stream_content)
-            consumed_content = b''.join(chunks)
+            consumed_content = b"".join(chunks)
             self._raw_content = consumed_content
             self._raw_chunks = chunks
             self._response._set_content(consumed_content)
@@ -598,7 +597,7 @@ class Response:
             chunks = []
             async for chunk in self._stream_content:
                 chunks.append(chunk)
-            self._raw_content = b''.join(chunks)
+            self._raw_content = b"".join(chunks)
             self._stream_content = None  # Mark as consumed
             self._stream_consumed = True  # Mark stream as consumed
             # Clear decoded cache to force re-decode with new content
@@ -616,7 +615,7 @@ class Response:
         # If we have a sync stream that hasn't been consumed, iterate over it
         if self._sync_stream_content is not None:
             chunks = []
-            consumed_content = b''
+            consumed_content = b""
             for chunk in self._sync_stream_content:
                 chunks.append(chunk)
                 consumed_content += chunk
@@ -636,7 +635,7 @@ class Response:
             # If chunk_size was specified, re-yield from stored content
             if chunk_size is not None:
                 for i in range(0, len(consumed_content), chunk_size):
-                    yield consumed_content[i:i + chunk_size]
+                    yield consumed_content[i : i + chunk_size]
             return
         # Mark stream as consumed after iteration
         self._stream_consumed = True
@@ -652,7 +651,7 @@ class Response:
                     yield content
             else:
                 for i in range(0, len(content), chunk_size):
-                    yield content[i:i + chunk_size]
+                    yield content[i : i + chunk_size]
 
     def iter_text(self, chunk_size=None):
         """Iterate over the response body as text chunks."""
@@ -660,13 +659,13 @@ class Response:
         encoding = self._get_encoding()
         for chunk in self.iter_bytes(chunk_size):
             if chunk:
-                yield chunk.decode(encoding, errors='replace')
+                yield chunk.decode(encoding, errors="replace")
 
     async def aiter_text(self, chunk_size=None):
         """Async iterate over the response body as text chunks."""
         encoding = self._get_encoding()
         for chunk in self.iter_bytes(chunk_size):
-            yield chunk.decode(encoding, errors='replace')
+            yield chunk.decode(encoding, errors="replace")
 
     def iter_lines(self):
         """Iterate over the response body as lines."""
@@ -675,8 +674,8 @@ class Response:
             lines = (pending + text).splitlines(keepends=True)
             pending = ""
             for line in lines:
-                if line.endswith(('\r\n', '\r', '\n')):
-                    yield line.rstrip('\r\n')
+                if line.endswith(("\r\n", "\r", "\n")):
+                    yield line.rstrip("\r\n")
                 else:
                     pending = line
         if pending:
@@ -686,7 +685,9 @@ class Response:
         """Iterate over the raw response body (uncompressed bytes)."""
         # If we have an async stream stored, raise RuntimeError
         if self._stream_content is not None:
-            raise RuntimeError("Attempted to call a sync iterator method on an async stream.")
+            raise RuntimeError(
+                "Attempted to call a sync iterator method on an async stream."
+            )
         # Use iter_bytes for raw iteration (no decompression in this implementation)
         return self.iter_bytes(chunk_size)
 
@@ -696,12 +697,14 @@ class Response:
         self._stream_consumed = True
         # If we have a sync stream (either unconsumed or consumed), raise RuntimeError
         if self._sync_stream_content is not None or self._raw_chunks is not None:
-            raise RuntimeError("Attempted to call an async iterator method on a sync stream.")
+            raise RuntimeError(
+                "Attempted to call an async iterator method on a sync stream."
+            )
 
         # If we have an async stream, iterate over it
         if self._stream_content is not None:
-            all_content = b''
-            buffer = b''
+            all_content = b""
+            buffer = b""
             async for chunk in self._stream_content:
                 all_content += chunk
                 if chunk_size is None:
@@ -730,7 +733,7 @@ class Response:
                     yield content
             else:
                 for i in range(0, len(content), chunk_size):
-                    chunk = content[i:i + chunk_size]
+                    chunk = content[i : i + chunk_size]
                     self._num_bytes_downloaded += len(chunk)
                     yield chunk
 
@@ -738,7 +741,9 @@ class Response:
         """Async iterate over the response body as bytes chunks."""
         # If we have a sync stream (raw_chunks), raise RuntimeError
         if self._stream_content is None and self._raw_chunks is not None:
-            raise RuntimeError("Attempted to call an async iterator method on a sync stream.")
+            raise RuntimeError(
+                "Attempted to call an async iterator method on a sync stream."
+            )
 
         # Use aiter_raw for bytes iteration
         async for chunk in self.aiter_raw(chunk_size):
@@ -748,17 +753,19 @@ class Response:
         """Async iterate over the response body as lines."""
         # If we have a sync stream (raw_chunks), raise RuntimeError
         if self._stream_content is None and self._raw_chunks is not None:
-            raise RuntimeError("Attempted to call an async iterator method on a sync stream.")
+            raise RuntimeError(
+                "Attempted to call an async iterator method on a sync stream."
+            )
 
         encoding = self._get_encoding()
         pending = ""
         async for chunk in self.aiter_bytes():
-            text = chunk.decode(encoding, errors='replace')
+            text = chunk.decode(encoding, errors="replace")
             lines = (pending + text).splitlines(keepends=True)
             pending = ""
             for line in lines:
-                if line.endswith(('\r\n', '\r', '\n')):
-                    yield line.rstrip('\r\n')
+                if line.endswith(("\r\n", "\r", "\n")):
+                    yield line.rstrip("\r\n")
                 else:
                     pending = line
         if pending:
@@ -780,30 +787,36 @@ class Response:
         self._response.close()
 
     def json(self, **kwargs):
+        # Fast path: no kwargs, delegate entirely to Rust (sonic-rs with BOM detection)
+        if not kwargs:
+            import json as _json_module
+            from ._core import json_from_bytes
+
+            try:
+                return json_from_bytes(self.content)
+            except ValueError as e:
+                # Re-raise as JSONDecodeError for compatibility with tests
+                # that catch json.decoder.JSONDecodeError specifically
+                raise _json_module.JSONDecodeError(str(e), "", 0) from None
+
+        # Slow path: kwargs passed (e.g. parse_float), fall back to Python json.loads
         import json as json_module
         from ._utils import guess_json_utf
 
-        # Get raw content bytes (use decoded content if available)
         content = self.content
-
-        # Detect encoding from content
         encoding = guess_json_utf(content)
 
         if encoding is not None:
-            # Decode with detected encoding
             text = content.decode(encoding)
         else:
-            # Try UTF-8 first (most common), fall back to text property
             try:
-                text = content.decode('utf-8')
+                text = content.decode("utf-8")
             except UnicodeDecodeError:
                 text = self.text
 
-        # Strip BOM character if present (can appear after decoding UTF-16/UTF-32)
-        if text.startswith('\ufeff'):
+        if text.startswith("\ufeff"):
             text = text[1:]
 
-        # Parse JSON
         return json_module.loads(text, **kwargs)
 
     def raise_for_status(self):
@@ -814,33 +827,9 @@ class Response:
         # Check that request is set (accessing self.request will raise if not)
         _ = self.request
 
-        if self.is_success:
+        # Delegate message building to Rust
+        message = self._response._raise_for_status_message()
+        if message is None:
             return self
-
-        # Get URL from response
-        url_str = str(self.url) if self.url else ""
-
-        # Determine message prefix based on status type
-        if self.is_informational:
-            message_prefix = "Informational response"
-        elif self.is_redirect:
-            message_prefix = "Redirect response"
-        elif self.is_client_error:
-            message_prefix = "Client error"
-        elif self.is_server_error:
-            message_prefix = "Server error"
-        else:
-            message_prefix = "Error"
-
-        # Build error message
-        message = f"{message_prefix} '{self.status_code} {self.reason_phrase}' for url '{url_str}'"
-
-        # Add redirect location for redirect responses
-        if self.is_redirect:
-            location = self.headers.get("location")
-            if location:
-                message += f"\nRedirect location: '{location}'"
-
-        message += f"\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{self.status_code}"
 
         raise HTTPStatusError(message, request=self.request, response=self)

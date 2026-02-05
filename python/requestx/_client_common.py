@@ -89,6 +89,8 @@ class _HeadersProxy(Headers):
 
 def extract_cookies_from_response(client, response, request):
     """Extract Set-Cookie headers from response and add to client cookies."""
+    from ._core import parse_set_cookie
+
     set_cookie_headers = []
     if hasattr(response, "headers"):
         if hasattr(response.headers, "multi_items"):
@@ -103,38 +105,15 @@ def extract_cookies_from_response(client, response, request):
                 set_cookie_headers = [cookie_header]
 
     if set_cookie_headers:
-        from email.utils import parsedate_to_datetime
-        import datetime
-
         cookies = client.cookies
         for cookie_str in set_cookie_headers:
-            parts = cookie_str.split(";")
-            if parts:
-                name_value = parts[0].strip()
-                if "=" in name_value:
-                    name, value = name_value.split("=", 1)
-                    name = name.strip()
-                    value = value.strip()
-
-                    is_expired = False
-                    for part in parts[1:]:
-                        part = part.strip()
-                        if part.lower().startswith("expires="):
-                            expires_str = part[8:].strip()
-                            try:
-                                expires_dt = parsedate_to_datetime(expires_str)
-                                if expires_dt < datetime.datetime.now(
-                                    datetime.timezone.utc
-                                ):
-                                    is_expired = True
-                            except Exception:
-                                pass
-                            break
-
-                    if is_expired:
-                        cookies.delete(name)
-                    else:
-                        cookies.set(name, value)
+            result = parse_set_cookie(cookie_str)
+            if result is not None:
+                name, value, is_expired = result
+                if is_expired:
+                    cookies.delete(name)
+                else:
+                    cookies.set(name, value)
         client.cookies = cookies
 
 

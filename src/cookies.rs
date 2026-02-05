@@ -508,3 +508,165 @@ impl CookieJar {
 
 crate::common::impl_py_iterator!(CookieJarIterator, Cookie, cookies, "CookieJarIterator");
 crate::common::impl_py_iterator!(CookiesIterator, String, keys, "CookiesIterator");
+
+/// Parse a Set-Cookie header string and return (name, value, is_expired).
+/// Returns None if the header is malformed (no name=value).
+#[pyfunction]
+pub fn parse_set_cookie(cookie_str: &str) -> Option<(String, String, bool)> {
+    let parts: Vec<&str> = cookie_str.split(';').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    // First part is name=value
+    let name_value = parts[0].trim();
+    let eq_pos = name_value.find('=')?;
+    let name = name_value[..eq_pos].trim().to_string();
+    let value = name_value[eq_pos + 1..].trim().to_string();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    // Check for expires attribute
+    let mut is_expired = false;
+    for part in parts.iter().skip(1) {
+        let part = part.trim();
+        if let Some(eq_pos) = part.find('=') {
+            let attr_name = part[..eq_pos].trim().to_lowercase();
+            if attr_name == "expires" {
+                let expires_str = part[eq_pos + 1..].trim();
+                is_expired = is_cookie_expired(expires_str);
+                break;
+            }
+        }
+    }
+
+    Some((name, value, is_expired))
+}
+
+/// Check if an expires date string represents an expired cookie.
+/// Parses HTTP date formats (RFC 2616 / RFC 7231).
+fn is_cookie_expired(expires_str: &str) -> bool {
+    // Try parsing common HTTP date formats
+    // Format 1: "Sun, 06 Nov 1994 08:49:37 GMT" (RFC 1123)
+    // Format 2: "Sunday, 06-Nov-94 08:49:37 GMT" (RFC 850)
+    // Format 3: "Sun Nov  6 08:49:37 1994" (ANSI C asctime())
+    use std::time::SystemTime;
+
+    // Helper: parse a month name to 1-12
+    fn parse_month(s: &str) -> Option<u32> {
+        match s.to_lowercase().as_str() {
+            "jan" => Some(1),
+            "feb" => Some(2),
+            "mar" => Some(3),
+            "apr" => Some(4),
+            "may" => Some(5),
+            "jun" => Some(6),
+            "jul" => Some(7),
+            "aug" => Some(8),
+            "sep" => Some(9),
+            "oct" => Some(10),
+            "nov" => Some(11),
+            "dec" => Some(12),
+            _ => None,
+        }
+    }
+
+    // Try to parse RFC 1123 format: "Sun, 06 Nov 1994 08:49:37 GMT"
+    // or RFC 850 format: "Sunday, 06-Nov-94 08:49:37 GMT"
+    let parts: Vec<&str> = expires_str.split_whitespace().collect();
+
+    if parts.len() >= 4 {
+        // Try extracting day, month, year, time
+        let (day_str, month_str, year_str, time_str) = if parts[0].ends_with(',') {
+            // RFC 1123/850: "Sun, 06 Nov 1994 08:49:37 GMT" or "Sunday, 06-Nov-94 08:49:37 GMT"
+            if parts.len() >= 5 {
+                // Handle "06-Nov-94" format
+                if parts[1].contains('-') {
+                    let date_parts: Vec<&str> = parts[1].split('-').collect();
+                    if date_parts.len() == 3 {
+                        (date_parts[0], date_parts[1], date_parts[2], parts[2])
+                    } else {
+                        return false;
+                    }
+                } else {
+                    (parts[1], parts[2], parts[3], parts[4])
+                }
+            } else {
+                return false;
+            }
+        } else {
+            // Might be asctime format: "Sun Nov  6 08:49:37 1994"
+            // Skip weekday, then month, day, time, year
+            if parts.len() >= 5 {
+                (parts[2], parts[1], parts[4], parts[3])
+            } else {
+                return false;
+            }
+        };
+
+        let day: u32 = day_str.parse().ok().unwrap_or(1);
+        let month = parse_month(month_str).unwrap_or(1);
+        let year: i32 = {
+            let y: i32 = year_str.parse().ok().unwrap_or(1970);
+            // Handle 2-digit years (RFC 850)
+            if y < 100 {
+                if y >= 70 {
+                    1900 + y
+                } else {
+                    2000 + y
+                }
+            } else {
+                y
+            }
+        };
+
+        // Parse time "HH:MM:SS"
+        let time_parts: Vec<&str> = time_str.split(':').collect();
+        let hour: u32 = time_parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minute: u32 = time_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let second: u32 = time_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+        // Calculate Unix timestamp for the parsed date
+        // Days from epoch to start of year
+        fn days_from_epoch_to_year(year: i32) -> i64 {
+            let y = year as i64;
+            365 * (y - 1970) + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400
+        }
+
+        fn is_leap_year(year: i32) -> bool {
+            (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        }
+
+        fn days_in_month(month: u32, year: i32) -> u32 {
+            match month {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                2 => {
+                    if is_leap_year(year) {
+                        29
+                    } else {
+                        28
+                    }
+                }
+                _ => 30,
+            }
+        }
+
+        let mut days = days_from_epoch_to_year(year);
+        for m in 1..month {
+            days += days_in_month(m, year) as i64;
+        }
+        days += (day as i64) - 1;
+
+        let expires_secs = days * 86400 + (hour as i64) * 3600 + (minute as i64) * 60 + (second as i64);
+
+        // Compare with current time
+        if let Ok(now) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            return expires_secs < now.as_secs() as i64;
+        }
+    }
+
+    false
+}

@@ -53,7 +53,7 @@ impl Clone for Response {
             stream: self
                 .stream
                 .as_ref()
-                .map(|s| Python::with_gil(|py| s.clone_ref(py))),
+                .map(|s| Python::attach(|py| s.clone_ref(py))),
             is_async_stream: self.is_async_stream,
         }
     }
@@ -637,6 +637,51 @@ impl Response {
         Err(crate::exceptions::HTTPStatusError::new_err(message))
     }
 
+    /// Build the raise_for_status error message, or return None if the response is successful.
+    /// Used by the Python wrapper to construct HTTPStatusError with request/response attributes.
+    /// Extract charset from the Content-Type header. Returns None if not found.
+    /// Used by the Python wrapper to avoid re-parsing Content-Type in Python.
+    fn _extract_charset(&self) -> Option<String> {
+        self.extract_charset()
+    }
+
+    fn _raise_for_status_message(&self) -> Option<String> {
+        if self.is_success() {
+            return None;
+        }
+
+        let url_str = self
+            .url
+            .as_ref()
+            .map(|u| u.to_string())
+            .or_else(|| self.request.as_ref().map(|r| r.url_ref().to_string()))
+            .unwrap_or_default();
+
+        let message_prefix = if self.is_informational() {
+            "Informational response"
+        } else if self.is_redirect() {
+            "Redirect response"
+        } else if self.is_client_error() {
+            "Client error"
+        } else if self.is_server_error() {
+            "Server error"
+        } else {
+            "Error"
+        };
+
+        let mut message = format!("{} '{} {}' for url '{}'", message_prefix, self.status_code, self.reason_phrase(), url_str);
+
+        if self.is_redirect() {
+            if let Some(location) = self.headers.get("location", None) {
+                message.push_str(&format!("\nRedirect location: '{}'", location));
+            }
+        }
+
+        message.push_str(&format!("\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{}", self.status_code));
+
+        Some(message)
+    }
+
     fn read(&mut self) -> Vec<u8> {
         self.is_stream_consumed = true;
         self.is_closed = true;
@@ -1000,17 +1045,18 @@ impl Response {
         if let Some(ref enc) = self.explicit_encoding {
             return enc.clone();
         }
-        // Otherwise, try to detect from content-type header
-        if let Some(content_type) = self.headers.get("content-type", None) {
-            // Look for charset in content-type
-            for part in content_type.split(';') {
-                let part = part.trim();
-                if part.to_lowercase().starts_with("charset=") {
-                    return part[8..].trim_matches('"').to_string();
-                }
-            }
+        // Try to detect from content-type header
+        if let Some(charset) = self.extract_charset() {
+            return charset;
         }
         self.default_encoding.clone()
+    }
+
+    /// Extract charset from Content-Type header, e.g. "text/html; charset=utf-8" -> "utf-8".
+    /// Returns None if no charset is specified.
+    fn extract_charset(&self) -> Option<String> {
+        let content_type = self.headers.get("content-type", None)?;
+        parse_charset_from_content_type(&content_type)
     }
 
     /// Set a header on the response
@@ -1417,6 +1463,91 @@ impl AsyncStreamBytesIterator {
     }
 }
 
+/// Decompress data based on encoding.
+/// Supports: gzip, deflate, br (brotli), zstd.
+/// Returns the original data for identity or unknown encodings.
+#[pyfunction]
+pub fn decompress(py: Python<'_>, data: &[u8], encoding: &str) -> PyResult<Py<PyBytes>> {
+    use std::io::Read;
+
+    if data.is_empty() {
+        return Ok(PyBytes::new(py, data).unbind());
+    }
+
+    let encoding = encoding.to_lowercase();
+    let encoding = encoding.trim();
+
+    let decompressed = match encoding {
+        "gzip" => {
+            let mut decoder = flate2::read::GzDecoder::new(data);
+            let mut buf = Vec::new();
+            decoder
+                .read_to_end(&mut buf)
+                .map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode gzip content: {}", e)))?;
+            buf
+        }
+        "deflate" => {
+            // Deflate can be raw deflate or zlib-wrapped; try raw first
+            let mut decoder = flate2::read::DeflateDecoder::new(data);
+            let mut buf = Vec::new();
+            match decoder.read_to_end(&mut buf) {
+                Ok(_) => buf,
+                Err(_) => {
+                    // Try zlib-wrapped
+                    let mut decoder = flate2::read::ZlibDecoder::new(data);
+                    let mut buf2 = Vec::new();
+                    decoder
+                        .read_to_end(&mut buf2)
+                        .map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode deflate content: {}", e)))?;
+                    buf2
+                }
+            }
+        }
+        "br" => {
+            let mut buf = Vec::new();
+            let mut decoder = brotli::Decompressor::new(data, 4096);
+            decoder
+                .read_to_end(&mut buf)
+                .map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode brotli content: {}", e)))?;
+            buf
+        }
+        "zstd" => {
+            let mut decoder = zstd::Decoder::new(data).map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to create zstd decoder: {}", e)))?;
+            let mut buf = Vec::new();
+            decoder
+                .read_to_end(&mut buf)
+                .map_err(|e| crate::exceptions::DecodingError::new_err(format!("Failed to decode zstd content: {}", e)))?;
+            buf
+        }
+        "identity" | "" => {
+            return Ok(PyBytes::new(py, data).unbind());
+        }
+        _ => {
+            // Unknown encoding - return as-is
+            return Ok(PyBytes::new(py, data).unbind());
+        }
+    };
+
+    Ok(PyBytes::new(py, &decompressed).unbind())
+}
+
+/// Parse charset from a Content-Type header value string.
+/// e.g. "text/html; charset=utf-8" -> Some("utf-8")
+///      "application/json" -> None
+fn parse_charset_from_content_type(content_type: &str) -> Option<String> {
+    for part in content_type.split(';') {
+        let part = part.trim();
+        if part.to_lowercase().starts_with("charset=") {
+            let charset = part[8..].trim_matches('"').trim_matches('\'');
+            if charset.is_empty() {
+                return None;
+            }
+            return Some(charset.to_string());
+        }
+    }
+    None
+}
+
 fn status_code_to_reason(code: u16) -> &'static str {
     match code {
         100 => "Continue",
@@ -1489,6 +1620,177 @@ fn status_code_to_reason(code: u16) -> &'static str {
 fn json_to_py(py: Python<'_>, json_str: &str) -> PyResult<PyObject> {
     let value: sonic_rs::Value = sonic_rs::from_str(json_str).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
     json_value_to_py(py, &value)
+}
+
+/// Detect JSON encoding from BOM or null-byte patterns, decode bytes to string,
+/// strip BOM character, and parse JSON using sonic-rs. Returns a Python object.
+#[pyfunction]
+pub fn json_from_bytes(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+    if data.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err("JSON parse error: empty content"));
+    }
+
+    let text = decode_json_bytes(data)?;
+
+    // Strip BOM character if present (U+FEFF)
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+
+    json_to_py(py, text)
+}
+
+/// Detect JSON encoding from BOM or null byte patterns.
+/// Returns the encoding name (e.g., "utf-16-be") or None for plain UTF-8.
+#[pyfunction]
+pub fn guess_json_utf(data: &[u8]) -> Option<String> {
+    if data.len() < 2 {
+        return None;
+    }
+
+    // Check BOMs first (order matters: UTF-32 before UTF-16)
+    if data.len() >= 4 {
+        if data.starts_with(b"\x00\x00\xfe\xff") {
+            return Some("utf-32-be".to_string());
+        }
+        if data.starts_with(b"\xff\xfe\x00\x00") {
+            return Some("utf-32-le".to_string());
+        }
+    }
+    if data.starts_with(b"\xfe\xff") {
+        return Some("utf-16-be".to_string());
+    }
+    if data.starts_with(b"\xff\xfe") {
+        return Some("utf-16-le".to_string());
+    }
+    if data.starts_with(b"\xef\xbb\xbf") {
+        return Some("utf-8-sig".to_string());
+    }
+
+    // No BOM - detect by null byte patterns
+    if data.len() >= 4 {
+        let null_count = data[..4].iter().filter(|&&b| b == 0).count();
+
+        // UTF-32: 3 null bytes per character
+        if null_count == 3 {
+            if data[0] == 0 && data[1] == 0 && data[2] == 0 {
+                return Some("utf-32-be".to_string());
+            }
+            if data[1] == 0 && data[2] == 0 && data[3] == 0 {
+                return Some("utf-32-le".to_string());
+            }
+        }
+
+        // UTF-16: 1 null byte per character (for ASCII range)
+        if null_count >= 1 {
+            if data[0] == 0 && data[2] == 0 {
+                return Some("utf-16-be".to_string());
+            }
+            if data[1] == 0 && data[3] == 0 {
+                return Some("utf-16-le".to_string());
+            }
+        }
+    } else if data.len() >= 2 {
+        if data[0] == 0 {
+            return Some("utf-16-be".to_string());
+        }
+        if data[1] == 0 {
+            return Some("utf-16-le".to_string());
+        }
+    }
+
+    // Default: plain UTF-8 (no special encoding)
+    None
+}
+
+/// Detect encoding of JSON bytes and decode to String.
+fn decode_json_bytes(data: &[u8]) -> PyResult<String> {
+    // Check BOMs first (order matters: UTF-32 before UTF-16)
+    if data.starts_with(b"\x00\x00\xfe\xff") {
+        return decode_utf32(data, true);
+    }
+    if data.starts_with(b"\xff\xfe\x00\x00") {
+        return decode_utf32(data, false);
+    }
+    if data.starts_with(b"\xfe\xff") {
+        return decode_utf16(&data[2..], true);
+    }
+    if data.starts_with(b"\xff\xfe") {
+        return decode_utf16(&data[2..], false);
+    }
+    if data.starts_with(b"\xef\xbb\xbf") {
+        // UTF-8 BOM - skip 3 bytes
+        return String::from_utf8(data[3..].to_vec()).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("UTF-8 decode error: {}", e)));
+    }
+
+    // No BOM - detect by null byte patterns
+    if data.len() >= 4 {
+        let null_count = data[..4].iter().filter(|&&b| b == 0).count();
+        if null_count == 3 {
+            if data[0] == 0 && data[1] == 0 && data[2] == 0 {
+                return decode_utf32(data, true);
+            }
+            if data[1] == 0 && data[2] == 0 && data[3] == 0 {
+                return decode_utf32(data, false);
+            }
+        }
+        if null_count >= 1 {
+            if data[0] == 0 && data[2] == 0 {
+                return decode_utf16(data, true);
+            }
+            if data[1] == 0 && data[3] == 0 {
+                return decode_utf16(data, false);
+            }
+        }
+    } else if data.len() >= 2 {
+        if data[0] == 0 {
+            return decode_utf16(data, true);
+        }
+        if data[1] == 0 {
+            return decode_utf16(data, false);
+        }
+    }
+
+    // Default: UTF-8
+    String::from_utf8(data.to_vec()).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("UTF-8 decode error: {}", e)))
+}
+
+fn decode_utf16(data: &[u8], big_endian: bool) -> PyResult<String> {
+    if data.len() % 2 != 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("Invalid UTF-16 data: odd number of bytes"));
+    }
+    let u16_iter = data.chunks_exact(2).map(|chunk| {
+        if big_endian {
+            u16::from_be_bytes([chunk[0], chunk[1]])
+        } else {
+            u16::from_le_bytes([chunk[0], chunk[1]])
+        }
+    });
+    String::from_utf16(&u16_iter.collect::<Vec<u16>>()).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("UTF-16 decode error: {}", e)))
+}
+
+fn decode_utf32(data: &[u8], big_endian: bool) -> PyResult<String> {
+    // Skip BOM if present
+    let start = if big_endian && data.starts_with(b"\x00\x00\xfe\xff") {
+        4
+    } else if !big_endian && data.starts_with(b"\xff\xfe\x00\x00") {
+        4
+    } else {
+        0
+    };
+    let data = &data[start..];
+    if data.len() % 4 != 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("Invalid UTF-32 data: not a multiple of 4 bytes"));
+    }
+    let mut result = String::with_capacity(data.len() / 4);
+    for chunk in data.chunks_exact(4) {
+        let code_point = if big_endian {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        };
+        let c = char::from_u32(code_point).ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Invalid UTF-32 code point: {}", code_point)))?;
+        result.push(c);
+    }
+    Ok(result)
 }
 
 /// Convert sonic_rs::Value to Python object

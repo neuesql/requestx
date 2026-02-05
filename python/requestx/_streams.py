@@ -92,7 +92,7 @@ class _GeneratorByteStream(SyncByteStream):
         self._consumed = True
         if self._owner is not None:
             self._owner._stream_consumed = True
-        return b''.join(self._chunks)
+        return b"".join(self._chunks)
 
     def close(self):
         """Close the stream."""
@@ -231,7 +231,9 @@ class _SyncIteratorStream:
 
     def __iter__(self):
         # Check if owner's stream was already consumed
-        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+        if self._owner is not None and getattr(
+            self._owner, "_py_stream_consumed", False
+        ):
             raise StreamConsumed()
         if self._consumed:
             raise StreamConsumed()
@@ -246,12 +248,14 @@ class _SyncIteratorStream:
         except StopIteration:
             self._consumed = True
             if self._owner is not None:
-                object.__setattr__(self._owner, '_py_stream_consumed', True)
+                object.__setattr__(self._owner, "_py_stream_consumed", True)
             raise
 
     def read(self):
         """Read all bytes."""
-        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+        if self._owner is not None and getattr(
+            self._owner, "_py_stream_consumed", False
+        ):
             raise StreamConsumed()
         if self._consumed:
             raise StreamConsumed()
@@ -273,13 +277,17 @@ class _AsyncIteratorStream:
         self._owner = owner
         self._consumed = False
         # Check if this is an async file-like object (has aread but no __anext__)
-        self._is_file_like = hasattr(iterator, 'aread') and not hasattr(iterator, '__anext__')
+        self._is_file_like = hasattr(iterator, "aread") and not hasattr(
+            iterator, "__anext__"
+        )
         # For file-like objects, we need to track if we got the aiter
         self._aiter = None
 
     def __aiter__(self):
         # Check if owner's stream was already consumed
-        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+        if self._owner is not None and getattr(
+            self._owner, "_py_stream_consumed", False
+        ):
             raise StreamConsumed()
         if self._consumed:
             raise StreamConsumed()
@@ -292,7 +300,7 @@ class _AsyncIteratorStream:
             if self._is_file_like:
                 # For async file-like objects, use __aiter__ if available
                 if self._aiter is None:
-                    if hasattr(self._iterator, '__aiter__'):
+                    if hasattr(self._iterator, "__aiter__"):
                         self._aiter = self._iterator.__aiter__()
                     else:
                         # Fall back to reading all at once
@@ -300,7 +308,9 @@ class _AsyncIteratorStream:
                         if not content:
                             self._consumed = True
                             if self._owner is not None:
-                                object.__setattr__(self._owner, '_py_stream_consumed', True)
+                                object.__setattr__(
+                                    self._owner, "_py_stream_consumed", True
+                                )
                             raise StopAsyncIteration
                         return content
                 return await self._aiter.__anext__()
@@ -309,12 +319,14 @@ class _AsyncIteratorStream:
         except StopAsyncIteration:
             self._consumed = True
             if self._owner is not None:
-                object.__setattr__(self._owner, '_py_stream_consumed', True)
+                object.__setattr__(self._owner, "_py_stream_consumed", True)
             raise
 
     async def aread(self):
         """Read all bytes asynchronously."""
-        if self._owner is not None and getattr(self._owner, '_py_stream_consumed', False):
+        if self._owner is not None and getattr(
+            self._owner, "_py_stream_consumed", False
+        ):
             raise StreamConsumed()
         if self._consumed:
             raise StreamConsumed()
@@ -390,7 +402,7 @@ class _ResponseSyncIteratorStream:
 
     def __init__(self, iterator, owner):
         # Handle iterables that aren't iterators
-        if hasattr(iterator, '__iter__') and not hasattr(iterator, '__next__'):
+        if hasattr(iterator, "__iter__") and not hasattr(iterator, "__next__"):
             self._iterator = iter(iterator)
         else:
             self._iterator = iterator

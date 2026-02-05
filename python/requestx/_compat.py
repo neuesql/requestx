@@ -14,30 +14,41 @@ _logger = _logging.getLogger("httpx")
 # Sentinel for "auth not specified" - distinct from auth=None which disables auth
 class _AuthUnset:
     """Sentinel to indicate auth was not specified."""
+
     _instance = None
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
     def __repr__(self):
-        return '<USE_CLIENT_AUTH>'
+        return "<USE_CLIENT_AUTH>"
+
     def __bool__(self):
         return False
 
+
 USE_CLIENT_DEFAULT = _AuthUnset()
+
 
 # Sentinel for "auth explicitly disabled" - used to pass auth=None to Rust
 class _AuthDisabled:
     """Sentinel to indicate auth is explicitly disabled."""
+
     _instance = None
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
     def __repr__(self):
-        return '<AUTH_DISABLED>'
+        return "<AUTH_DISABLED>"
+
     def __bool__(self):
         return False
+
 
 _AUTH_DISABLED = _AuthDisabled()
 
@@ -151,7 +162,9 @@ def create_ssl_context(
         elif verify_path.is_file():
             context.load_verify_locations(cafile=str(verify_path))
         else:
-            raise IOError(f"Could not find a suitable TLS CA certificate bundle, invalid path: {verify}")
+            raise IOError(
+                f"Could not find a suitable TLS CA certificate bundle, invalid path: {verify}"
+            )
 
     # Handle client certificate
     if cert is not None:
@@ -163,7 +176,9 @@ def create_ssl_context(
                 context.load_cert_chain(certfile=str(certfile), keyfile=str(keyfile))
             elif len(cert) == 3:
                 certfile, keyfile, password = cert
-                context.load_cert_chain(certfile=str(certfile), keyfile=str(keyfile), password=password)
+                context.load_cert_chain(
+                    certfile=str(certfile), keyfile=str(keyfile), password=password
+                )
 
     # Handle trust_env for SSL_CERT_FILE and SSL_CERT_DIR
     if trust_env:
