@@ -117,7 +117,6 @@ from ._client import Client  # noqa: F401
 # Import _utils module for utility functions
 from . import _utils  # noqa: F401
 
-
 __all__ = sorted(
     [
         "__description__",

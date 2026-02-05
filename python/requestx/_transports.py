@@ -223,12 +223,7 @@ class ASGITransport(AsyncBaseTransport):
                 return {"type": "http.disconnect"}
 
         async def send(message):
-            nonlocal \
-                response_started, \
-                response_complete, \
-                status_code, \
-                response_headers, \
-                body_parts
+            nonlocal response_started, response_complete, status_code, response_headers, body_parts
 
             if message["type"] == "http.response.start":
                 response_started = True

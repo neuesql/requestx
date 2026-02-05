@@ -692,12 +692,16 @@ class Client:
                         next_request = self.build_request(
                             next_request.method,
                             next_url_str + "#" + original_fragment,
-                            headers=dict(next_request.headers.items())
-                            if hasattr(next_request, "headers")
-                            else None,
-                            content=next_request.content
-                            if hasattr(next_request, "content")
-                            else None,
+                            headers=(
+                                dict(next_request.headers.items())
+                                if hasattr(next_request, "headers")
+                                else None
+                            ),
+                            content=(
+                                next_request.content
+                                if hasattr(next_request, "content")
+                                else None
+                            ),
                         )
 
         # Recursively follow

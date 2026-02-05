@@ -508,9 +508,9 @@ class Response:
         return {
             "status_code": self.status_code,
             "headers": list(self.headers.multi_items()),
-            "content": self.content
-            if not self._is_stream or self._raw_content
-            else b"",
+            "content": (
+                self.content if not self._is_stream or self._raw_content else b""
+            ),
             "request": request,
             "url": self._url,
             "history": self._history,
