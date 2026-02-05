@@ -13,7 +13,7 @@ def run_benchmark(client_library: str) -> dict:
     config = BenchmarkConfiguration(
         target_url=TEST_URL,
         http_method="GET",
-        concurrency=10,
+        concurrency=2,
         total_requests=100,
         client_library=client_library,
         is_async=False,
