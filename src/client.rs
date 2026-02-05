@@ -4,6 +4,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 
+use crate::client_common::{
+    apply_url_auth, create_event_hooks_dict, extract_auth_action_bound, merge_cookies_from_py, merge_headers_from_py, parse_event_hooks_dict, resolve_and_apply_auth, AuthAction,
+};
 use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
@@ -161,36 +164,13 @@ impl Client {
             // Build the Request object with all the headers and body
             let mut request_headers = self.headers.clone();
             if let Some(h) = headers {
-                if let Ok(headers_obj) = h.extract::<Headers>() {
-                    for (k, v) in headers_obj.inner() {
-                        request_headers.set(k.clone(), v.clone());
-                    }
-                } else if let Ok(dict) = h.downcast::<PyDict>() {
-                    for (key, value) in dict.iter() {
-                        let k: String = key.extract()?;
-                        let v: String = value.extract()?;
-                        request_headers.set(k, v);
-                    }
-                } else if let Ok(list) = h.downcast::<PyList>() {
-                    // Handle list of tuples (for repeated headers)
-                    for item in list.iter() {
-                        let tuple = item.downcast::<pyo3::types::PyTuple>()?;
-                        let k: String = tuple.get_item(0)?.extract()?;
-                        let v: String = tuple.get_item(1)?.extract()?;
-                        // For repeated headers, we need to append not replace
-                        request_headers.append(k, v);
-                    }
-                }
+                merge_headers_from_py(h, &mut request_headers)?;
             }
 
             // Add cookies to headers
             let mut all_cookies = self.cookies.clone();
             if let Some(c) = cookies {
-                if let Ok(cookies_obj) = c.extract::<Cookies>() {
-                    for (k, v) in cookies_obj.inner() {
-                        all_cookies.set(&k, &v);
-                    }
-                }
+                merge_cookies_from_py(c, &mut all_cookies)?;
             }
             let cookie_header = all_cookies.to_header_value();
             if !cookie_header.is_empty() {
@@ -266,57 +246,15 @@ impl Client {
                 request_headers.set("Content-Type".to_string(), ct);
             }
 
-            // Apply auth - three cases (handled via Python wrapper with sentinels):
-            // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
-            // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
-            // 3. auth=(user,pass) → use this auth
-            let effective_auth: Option<(String, String)> = if let Some(a) = auth {
-                // Check type name for sentinels
-                if let Ok(type_name) = a.get_type().name() {
-                    let type_str = type_name.to_string();
-                    // _AuthUnset sentinel - use client auth
-                    if type_str == "_AuthUnset" {
-                        self.auth.clone()
-                    // _AuthDisabled sentinel - disable auth
-                    } else if type_str == "_AuthDisabled" {
-                        None
-                    } else if let Ok(basic) = a.extract::<BasicAuth>() {
-                        Some((basic.username, basic.password))
-                    } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                        Some(tuple)
-                    } else {
-                        None
-                    }
-                } else if let Ok(basic) = a.extract::<BasicAuth>() {
-                    Some((basic.username, basic.password))
-                } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                    Some(tuple)
-                } else {
-                    None
-                }
-            } else {
-                // No per-request auth specified, fall back to client-level auth
-                self.auth.clone()
-            };
+            // Apply auth using shared helper
+            let auth_action = extract_auth_action_bound(auth);
+            resolve_and_apply_auth(auth_action, &self.auth, &mut request_headers);
 
             let url_obj = URL::parse(&final_url)?;
             let host_header = crate::common::get_host_header(&url_obj);
 
-            // Determine final auth - either from effective_auth, or from URL userinfo
-            if let Some((username, password)) = effective_auth {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
-            } else {
-                // Extract auth from URL userinfo if present
-                let url_username = url_obj.get_username();
-                if !url_username.is_empty() {
-                    let url_password = url_obj.get_password().unwrap_or_default();
-                    let credentials = format!("{}:{}", url_username, url_password);
-                    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
-                }
-            }
+            // Extract auth from URL userinfo if no auth was set
+            apply_url_auth(&mut request_headers, &url_obj);
 
             // Only add Host header if not already present (required for HTTP)
             // Other headers (accept, accept-encoding, connection, user-agent) come from
@@ -378,41 +316,18 @@ impl Client {
             builder = builder.header("cookie", cookie_header);
         }
 
-        // Add authentication - three cases (handled via Python wrapper with sentinels):
-        // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
-        // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
-        // 3. auth=(user,pass) → use this auth
-        let effective_auth: Option<(String, String)> = if let Some(a) = auth {
-            // Check type name for sentinels
-            if let Ok(type_name) = a.get_type().name() {
-                let type_str = type_name.to_string();
-                // _AuthUnset sentinel - use client auth
-                if type_str == "_AuthUnset" {
-                    self.auth.clone()
-                // _AuthDisabled sentinel - disable auth
-                } else if type_str == "_AuthDisabled" {
-                    None
-                } else if let Ok(basic) = a.extract::<BasicAuth>() {
-                    Some((basic.username, basic.password))
-                } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                    Some(tuple)
-                } else {
-                    None
+        // Add authentication using shared helper
+        let auth_action = extract_auth_action_bound(auth);
+        match &auth_action {
+            AuthAction::UseClientDefault => {
+                if let Some((username, password)) = &self.auth {
+                    builder = builder.basic_auth(username, Some(password));
                 }
-            } else if let Ok(basic) = a.extract::<BasicAuth>() {
-                Some((basic.username, basic.password))
-            } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                Some(tuple)
-            } else {
-                None
             }
-        } else {
-            // No per-request auth specified, fall back to client-level auth
-            self.auth.clone()
-        };
-
-        if let Some((username, password)) = effective_auth {
-            builder = builder.basic_auth(&username, Some(&password));
+            AuthAction::Basic(username, password) => {
+                builder = builder.basic_auth(username, Some(password));
+            }
+            AuthAction::Disabled | AuthAction::Callable(_) => {}
         }
 
         // Add body
@@ -1070,37 +985,15 @@ impl Client {
     /// Get event_hooks as a dict
     #[getter]
     fn event_hooks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-
-        let request_list = PyList::new(py, self.event_hooks.request.iter().map(|h| h.bind(py)))?;
-        let response_list = PyList::new(py, self.event_hooks.response.iter().map(|h| h.bind(py)))?;
-
-        dict.set_item("request", request_list)?;
-        dict.set_item("response", response_list)?;
-
-        Ok(dict)
+        create_event_hooks_dict(py, &self.event_hooks.request, &self.event_hooks.response)
     }
 
     /// Set event_hooks from a dict
     #[setter]
     fn set_event_hooks(&mut self, hooks: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.event_hooks = EventHooks::default();
-
-        if let Some(request_hooks) = hooks.get_item("request")? {
-            if let Ok(list) = request_hooks.downcast::<PyList>() {
-                for item in list.iter() {
-                    self.event_hooks.request.push(item.unbind());
-                }
-            }
-        }
-        if let Some(response_hooks) = hooks.get_item("response")? {
-            if let Ok(list) = response_hooks.downcast::<PyList>() {
-                for item in list.iter() {
-                    self.event_hooks.response.push(item.unbind());
-                }
-            }
-        }
-
+        let (request, response) = parse_event_hooks_dict(hooks)?;
+        self.event_hooks.request = request;
+        self.event_hooks.response = response;
         Ok(())
     }
 

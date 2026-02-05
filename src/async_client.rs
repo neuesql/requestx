@@ -6,6 +6,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::client_common::{apply_basic_auth, apply_url_auth, create_event_hooks_dict, extract_auth_action, parse_event_hooks_dict, AuthAction};
 use crate::cookies::Cookies;
 use crate::exceptions::{convert_reqwest_error, convert_reqwest_error_with_context};
 use crate::headers::Headers;
@@ -662,37 +663,15 @@ impl AsyncClient {
     /// Get event_hooks as a dict
     #[getter]
     fn event_hooks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-
-        let request_list = PyList::new(py, self.event_hooks.request.iter().map(|h| h.bind(py)))?;
-        let response_list = PyList::new(py, self.event_hooks.response.iter().map(|h| h.bind(py)))?;
-
-        dict.set_item("request", request_list)?;
-        dict.set_item("response", response_list)?;
-
-        Ok(dict)
+        create_event_hooks_dict(py, &self.event_hooks.request, &self.event_hooks.response)
     }
 
     /// Set event_hooks from a dict
     #[setter]
     fn set_event_hooks(&mut self, hooks: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.event_hooks = EventHooks::default();
-
-        if let Some(request_hooks) = hooks.get_item("request")? {
-            if let Ok(list) = request_hooks.downcast::<PyList>() {
-                for item in list.iter() {
-                    self.event_hooks.request.push(item.unbind());
-                }
-            }
-        }
-        if let Some(response_hooks) = hooks.get_item("response")? {
-            if let Ok(list) = response_hooks.downcast::<PyList>() {
-                for item in list.iter() {
-                    self.event_hooks.response.push(item.unbind());
-                }
-            }
-        }
-
+        let (request, response) = parse_event_hooks_dict(hooks)?;
+        self.event_hooks.request = request;
+        self.event_hooks.response = response;
         Ok(())
     }
 
@@ -884,72 +863,23 @@ impl AsyncClient {
             None
         };
 
-        // Process auth - add Authorization header (per-request auth takes precedence over client-level auth)
-        // Auth handling - four cases (handled via Python wrapper with sentinels):
-        // 1. auth=USE_CLIENT_DEFAULT (_AuthUnset sentinel) → use client auth
-        // 2. auth=None explicitly (_AuthDisabled sentinel) → disable auth
-        // 3. auth=(user,pass) or BasicAuth → use Basic auth
-        // 4. auth=callable → call it with Request to modify headers
-        enum AuthAction {
-            UseClientAuth,
-            DisableAuth,
-            BasicAuth(String, String),
-            CallableAuth(Py<PyAny>),
-        }
-
-        let auth_action = if let Some(a) = &auth {
-            Python::attach(|py| {
-                let a_bound = a.bind(py);
-                // Check type name for sentinels
-                if let Ok(type_name) = a_bound.get_type().name() {
-                    let type_str = type_name.to_string();
-                    // _AuthUnset sentinel - use client auth
-                    if type_str == "_AuthUnset" {
-                        return AuthAction::UseClientAuth;
-                    }
-                    // _AuthDisabled sentinel - disable auth
-                    if type_str == "_AuthDisabled" {
-                        return AuthAction::DisableAuth;
-                    }
-                }
-                // Check if it's Python's None
-                if a_bound.is_none() {
-                    AuthAction::DisableAuth
-                } else if let Ok(basic) = a_bound.extract::<BasicAuth>() {
-                    AuthAction::BasicAuth(basic.username, basic.password)
-                } else if let Ok(tuple) = a_bound.extract::<(String, String)>() {
-                    AuthAction::BasicAuth(tuple.0, tuple.1)
-                } else if a_bound.is_callable() {
-                    // Callable auth - will call it with Request later
-                    AuthAction::CallableAuth(a.clone_ref(py))
-                } else {
-                    // Unknown auth type, disable auth
-                    AuthAction::DisableAuth
-                }
-            })
-        } else {
-            // No per-request auth specified (Rust None), fall back to client-level auth
-            AuthAction::UseClientAuth
-        };
+        // Process auth using shared helper
+        let auth_action = Python::attach(|py| extract_auth_action(py, auth.as_ref()));
 
         // Apply auth based on action
         let callable_auth: Option<Py<PyAny>> = match auth_action {
-            AuthAction::UseClientAuth => {
+            AuthAction::UseClientDefault => {
                 if let Some((username, password)) = &self.auth {
-                    let credentials = format!("{}:{}", username, password);
-                    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+                    apply_basic_auth(&mut request_headers, username, password);
                 }
                 None
             }
-            AuthAction::DisableAuth => None,
-            AuthAction::BasicAuth(username, password) => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
+            AuthAction::Disabled => None,
+            AuthAction::Basic(username, password) => {
+                apply_basic_auth(&mut request_headers, &username, &password);
                 None
             }
-            AuthAction::CallableAuth(auth_fn) => Some(auth_fn),
+            AuthAction::Callable(auth_fn) => Some(auth_fn),
         };
 
         // Clone transport outside the borrow so the clone lives beyond &self
@@ -962,15 +892,7 @@ impl AsyncClient {
             let host_header = crate::common::get_host_header(&url_obj);
 
             // Extract auth from URL userinfo if no auth was already set
-            if !request_headers.contains("authorization") {
-                let url_username = url_obj.get_username();
-                if !url_username.is_empty() {
-                    let url_password = url_obj.get_password().unwrap_or_default();
-                    let credentials = format!("{}:{}", url_username, url_password);
-                    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                    request_headers.set("Authorization".to_string(), format!("Basic {}", encoded));
-                }
-            }
+            apply_url_auth(&mut request_headers, &url_obj);
 
             // Add Host header if not already present
             if !request_headers.contains("host") {

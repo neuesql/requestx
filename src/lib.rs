@@ -8,6 +8,7 @@ mod api;
 mod async_client;
 mod auth;
 mod client;
+mod client_common;
 mod common;
 mod cookies;
 mod exceptions;
