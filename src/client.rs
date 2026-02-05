@@ -32,7 +32,9 @@ pub struct Client {
     headers: Headers,
     cookies: Cookies,
     timeout: Timeout,
+    #[allow(dead_code)]
     follow_redirects: bool,
+    #[allow(dead_code)]
     max_redirects: usize,
     event_hooks: EventHooks,
     trust_env: bool,
@@ -139,8 +141,8 @@ impl Client {
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
         auth: Option<&Bound<'_, PyAny>>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
+        _timeout: Option<&Bound<'_, PyAny>>,
+        _follow_redirects: Option<bool>,
     ) -> PyResult<Response> {
         let resolved_url = self.resolve_url(url)?;
 
@@ -196,7 +198,7 @@ impl Client {
                         }
                     } else {
                         // Content-Type set but no boundary - use content-type as is (will auto-generate boundary in body)
-                        let (body, boundary, _) = build_multipart_body(py, data, files)?;
+                        let (body, _boundary, _) = build_multipart_body(py, data, files)?;
                         // Keep the existing content-type but we generated body with auto boundary
                         // This case is when user sets content-type without boundary - we keep their content-type
                         (body, ct.clone())
@@ -388,10 +390,8 @@ impl Client {
         let auth_tuple = if let Some(a) = auth {
             if let Ok(basic) = a.extract::<BasicAuth>() {
                 Some((basic.username, basic.password))
-            } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                Some(tuple)
             } else {
-                None
+                a.extract::<(String, String)>().ok()
             }
         } else {
             None
@@ -433,15 +433,13 @@ impl Client {
                 let mut cookies = Cookies::new();
                 let mut found_any = false;
                 if let Ok(py_iter) = c.try_iter() {
-                    for item in py_iter {
-                        if let Ok(cookie) = item {
-                            // Cookie object has name and value attributes
-                            if let Ok(name) = cookie.getattr("name") {
-                                if let Ok(value) = cookie.getattr("value") {
-                                    if let (Ok(n), Ok(v)) = (name.extract::<String>(), value.extract::<String>()) {
-                                        cookies.set(&n, &v);
-                                        found_any = true;
-                                    }
+                    for cookie in py_iter.flatten() {
+                        // Cookie object has name and value attributes
+                        if let Ok(name) = cookie.getattr("name") {
+                            if let Ok(value) = cookie.getattr("value") {
+                                if let (Ok(n), Ok(v)) = (name.extract::<String>(), value.extract::<String>()) {
+                                    cookies.set(&n, &v);
+                                    found_any = true;
                                 }
                             }
                         }
@@ -851,9 +849,8 @@ impl Client {
                 headers_mut.set("Content-Type".to_string(), "application/json".to_string());
             }
             request.set_headers(headers_mut);
-        } else if files.is_some() {
+        } else if let Some(f) = files {
             // Check if files is not empty
-            let f = files.unwrap();
             let files_not_empty = if let Ok(dict) = f.cast::<pyo3::types::PyDict>() {
                 !dict.is_empty()
             } else if let Ok(list) = f.cast::<pyo3::types::PyList>() {
@@ -873,19 +870,19 @@ impl Client {
                     if ct.contains("boundary=") {
                         let boundary = crate::multipart::extract_boundary_from_content_type(ct);
                         if let Some(b) = boundary {
-                            let (body, _, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(&f), &b)?;
+                            let (body, _, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(f), &b)?;
                             (body, ct.clone())
                         } else {
-                            let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                            let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
                             (body, format!("multipart/form-data; boundary={}", boundary))
                         }
                     } else {
                         // Content-Type set but no boundary - preserve the original
-                        let (body, _, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                        let (body, _, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
                         (body, ct.clone())
                     }
                 } else {
-                    let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(&f))?;
+                    let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
                     (body, format!("multipart/form-data; boundary={}", boundary))
                 };
 
@@ -1139,7 +1136,7 @@ impl Client {
 
         // Check mounts in order of specificity (longer patterns first)
         let mut sorted_patterns: Vec<_> = self.mounts.keys().collect();
-        sorted_patterns.sort_by(|a, b| b.len().cmp(&a.len()));
+        sorted_patterns.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
         for pattern in sorted_patterns {
             if crate::common::url_matches_pattern(&url_str, pattern) {
@@ -1159,7 +1156,7 @@ impl Client {
 
     /// Compute headers for a redirect request.
     /// This handles cross-origin auth header stripping.
-    fn _redirect_headers(&self, request: &Request, url: &URL, method: &str) -> Headers {
+    fn _redirect_headers(&self, request: &Request, url: &URL, _method: &str) -> Headers {
         let mut headers = request.headers_ref().clone();
 
         // Determine if same origin - same scheme, host, port

@@ -423,7 +423,7 @@ impl Headers {
         let mut new_inner = Vec::with_capacity(self.inner.len());
         let mut new_lower = Vec::with_capacity(self.lower_keys.len());
 
-        for (i, ((k, v), lk)) in self.inner.iter().zip(self.lower_keys.iter()).enumerate() {
+        for ((k, v), lk) in self.inner.iter().zip(self.lower_keys.iter()) {
             if lk == &key_lower {
                 if !first_found {
                     // Replace at first occurrence

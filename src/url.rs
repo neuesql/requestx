@@ -20,6 +20,7 @@ fn decode_fragment(encoded: &str) -> String {
 }
 
 /// URL parsing and manipulation
+#[allow(clippy::upper_case_acronyms)]
 #[pyclass(name = "URL")]
 #[derive(Clone, Debug)]
 pub struct URL {
@@ -105,6 +106,7 @@ impl URL {
     }
 
     /// Convert to string (preserving trailing slash based on original input)
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         // For relative URLs, return just the path/query/fragment
         if let Some(ref rel_path) = self.relative_path {
@@ -198,7 +200,7 @@ impl URL {
 
             // Handle case: path is / but followed by query (e.g., "http://example.com/?a=1")
             // Need to find and remove the "/" between host and "?"
-            if let Some(query) = self.inner.query() {
+            if self.inner.query().is_some() {
                 // Find the pattern /?
                 if let Some(pos) = s.find("/?") {
                     // Remove the / before ?
@@ -291,11 +293,11 @@ impl URL {
         path: Option<&str>,
         query: Option<&[u8]>,
         fragment: Option<&str>,
-        username: Option<&str>,
-        password: Option<&str>,
+        _username: Option<&str>,
+        _password: Option<&str>,
         params: Option<&Bound<'_, PyAny>>,
-        netloc: Option<&[u8]>,
-        raw_path: Option<&[u8]>,
+        _netloc: Option<&[u8]>,
+        _raw_path: Option<&[u8]>,
     ) -> PyResult<Self> {
         // If URL string is provided, parse it
         if let Some(url_str) = url {
@@ -373,10 +375,8 @@ impl URL {
                     }
 
                     // Check for invalid IDNA characters
-                    if !host.is_empty() && host.chars().any(|c| !c.is_ascii()) {
-                        if !is_valid_idna(host) {
-                            return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid IDNA hostname: '{}'", host)));
-                        }
+                    if !host.is_empty() && !host.is_ascii() && !is_valid_idna(host) {
+                        return Err(crate::exceptions::InvalidURL::new_err(format!("Invalid IDNA hostname: '{}'", host)));
                     }
                 }
             }
@@ -384,8 +384,7 @@ impl URL {
             // Handle special cases that the url crate doesn't support well
 
             // Case 1: Empty scheme like "://example.com"
-            if url_str.starts_with("://") {
-                let rest = &url_str[3..]; // Remove "://"
+            if let Some(rest) = url_str.strip_prefix("://") {
                                           // Parse the rest as if it had http scheme, then mark as empty scheme
                 let temp_url = format!("http://{}", rest);
                 match Url::parse(&temp_url) {
@@ -721,7 +720,7 @@ impl URL {
             }
         } else {
             // Store original host if it's an IDNA or IPv6 address (use cleaned version without brackets)
-            let orig_host = if is_ipv6 || host.chars().any(|c| !c.is_ascii()) {
+            let orig_host = if is_ipv6 || !host.is_ascii() {
                 Some(host_clean.to_string())
             } else {
                 None
@@ -785,7 +784,7 @@ fn extract_original_host(url_str: &str) -> Option<String> {
         };
 
         // Only store if it contains non-ASCII (IDNA) or is IPv6
-        if host.chars().any(|c| !c.is_ascii()) || host.contains(':') {
+        if !host.is_ascii() || host.contains(':') {
             return Some(host.to_string());
         }
     }
@@ -892,11 +891,9 @@ fn is_valid_ipv6(s: &str) -> bool {
 
     // Check each group (simple validation)
     let groups: Vec<&str> = s.split(':').collect();
-    let mut empty_group_count = 0;
 
     for group in &groups {
         if group.is_empty() {
-            empty_group_count += 1;
             continue;
         }
         // Check if it's an IPv4 suffix (for IPv4-mapped addresses)
@@ -965,11 +962,11 @@ fn is_valid_idna(s: &str) -> bool {
             // Common invalid characters in IDNA:
             // - Emoji (most in range 0x1F000-0x1FFFF or specific characters)
             // - Symbols like ☃ (U+2603)
-            if cat >= 0x2600 && cat <= 0x26FF {
+            if (0x2600..=0x26FF).contains(&cat) {
                 // Miscellaneous Symbols block - includes snowman (☃)
                 return false;
             }
-            if cat >= 0x1F300 && cat <= 0x1FFFF {
+            if (0x1F300..=0x1FFFF).contains(&cat) {
                 // Emoji and symbols
                 return false;
             }
@@ -1364,7 +1361,7 @@ impl URL {
                             .set_host(Some(&host_to_set))
                             .map_err(|e| crate::exceptions::InvalidURL::new_err(format!("Invalid host: {}", e)))?;
                         // Store original host for IDNA/IPv6
-                        if is_ipv6 || host.chars().any(|c| !c.is_ascii()) {
+                        if is_ipv6 || !host.is_ascii() {
                             new_url.original_host = Some(host_clean.to_string());
                         } else {
                             new_url.original_host = None;

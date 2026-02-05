@@ -170,6 +170,7 @@ impl Response {
     }
 }
 
+#[allow(unused_variables)]
 #[pymethods]
 impl Response {
     #[new]
@@ -394,10 +395,8 @@ impl Response {
         // If URL is set, return it; otherwise fall back to request's URL
         if let Some(ref url) = self.url {
             Some(url.clone())
-        } else if let Some(ref req) = self.request {
-            Some(req.url_ref().clone())
         } else {
-            None
+            self.request.as_ref().map(|req| req.url_ref().clone())
         }
     }
 
@@ -1404,7 +1403,9 @@ impl SyncStreamBytesIterator {
 pub struct AsyncStreamRawIterator {
     stream: Option<Py<PyAny>>, // The original async generator/iterator
     aiter: Option<Py<PyAny>>,  // The __aiter__ result (stored after first call)
+    #[allow(dead_code)]
     chunk_size: usize,
+    #[allow(dead_code)]
     buffer: Vec<u8>,
 }
 
@@ -1437,7 +1438,9 @@ impl AsyncStreamRawIterator {
 pub struct AsyncStreamBytesIterator {
     stream: Option<Py<PyAny>>,
     aiter: Option<Py<PyAny>>,
+    #[allow(dead_code)]
     chunk_size: usize,
+    #[allow(dead_code)]
     buffer: Vec<u8>,
 }
 
@@ -1754,7 +1757,7 @@ fn decode_json_bytes(data: &[u8]) -> PyResult<String> {
 }
 
 fn decode_utf16(data: &[u8], big_endian: bool) -> PyResult<String> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err(pyo3::exceptions::PyValueError::new_err("Invalid UTF-16 data: odd number of bytes"));
     }
     let u16_iter = data.chunks_exact(2).map(|chunk| {
@@ -1769,15 +1772,13 @@ fn decode_utf16(data: &[u8], big_endian: bool) -> PyResult<String> {
 
 fn decode_utf32(data: &[u8], big_endian: bool) -> PyResult<String> {
     // Skip BOM if present
-    let start = if big_endian && data.starts_with(b"\x00\x00\xfe\xff") {
-        4
-    } else if !big_endian && data.starts_with(b"\xff\xfe\x00\x00") {
+    let start = if (big_endian && data.starts_with(b"\x00\x00\xfe\xff")) || (!big_endian && data.starts_with(b"\xff\xfe\x00\x00")) {
         4
     } else {
         0
     };
     let data = &data[start..];
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         return Err(pyo3::exceptions::PyValueError::new_err("Invalid UTF-32 data: not a multiple of 4 bytes"));
     }
     let mut result = String::with_capacity(data.len() / 4);

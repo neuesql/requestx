@@ -27,7 +27,7 @@ pub fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         return Ok(val.to_string());
     }
     if let Ok(s) = obj.cast::<PyString>() {
-        return Ok(s.extract::<String>()?);
+        return s.extract::<String>();
     }
     // Fall back to str() representation
     Ok(obj.str()?.to_string())
@@ -510,7 +510,7 @@ impl Request {
                     }
                 } else {
                     // Content-Type set but no boundary
-                    let (body, boundary, has_non_seekable) = build_multipart_body(py, data_dict, Some(f))?;
+                    let (body, _boundary, has_non_seekable) = build_multipart_body(py, data_dict, Some(f))?;
                     // Keep the existing content-type
                     (body, ct.clone(), has_non_seekable)
                 }
@@ -884,7 +884,7 @@ async def _return_bytes(data):
     }
 
     /// Pickle support - restore state
-    fn __setstate__(&mut self, py: Python<'_>, state: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn __setstate__(&mut self, _py: Python<'_>, state: &Bound<'_, PyDict>) -> PyResult<()> {
         self.method = state.get_item("method")?.unwrap().extract()?;
         let url_str: String = state.get_item("url")?.unwrap().extract()?;
         self.url = URL::new_impl(Some(&url_str), None, None, None, None, None, None, None, None, None, None, None)?;
@@ -900,10 +900,8 @@ async def _return_bytes(data):
         self.content = if let Some(content_item) = state.get_item("content")? {
             if content_item.is_none() {
                 None
-            } else if let Ok(bytes) = content_item.extract::<Vec<u8>>() {
-                Some(bytes)
             } else {
-                None
+                content_item.extract::<Vec<u8>>().ok()
             }
         } else {
             None

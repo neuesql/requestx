@@ -125,6 +125,7 @@ fn py_to_json_string_impl(obj: &Bound<'_, PyAny>, buf: &mut String) -> PyResult<
 }
 
 /// Convert Python object to sonic_rs::Value.
+#[allow(dead_code)]
 pub(crate) fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
     use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString, PyTuple};
 
@@ -285,8 +286,7 @@ pub(crate) fn url_matches_pattern(url: &str, pattern: &str) -> bool {
     let pattern_port = pattern_host.split(':').nth(1);
 
     // Handle "*.example.com" pattern - matches subdomains ONLY (NOT example.com itself)
-    if pattern_host_no_port.starts_with("*.") {
-        let suffix = &pattern_host_no_port[2..]; // Remove "*."
+    if let Some(suffix) = pattern_host_no_port.strip_prefix("*.") {
         if url_host_no_port.ends_with(&format!(".{}", suffix)) {
             return port_matches(url_port, pattern_port);
         }
@@ -294,8 +294,7 @@ pub(crate) fn url_matches_pattern(url: &str, pattern: &str) -> bool {
     }
 
     // Handle "*example.com" pattern (no dot) - matches suffix
-    if pattern_host_no_port.starts_with('*') && !pattern_host_no_port.starts_with("*.") {
-        let suffix = &pattern_host_no_port[1..]; // Remove "*"
+    if let Some(suffix) = pattern_host_no_port.strip_prefix('*') {
         if url_host_no_port == suffix {
             return port_matches(url_port, pattern_port);
         }

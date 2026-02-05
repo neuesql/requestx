@@ -22,7 +22,7 @@ fn py_to_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         return Ok(val.to_string());
     }
     if let Ok(s) = obj.cast::<PyString>() {
-        return Ok(s.extract::<String>()?);
+        return s.extract::<String>();
     }
     // Fall back to str() representation
     Ok(obj.str()?.to_string())
@@ -196,7 +196,7 @@ impl QueryParams {
         let mut new = self.clone();
         let other_qp = Self::from_py(other)?;
         // Replace existing keys from other_qp
-        for (k, v) in &other_qp.inner {
+        for (k, _v) in &other_qp.inner {
             // Remove existing entries for this key
             new.inner.retain(|(existing_k, _)| existing_k != k);
         }

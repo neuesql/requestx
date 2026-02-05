@@ -183,6 +183,7 @@ pub fn create_event_hooks_dict<'py>(py: Python<'py>, request_hooks: &[Py<PyAny>]
 /// Parse event_hooks dict from Python setter.
 ///
 /// Returns (request_hooks, response_hooks) vectors.
+#[allow(clippy::type_complexity)]
 pub fn parse_event_hooks_dict(hooks: &Bound<'_, PyDict>) -> PyResult<(Vec<Py<PyAny>>, Vec<Py<PyAny>>)> {
     let mut request_hooks = Vec::new();
     let mut response_hooks = Vec::new();

@@ -1,4 +1,5 @@
 //! Top-level API functions (get, post, put, patch, delete, head, options, request, stream)
+#![allow(clippy::too_many_arguments, unused_variables)]
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

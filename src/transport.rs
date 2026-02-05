@@ -9,6 +9,7 @@ use crate::request::Request;
 use crate::response::Response;
 
 /// Base transport trait for HTTP requests
+#[allow(dead_code)]
 pub trait Transport: Send + Sync {
     fn handle_request(&self, request: &Request) -> PyResult<Response>;
 }
@@ -195,9 +196,12 @@ impl AsyncMockTransport {
 #[pyclass(name = "HTTPTransport")]
 #[derive(Clone)]
 pub struct HTTPTransport {
+    #[allow(dead_code)]
     inner: Arc<reqwest::blocking::Client>,
     verify: bool,
+    #[allow(dead_code)]
     cert: Option<String>,
+    #[allow(dead_code)]
     http2: bool,
     proxy_url: Option<String>,
 }
@@ -337,9 +341,12 @@ impl HTTPTransport {
 #[pyclass(name = "AsyncHTTPTransport")]
 #[derive(Clone)]
 pub struct AsyncHTTPTransport {
+    #[allow(dead_code)]
     inner: Arc<reqwest::Client>,
     verify: bool,
+    #[allow(dead_code)]
     cert: Option<String>,
+    #[allow(dead_code)]
     http2: bool,
     proxy_url: Option<String>,
 }
@@ -483,6 +490,7 @@ pub struct WSGITransport {
     app: Py<PyAny>,
     wsgi_errors: Option<Py<PyAny>>,
     script_name: String,
+    #[allow(dead_code)]
     root_path: String,
 }
 
@@ -558,11 +566,11 @@ impl WSGITransport {
             // Convert header name to WSGI format
             let key_upper = key.to_uppercase().replace('-', "_");
             if key_upper == "CONTENT_TYPE" {
-                environ.set_item("CONTENT_TYPE", &value)?;
+                environ.set_item("CONTENT_TYPE", value)?;
             } else if key_upper == "CONTENT_LENGTH" {
-                environ.set_item("CONTENT_LENGTH", &value)?;
+                environ.set_item("CONTENT_LENGTH", value)?;
             } else {
-                environ.set_item(format!("HTTP_{}", key_upper), &value)?;
+                environ.set_item(format!("HTTP_{}", key_upper), value)?;
             }
         }
 

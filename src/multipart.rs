@@ -231,7 +231,8 @@ fn add_single_data_field(_py: Python<'_>, body: &mut Vec<u8>, boundary_bytes: &[
 
 /// Parse a file value which can be a file-like object or tuple
 /// Returns (filename, content, content_type, extra_headers, is_non_seekable)
-fn parse_file_value(py: Python<'_>, value: &Bound<'_, PyAny>, field_name: &str) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
+#[allow(clippy::type_complexity)]
+fn parse_file_value(py: Python<'_>, value: &Bound<'_, PyAny>, _field_name: &str) -> PyResult<(Option<String>, Vec<u8>, String, Vec<(String, String)>, bool)> {
     // Check if it's a tuple: (filename, content) or (filename, content, content_type) or (filename, content, content_type, headers)
     if let Ok(tuple) = value.cast::<PyTuple>() {
         let len = tuple.len();

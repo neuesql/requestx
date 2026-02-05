@@ -143,6 +143,7 @@ impl AsyncClient {
     }
 }
 
+#[allow(clippy::too_many_arguments, unused_variables)]
 #[pymethods]
 impl AsyncClient {
     #[new]
@@ -167,10 +168,8 @@ impl AsyncClient {
         let auth_tuple = if let Some(a) = auth {
             if let Ok(basic) = a.extract::<BasicAuth>() {
                 Some((basic.username, basic.password))
-            } else if let Ok(tuple) = a.extract::<(String, String)>() {
-                Some(tuple)
             } else {
-                None
+                a.extract::<(String, String)>().ok()
             }
         } else {
             None
@@ -740,7 +739,7 @@ impl AsyncClient {
 
         // Check mounts in order of specificity (longer patterns first)
         let mut sorted_patterns: Vec<_> = self.mounts.keys().collect();
-        sorted_patterns.sort_by(|a, b| b.len().cmp(&a.len()));
+        sorted_patterns.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
         for pattern in sorted_patterns {
             if crate::common::url_matches_pattern(&url_str, pattern) {
@@ -766,10 +765,10 @@ impl AsyncClient {
         json: Option<Py<PyAny>>,
         params: Option<Py<PyAny>>,
         headers: Option<Py<PyAny>>,
-        cookies: Option<Py<PyAny>>,
+        _cookies: Option<Py<PyAny>>,
         auth: Option<Py<PyAny>>,
-        follow_redirects: Option<bool>,
-        timeout: Option<Py<PyAny>>,
+        _follow_redirects: Option<bool>,
+        _timeout: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let default_headers = self.headers.clone();
         let default_cookies = self.cookies.clone();
@@ -1021,6 +1020,7 @@ pub struct AsyncStreamContextManager {
     auth: Option<Py<PyAny>>,
     follow_redirects: Option<bool>,
     timeout: Option<Py<PyAny>>,
+    #[allow(dead_code)]
     response: Option<Response>,
 }
 

@@ -24,7 +24,7 @@ pub fn generate_cnonce() -> String {
     rand::thread_rng().fill_bytes(&mut bytes);
     // SHA1 hash of random bytes, take first 16 hex chars
     let mut hasher = sha1::Sha1::new();
-    hasher.update(&bytes);
+    hasher.update(bytes);
     let result = hasher.finalize();
     hex::encode(&result[..8])
 }
@@ -119,19 +119,10 @@ pub fn compute_digest_response(
 
 /// Base Auth class that can be subclassed in Python
 #[pyclass(name = "Auth", subclass)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Auth {
     requires_request_body: bool,
     requires_response_body: bool,
-}
-
-impl Default for Auth {
-    fn default() -> Self {
-        Self {
-            requires_request_body: false,
-            requires_response_body: false,
-        }
-    }
 }
 
 #[pymethods]
