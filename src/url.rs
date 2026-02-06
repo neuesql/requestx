@@ -385,7 +385,7 @@ impl URL {
 
             // Case 1: Empty scheme like "://example.com"
             if let Some(rest) = url_str.strip_prefix("://") {
-                                          // Parse the rest as if it had http scheme, then mark as empty scheme
+                // Parse the rest as if it had http scheme, then mark as empty scheme
                 let temp_url = format!("http://{}", rest);
                 match Url::parse(&temp_url) {
                     Ok(mut parsed_url) => {

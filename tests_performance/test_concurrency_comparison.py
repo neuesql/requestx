@@ -3,12 +3,13 @@
 import pytest
 from http_benchmark.benchmark import BenchmarkConfiguration, BenchmarkRunner
 
-
 TEST_URL = "http://localhost:80/get"
 CONCURRENCY_LEVELS = [1, 2, 4, 6, 8, 10]
 
 
-def run_benchmark(client_library: str, concurrency: int, is_async: bool = False) -> dict:
+def run_benchmark(
+    client_library: str, concurrency: int, is_async: bool = False
+) -> dict:
     """Run a benchmark for a specific client library and concurrency level."""
     config = BenchmarkConfiguration(
         target_url=TEST_URL,
@@ -31,7 +32,9 @@ def print_sync_table(results: dict) -> None:
     print("\n" + "=" * 100)
     print("SYNC CLIENT COMPARISON (Requests Per Second)")
     print("=" * 100)
-    print(f"{'Concurrency':<12} {'requestx':>12} {'httpx':>12} {'requests':>12} {'urllib3':>12} {'rx/httpx':>10}")
+    print(
+        f"{'Concurrency':<12} {'requestx':>12} {'httpx':>12} {'requests':>12} {'urllib3':>12} {'rx/httpx':>10}"
+    )
     print("-" * 100)
 
     for c in CONCURRENCY_LEVELS:
@@ -40,7 +43,9 @@ def print_sync_table(results: dict) -> None:
         req = results.get(("requests", c), {}).get("rps", 0)
         ul3 = results.get(("urllib3", c), {}).get("rps", 0)
         ratio = rx / hx if hx > 0 else 0
-        print(f"{c:<12} {rx:>12.1f} {hx:>12.1f} {req:>12.1f} {ul3:>12.1f} {ratio:>9.2f}x")
+        print(
+            f"{c:<12} {rx:>12.1f} {hx:>12.1f} {req:>12.1f} {ul3:>12.1f} {ratio:>9.2f}x"
+        )
 
     print("=" * 100)
 
@@ -50,7 +55,9 @@ def print_async_table(results: dict) -> None:
     print("\n" + "=" * 80)
     print("ASYNC CLIENT COMPARISON (Requests Per Second)")
     print("=" * 80)
-    print(f"{'Concurrency':<12} {'requestx':>12} {'httpx':>12} {'aiohttp':>12} {'rx/httpx':>10} {'rx/aiohttp':>12}")
+    print(
+        f"{'Concurrency':<12} {'requestx':>12} {'httpx':>12} {'aiohttp':>12} {'rx/httpx':>10} {'rx/aiohttp':>12}"
+    )
     print("-" * 80)
 
     for c in CONCURRENCY_LEVELS:
@@ -59,7 +66,9 @@ def print_async_table(results: dict) -> None:
         aio = results.get(("aiohttp", c), {}).get("rps", 0)
         ratio_hx = rx / hx if hx > 0 else 0
         ratio_aio = rx / aio if aio > 0 else 0
-        print(f"{c:<12} {rx:>12.1f} {hx:>12.1f} {aio:>12.1f} {ratio_hx:>9.2f}x {ratio_aio:>11.1%}")
+        print(
+            f"{c:<12} {rx:>12.1f} {hx:>12.1f} {aio:>12.1f} {ratio_hx:>9.2f}x {ratio_aio:>11.1%}"
+        )
 
     print("=" * 80)
 
@@ -67,7 +76,11 @@ def print_async_table(results: dict) -> None:
 def print_latency_table(results: dict, is_async: bool) -> None:
     """Print latency comparison table (P99)."""
     mode = "ASYNC" if is_async else "SYNC"
-    clients = ["requestx", "httpx", "aiohttp"] if is_async else ["requestx", "httpx", "requests", "urllib3"]
+    clients = (
+        ["requestx", "httpx", "aiohttp"]
+        if is_async
+        else ["requestx", "httpx", "requests", "urllib3"]
+    )
 
     print(f"\n{mode} CLIENT P99 LATENCY (ms)")
     print("-" * (12 + 12 * len(clients)))
@@ -104,7 +117,13 @@ def test_sync_concurrency_comparison():
                 }
             except Exception as e:
                 print(f"    Error: {e}")
-                results[(client, c)] = {"rps": 0, "avg": 0, "p95": 0, "p99": 0, "errors": -1}
+                results[(client, c)] = {
+                    "rps": 0,
+                    "avg": 0,
+                    "p95": 0,
+                    "p99": 0,
+                    "errors": -1,
+                }
 
     print_sync_table(results)
     print_latency_table(results, is_async=False)
@@ -131,7 +150,13 @@ def test_async_concurrency_comparison():
                 }
             except Exception as e:
                 print(f"    Error: {e}")
-                results[(client, c)] = {"rps": 0, "avg": 0, "p95": 0, "p99": 0, "errors": -1}
+                results[(client, c)] = {
+                    "rps": 0,
+                    "avg": 0,
+                    "p95": 0,
+                    "p99": 0,
+                    "errors": -1,
+                }
 
     print_async_table(results)
     print_latency_table(results, is_async=True)
@@ -164,7 +189,13 @@ def test_full_concurrency_comparison():
                 }
             except Exception as e:
                 print(f"    Error: {e}")
-                sync_results[(client, c)] = {"rps": 0, "avg": 0, "p95": 0, "p99": 0, "errors": -1}
+                sync_results[(client, c)] = {
+                    "rps": 0,
+                    "avg": 0,
+                    "p95": 0,
+                    "p99": 0,
+                    "errors": -1,
+                }
 
     # Run async benchmarks
     print("\n" + "=" * 50)
@@ -185,7 +216,13 @@ def test_full_concurrency_comparison():
                 }
             except Exception as e:
                 print(f"    Error: {e}")
-                async_results[(client, c)] = {"rps": 0, "avg": 0, "p95": 0, "p99": 0, "errors": -1}
+                async_results[(client, c)] = {
+                    "rps": 0,
+                    "avg": 0,
+                    "p95": 0,
+                    "p99": 0,
+                    "errors": -1,
+                }
 
     # Print results
     print_sync_table(sync_results)

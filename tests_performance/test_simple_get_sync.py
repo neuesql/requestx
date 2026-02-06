@@ -3,7 +3,6 @@
 import pytest
 from http_benchmark.benchmark import BenchmarkConfiguration, BenchmarkRunner
 
-
 # Test URL - using localhost for faster benchmarks
 TEST_URL = "http://localhost:80/get"
 
@@ -31,7 +30,9 @@ def print_comparison(results: list[dict]) -> None:
     print("\n" + "=" * 80)
     print("SYNC GET BENCHMARK COMPARISON")
     print("=" * 80)
-    print(f"{'Client':<15} {'RPS':>10} {'Avg (ms)':>12} {'P95 (ms)':>12} {'P99 (ms)':>12} {'Errors':>8}")
+    print(
+        f"{'Client':<15} {'RPS':>10} {'Avg (ms)':>12} {'P95 (ms)':>12} {'P99 (ms)':>12} {'Errors':>8}"
+    )
     print("-" * 80)
 
     for r in sorted(results, key=lambda x: x["requests_per_second"], reverse=True):
@@ -48,7 +49,9 @@ def print_comparison(results: list[dict]) -> None:
 
     # Find the fastest
     fastest = max(results, key=lambda x: x["requests_per_second"])
-    print(f"\nFastest: {fastest['client_library']} ({fastest['requests_per_second']:.2f} RPS)")
+    print(
+        f"\nFastest: {fastest['client_library']} ({fastest['requests_per_second']:.2f} RPS)"
+    )
 
 
 @pytest.mark.network
@@ -57,7 +60,9 @@ def test_sync_get_requestx():
     result = run_benchmark("requestx")
     assert result["error_count"] == 0, f"Errors occurred: {result['error_count']}"
     assert result["requests_per_second"] > 0
-    print(f"\nrequestx sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms")
+    print(
+        f"\nrequestx sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms"
+    )
 
 
 @pytest.mark.network
@@ -66,7 +71,9 @@ def test_sync_get_httpx():
     result = run_benchmark("httpx")
     assert result["error_count"] == 0, f"Errors occurred: {result['error_count']}"
     assert result["requests_per_second"] > 0
-    print(f"\nhttpx sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms")
+    print(
+        f"\nhttpx sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms"
+    )
 
 
 @pytest.mark.network
@@ -75,7 +82,9 @@ def test_sync_get_requests():
     result = run_benchmark("requests")
     assert result["error_count"] == 0, f"Errors occurred: {result['error_count']}"
     assert result["requests_per_second"] > 0
-    print(f"\nrequests sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms")
+    print(
+        f"\nrequests sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms"
+    )
 
 
 @pytest.mark.network
@@ -84,7 +93,9 @@ def test_sync_get_urllib3():
     result = run_benchmark("urllib3")
     assert result["error_count"] == 0, f"Errors occurred: {result['error_count']}"
     assert result["requests_per_second"] > 0
-    print(f"\nurllib3 sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms")
+    print(
+        f"\nurllib3 sync: {result['requests_per_second']:.2f} RPS, avg {result['avg_response_time']*1000:.2f}ms"
+    )
 
 
 @pytest.mark.network
