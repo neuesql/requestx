@@ -725,17 +725,29 @@ class Response:
             self._raw_content = all_content
             self._stream_content = None
         else:
-            # No async stream, yield from content
-            content = self.content
-            if chunk_size is None:
-                if content:
-                    self._num_bytes_downloaded += len(content)
-                    yield content
-            else:
-                for i in range(0, len(content), chunk_size):
-                    chunk = content[i : i + chunk_size]
+            # If this is a streaming response, delegate to Rust's aiter_bytes
+            if self._stream_not_read or self._is_stream:
+                self._stream_not_read = False  # Clear flag
+                rust_iter = self._response.aiter_bytes(chunk_size)
+                all_content = b""
+                async for chunk in rust_iter:
+                    all_content += chunk
                     self._num_bytes_downloaded += len(chunk)
                     yield chunk
+                # Store content after iteration
+                self._raw_content = all_content
+            else:
+                # No async stream, yield from content
+                content = self.content
+                if chunk_size is None:
+                    if content:
+                        self._num_bytes_downloaded += len(content)
+                        yield content
+                else:
+                    for i in range(0, len(content), chunk_size):
+                        chunk = content[i : i + chunk_size]
+                        self._num_bytes_downloaded += len(chunk)
+                        yield chunk
 
     async def aiter_bytes(self, chunk_size=None):
         """Async iterate over the response body as bytes chunks."""
