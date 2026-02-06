@@ -1,217 +1,229 @@
-# CLAUDE.md - Requestx Project Guide
+# RequestX
 
-## Project Overview
+High-performance Python HTTP client, API-compatible with httpx, powered by Rust's reqwest via PyO3.
 
-Requestx is a high-performance Python HTTP client built on Rust's [reqwest](https://docs.rs/reqwest/) library, using [PyO3](https://pyo3.rs/) for Python bindings. The API is designed to be compatible with [HTTPX](https://www.python-httpx.org/).
+## Quick Commands
+```bash
+# Build (always use release for accurate perf testing)
+maturin develop --release
 
-## Tech Stack
+# Test - reference tests (DO NOT MODIFY)
+pytest tests_httpx/ -v
 
-- **Rust Core**: HTTP client implementation using `reqwest` with `tokio` async runtime
-- **Python Bindings**: PyO3 for seamless Rust-Python interop
-- **Build System**: Maturin for building Python wheels from Rust
-- **JSON**: sonic-rs for high-performance JSON serialization
-- **TLS**: rustls for secure connections
+# Test - target tests (must all pass)
+pytest tests_requestx/ -v
+
+# Both (verify compatibility)
+pytest tests_httpx/ tests_requestx/ -v
+
+# Lint & format
+cargo clippy && cargo fmt
+ruff check python/ && ruff format python/
+```
 
 ## Project Structure
-
 ```
-requestx/
-├── src/                    # Rust source code
-│   ├── lib.rs             # Module entry point, PyO3 module definition
-│   ├── client.rs          # Client and AsyncClient implementations
-│   ├── response.rs        # Response type with JSON/text parsing
-│   ├── error.rs           # HTTPX-compatible exception hierarchy
-│   ├── types.rs           # Headers, Cookies, Timeout, Proxy, Auth types
-│   ├── request.rs         # Module-level convenience functions
-│   └── streaming.rs       # Streaming response iterators
-├── python/requestx/       # Python package
-│   └── __init__.py        # Re-exports from _core Rust module
-├── tests/                 # Python tests
-│   ├── conftest.py        # Pytest configuration
-│   ├── test_sync.py       # Synchronous API tests
-│   └── test_async.py      # Asynchronous API tests
-├── docs/                  # Sphinx documentation
-├── Cargo.toml             # Rust dependencies
-├── pyproject.toml         # Python project config (maturin)
-└── Makefile               # Development commands
+src/                      # Rust implementation (ALL business logic here)
+python/requestx/
+└── __init__.py           # ONLY exports from Rust, NO business logic
+
+tests_httpx/              # Reference tests (DO NOT MODIFY)
+tests_requestx/           # Target tests (must all pass)
 ```
 
-## Development Commands
+## Core Dependencies (Cargo.toml)
+```toml
+[dependencies]
+pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "cookies", "gzip", "brotli", "deflate", "zstd", "multipart", "stream", "rustls", "socks", "http2"] }
+tokio = { version = "1", features = ["full"] }
+sonic-rs = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+url = "2"
+bytes = "1"
+http = "1"
+```
 
-Use numbered make commands for the development workflow:
+## Critical Rules
 
+### 1. Rust-First Architecture
+- **ALL** business logic in Rust
+- `python/requestx/__init__.py` contains ONLY re-exports
+- Never call Python libraries from Rust (use Rust equivalents)
+
+### 2. PyO3 Patterns
+```rust
+// ✅ Use Python::attach(), not deprecated with_gil()
+Python::attach(|py| { ... })
+
+// ✅ Strong type signatures (compile-time checking)
+fn process(url: &str, data: Vec<i64>) -> PyResult<String>
+
+// ❌ Avoid PyAny (runtime overhead)
+fn process(data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>>
+```
+
+### 3. GIL Management
+```rust
+// ✅ Extract data FIRST, then release GIL for I/O
+#[pyfunction]
+fn fetch(py: Python, url: String) -> PyResult<String> {
+    py.allow_threads(|| {
+        // Network I/O here - GIL released
+        blocking_fetch(&url)
+    })
+}
+```
+
+Release GIL for: network I/O, file I/O, CPU work >1ms
+Keep GIL for: Python object access, operations <1ms
+
+### 4. Async Pattern
+```rust
+use pyo3_async_runtimes::tokio::future_into_py;
+
+#[pymethods]
+impl AsyncClient {
+    fn get<'py>(&self, py: Python<'py>, url: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let resp = client.get(&url).send().await?;
+            Ok(Response::from_reqwest(resp).await?)
+        })
+    }
+}
+```
+
+### 5. JSON: Always sonic-rs
+```rust
+// ✅ sonic-rs (SIMD-accelerated, 50-300x faster than Python json)
+let parsed: Value = sonic_rs::from_str(&json_str)?;
+let output = sonic_rs::to_string(&value)?;
+
+// ❌ Never call Python's json module
+```
+
+### 6. Memory Efficiency
+```rust
+// ✅ Return references, not clones
+#[getter]
+fn url(&self) -> &str { &self.url }
+
+// ✅ Zero-copy for bytes
+#[getter]
+fn content(&self, py: Python) -> Bound<'_, PyBytes> {
+    PyBytes::new_bound(py, &self.content)
+}
+
+// ✅ Pre-allocate when size known
+let mut headers = Vec::with_capacity(response.headers().len());
+```
+
+## Don't
+
+- ❌ Modify `tests_httpx/` (reference tests)
+- ❌ Put business logic in Python
+- ❌ Use `panic!` (crashes Python)
+- ❌ Convert types inside loops (convert once at boundary)
+- ❌ Use deprecated `Python::with_gil()`
+
+## API Compatibility
+
+Must implement all public APIs from [httpx](https://github.com/encode/httpx/tree/master/httpx), excluding CLI.
+
+Check `httpx/__init__.py` for the complete public API surface. Goal: `import requestx as httpx` works as drop-in replacement.
+
+## Success Criteria
 ```bash
-make 1-setup           # Setup dev environment with uv
-make 2-format          # Format Rust + Python code
-make 2-format-check    # Check formatting without changes
-make 3-lint            # Run linters (clippy + ruff)
-make 4-quality-check   # Combined format check + lint
-make 5-build           # Build Rust/Python extension (dev mode)
-make 6-test-rust       # Run Rust tests
-make 6-test-python     # Run Python tests (requires build)
-make 6-test-all        # Run all tests
-make 7-doc-build       # Build Sphinx documentation
-make 9-clean           # Clean all build artifacts
+pytest tests_requestx/ -v  # ALL PASSED
 ```
 
-## Building the Project
+- Drop-in compatible: `import requestx as httpx` works
+- Performance ≥ httpx
+- Zero Python business logic
 
-```bash
-# First-time setup
-make 1-setup
+## References
 
-# Build in development mode
-make 5-build
-# or directly:
-uv run maturin develop
+- httpx source: https://github.com/encode/httpx/tree/master/httpx
+- pyreqwest: https://github.com/MarkusSintonen/pyreqwest
 
-# Build release wheel
-maturin build --release
-```
+---
 
-## Running Tests
+## Test Status: 9 failed / 1397 passed / 1 skipped (Total: 1407)
 
-```bash
-# Run all tests
-make 6-test-all
+### Recent Improvements
+- **Redirect handling** (31/31 tests passing): Malformed redirect URL with explicit port preserved, streaming body redirect raises StreamConsumed, cookie persistence across redirects with proper expiration handling
+- **Auth improvements** (79/79 tests passing): Basic auth in URL, custom auth callables, NetRCAuth, RepeatAuth generator flow, ResponseBodyAuth, streaming body digest auth, MockTransport handler property
+- **Timeout exception types** (10/10 tests passing): ConnectTimeout, WriteTimeout, ReadTimeout now properly classified using timeout context
+- **URL fragment decoding**: Fragments are now properly percent-decoded when returned
+- **Limits support**: AsyncClient now accepts `limits` parameter for connection pool configuration
+- **Exception request attribute**: All exceptions now have `request` property that raises RuntimeError when not set
+- **Client headers isinstance**: `_HeadersProxy` now inherits from Headers, passing isinstance checks
+- **Top-level API iterators**: `post()`, `put()`, `patch()` now consume generators/iterators before passing to Rust
+- **Headers repr encoding**: Repr now includes encoding suffix when not 'ascii'
+- **AsyncClient streaming** (52/52 tests passing): ResponseNotRead, StreamClosed, async iterator content, MockTransport, http_version extensions
+- **Response pickling** (106/106 tests passing): Streaming responses correctly raise StreamClosed after unpickling
+- **Client params**: Client now supports `params` constructor argument with proper QueryParams merging
+- **Module exports**: Fixed `__all__` to be case-insensitively sorted, hidden internal imports
+- **DigestAuth** (8/8 tests passing): Full RFC 2069/7616 compliance, nonce counting, cookie preservation
+- **Response constructor**: Properly unwraps `_WrappedRequest` to pass to Rust `_Response`
+- **Client/AsyncClient exception conversion**: All HTTP methods now properly convert Rust exceptions to Python
+- **URL validation**: Empty scheme (`://example.org`) and empty host (`http://`) now raise UnsupportedProtocol
+- **Iterator type checking**: Sync Client rejects async iterators, AsyncClient rejects sync iterators with RuntimeError
+- **Content streaming** (43/43 tests passing): BytesIO, iterators, async iterators, stream mode detection
+- **Request.stream**: Proper sync/async/dual mode detection with StreamConsumed handling
+- **Transport lifecycle**: Mounted transports properly enter/exit with context manager
+- Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars
+- Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
+- **URL encoding** (90/90 tests passing): raw_path encoding, host percent-escape, kwargs validation, non-printable/long component checks
+- **Headers encoding** (27/27 tests passing): Explicit encoding re-decode when `headers.encoding` is set
 
-# Run only Python tests
-make 6-test-python
+| ID | Test File | Failed | Features | Status | Priority | Effort |
+|----|-----------|--------|----------|--------|----------|--------|
+| 1 | client/test_auth.py | 0 | Basic auth URL, custom auth, netrc, digest, streaming | ✅ Done | - | - |
+| 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
+| 3 | models/test_url.py | 0 | Query/fragment encoding, percent escape, validation | ✅ Done | - | - |
+| 4 | test_timeouts.py | 1 | Pool timeout not firing | 🟢 Mostly | P2 | L |
+| 5 | client/test_event_hooks.py | 0 | Hooks firing on redirects | ✅ Done | - | - |
+| 6 | client/test_redirects.py | 0 | Streaming body, malformed, cookies | ✅ Done | - | - |
+| 7 | client/test_client.py | 3 | Raw header, autodetect encoding | 🟢 Mostly | P1 | M |
+| 8 | models/test_cookies.py | 0 | Domain/path support, repr | ✅ Done | - | - |
+| 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
+| 10 | models/test_headers.py | 0 | Explicit encoding decode | ✅ Done | - | - |
+| 11 | client/test_headers.py | 0 | Auth extraction from URL | ✅ Done | - | - |
+| 12 | test_multipart.py | 1 | Non-seekable file-like | 🟢 Mostly | P2 | M |
+| 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
+| 14 | test_config.py | 1 | SSLContext with request | 🟢 Mostly | P2 | M |
+| 15 | client/test_properties.py | 0 | Client headers case | ✅ Done | - | - |
+| 16 | test_exceptions.py | 0 | Request attribute on exception | ✅ Done | - | - |
+| 17 | test_auth.py | 2 | Digest auth RFC 7616 cnonce format | 🟢 Mostly | P2 | M |
+| 18 | client/test_queryparams.py | 0 | Client query params | ✅ Done | - | - |
+| 19 | test_exported_members.py | 0 | Module exports | ✅ Done | - | - |
+| 20 | test_content.py | 0 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
+| 21 | models/test_requests.py | 0 | Request.stream, pickle, generators | ✅ Done | - | - |
+| 22 | client/test_proxies.py | 0 | Proxy env vars | ✅ Done | - | - |
+| 23 | models/test_whatwg.py | 0 | WHATWG URL parsing | ✅ Done | - | - |
+| 24 | test_decoders.py | 0 | gzip/brotli/zstd/deflate | ✅ Done | - | - |
+| 25 | test_utils.py | 0 | guess_json_utf, BOM | ✅ Done | - | - |
+| 26 | test_asgi.py | 0 | ASGITransport | ✅ Done | - | - |
+| 27 | models/test_queryparams.py | 0 | set(), add(), remove() | ✅ Done | - | - |
+| 28 | test_wsgi.py | 0 | WSGI transport | ✅ Done | - | - |
+| 29 | client/test_cookies.py | 0 | Cookie jar, persistence | ✅ Done | - | - |
+| 30 | test_status_codes.py | 0 | Status codes | ✅ Done | - | - |
 
-# Run specific test file
-uv run python -m unittest tests/test_sync.py -v
-```
+**Effort Legend:** L = Low (localized fix), M = Medium (multiple components), H = High (architectural)
 
-## Key Architecture Concepts
+### Top Failing Categories
+1. **Client encoding** (3 failures): Raw header, autodetect encoding, explicit encoding
+2. **Digest auth** (2 failures): RFC 7616 cnonce format for MD5 and SHA-256
+3. **Timeouts** (1 failure): Pool timeout not firing correctly
+4. **Multipart** (1 failure): Non-seekable file-like transfer encoding
+5. **SSLContext** (1 failure): Passing SSLContext to request methods
 
-### Rust Module Structure
-
-The Rust code in `src/lib.rs` registers all Python-visible types:
-- **Client classes**: `Client`, `AsyncClient`
-- **Response types**: `Response`, `StreamingResponse`, `AsyncStreamingResponse`
-- **Configuration types**: `Headers`, `Cookies`, `Timeout`, `Proxy`, `Auth`, `Limits`, `SSLConfig`
-- **Exception hierarchy**: HTTPX-compatible exceptions (e.g., `RequestError`, `TimeoutException`, `ConnectError`)
-- **Module functions**: `get`, `post`, `put`, `patch`, `delete`, `head`, `options`, `request`
-
-### Client Configuration (`src/client.rs`)
-
-`ClientConfig` holds all client settings:
-- `base_url`: Optional base URL for relative requests
-- `headers`, `cookies`: Default headers/cookies
-- `timeout`: Connection, read, write, pool timeouts
-- `follow_redirects`, `max_redirects`: Redirect handling
-- `verify_ssl`, `ca_bundle`, `cert_file`: TLS configuration
-- `proxy`: HTTP/HTTPS/SOCKS proxy settings
-- `auth`: Basic, Bearer, or Digest authentication
-- `http2`: Enable HTTP/2 prior knowledge
-- `trust_env`: Read proxy/SSL settings from environment
-
-### Response Handling (`src/response.rs`)
-
-The `Response` type provides:
-- Status information: `status_code`, `reason_phrase`, `is_success`, `is_error`
-- Content access: `content` (bytes), `text` (decoded), `json()` (parsed)
-- Metadata: `headers`, `cookies`, `url`, `elapsed`, `http_version`
-- Error handling: `raise_for_status()`
-
-### Error Hierarchy (`src/error.rs`)
-
-HTTPX-compatible exception types:
-- `RequestError` (base)
-  - `TransportError` -> `ConnectError`, `ReadError`, `WriteError`, `ProxyError`
-  - `TimeoutException` -> `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`
-  - `HTTPStatusError`
-  - `TooManyRedirects`
-  - `DecodingError`
-  - `InvalidURL`
-
-## Python API Usage
-
-### Synchronous API
-
-```python
-import requestx
-
-# Simple request
-response = requestx.get("https://api.example.com/data")
-print(response.json())
-
-# With client (connection pooling)
-with requestx.Client(base_url="https://api.example.com") as client:
-    response = client.get("/users")
-```
-
-### Asynchronous API
-
-```python
-import asyncio
-import requestx
-
-async def main():
-    async with requestx.AsyncClient() as client:
-        response = await client.get("https://api.example.com/data")
-        print(response.json())
-
-asyncio.run(main())
-```
-
-### Streaming Responses
-
-```python
-# Sync streaming
-with requestx.Client() as client:
-    with client.stream("GET", url) as response:
-        for chunk in response.iter_bytes(chunk_size=1024):
-            process(chunk)
-
-# Async streaming
-async with requestx.AsyncClient() as client:
-    async with await client.stream("GET", url) as response:
-        async for chunk in response.aiter_bytes(chunk_size=1024):
-            process(chunk)
-```
-
-## Dependencies
-
-### Rust (Cargo.toml)
-- `pyo3` (0.27): Python bindings
-- `pyo3-async-runtimes`: Async runtime bridge
-- `reqwest` (0.13): HTTP client with many features enabled
-- `tokio` (1): Async runtime
-- `sonic-rs` (0.5): Fast JSON
-- `url` (2): URL parsing
-
-### Python (pyproject.toml)
-- Python 3.12+
-- Dev: maturin, pytest, pytest-asyncio, httpx (for comparison), black, ruff, mypy
-
-## Code Style
-
-- Rust: `cargo fmt` for formatting, `cargo clippy` for linting
-- Python: `black` for formatting, `ruff` for linting
-- Run `make 4-quality-check` before committing
-
-## Common Development Tasks
-
-### Adding a New Client Option
-
-1. Add field to `ClientConfig` in `src/client.rs`
-2. Update `Client::new()` and `AsyncClient::new()` signatures
-3. Apply the config in `build_reqwest_client()` / `build_blocking_client()`
-4. Export from `python/requestx/__init__.py` if it's a new type
-5. Add tests in `tests/test_sync.py` and `tests/test_async.py`
-
-### Adding a New Exception Type
-
-1. Define in `src/error.rs` using `create_exception!` macro
-2. Add variant to `ErrorKind` enum
-3. Add constructor method to `Error` impl
-4. Map in `From<Error> for PyErr` impl
-5. Register in `lib.rs` module init
-6. Export from `python/requestx/__init__.py`
-
-### Debugging
-
-- Use `cargo test --verbose` for Rust-level debugging
-- Build with `maturin develop` (not `--release`) for debug symbols
-- Python exceptions preserve the Rust error chain
+### Known Issues (Priority Order)
+1. **Encoding detection**: `default_encoding` callable not being used for autodetection (M)
+2. **Digest auth cnonce**: RFC 7616 cnonce format not matching expected pattern (L)
+3. **SSLContext**: Passing SSLContext to request methods needs support (M)
+4. **Pool timeout**: Pool timeout not firing correctly (L)
+5. **Non-seekable multipart**: Transfer-Encoding should be chunked for non-seekable files (M)

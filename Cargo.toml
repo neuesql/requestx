@@ -1,6 +1,6 @@
 [package]
 name = "requestx"
-version = "1.0.8"
+version = "1.0.10"
 edition = "2021"
 description = "High-performance Python HTTP client based on reqwest"
 license = "MIT"
@@ -42,6 +42,7 @@ sonic-rs = "0.5"
 # URL handling
 url = "2"
 urlencoding = "2"
+percent-encoding = "2"
 
 # Bytes
 bytes = "1"
@@ -55,6 +56,25 @@ mime_guess = "2"
 
 # Futures
 futures = "0.3"
+
+# Base64 encoding
+base64 = "0.22"
+
+# Compression (already transitive deps from reqwest, declared explicitly for direct use)
+flate2 = "1"
+brotli = "8"
+zstd = "0.13"
+
+# Hashing (for digest auth)
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+digest = "0.10"
+rand = "0.8"
+hex = "0.4"
+
+# Thread-safe primitives
+parking_lot = "0.12"
 
 [profile.release]
 lto = true

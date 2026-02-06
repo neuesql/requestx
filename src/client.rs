@@ -1,1895 +1,1196 @@
-//! HTTP Client implementations for requestx
+//! Synchronous HTTP Client implementation
 
-use crate::error::{Error, Result};
-use crate::response::Response;
-use crate::streaming::{AsyncStreamingResponse, StreamingResponse};
-use crate::types::{
-    extract_cert, extract_cookies, extract_headers, extract_limits, extract_params, extract_timeout, extract_verify, get_env_proxy, get_env_ssl_cert, Auth, AuthType, Cookies, Headers, Limits, Proxy,
-    Request, Timeout, URL,
-};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
-use reqwest::redirect::Policy;
+use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read as IoRead;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::runtime::Runtime;
 
-/// Shared client configuration
-#[derive(Debug, Clone)]
-pub struct ClientConfig {
-    pub base_url: Option<String>,
-    pub headers: Headers,
-    pub cookies: Cookies,
-    pub timeout: Timeout,
-    pub follow_redirects: bool,
-    pub max_redirects: usize,
-    pub verify_ssl: bool,
-    pub ca_bundle: Option<String>,
-    pub cert_file: Option<String>,
-    pub key_file: Option<String>,
-    pub key_password: Option<String>,
-    pub proxy: Option<Proxy>,
-    pub auth: Option<Auth>,
-    pub http2: bool,
-    pub limits: Limits,
-    pub default_encoding: Option<String>,
-    pub trust_env: bool,
-}
+use crate::client_common::{
+    apply_url_auth, create_event_hooks_dict, extract_auth_action_bound, merge_cookies_from_py, merge_headers_from_py, parse_event_hooks_dict, resolve_and_apply_auth, AuthAction,
+};
+use crate::cookies::Cookies;
+use crate::exceptions::convert_reqwest_error;
+use crate::headers::Headers;
+use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
+use crate::request::{py_value_to_form_str, Request};
+use crate::response::Response;
+use crate::timeout::Timeout;
+use crate::types::BasicAuth;
+use crate::url::URL;
 
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            base_url: None,
-            headers: Headers::default(),
-            cookies: Cookies::default(),
-            timeout: Timeout::default(),
-            follow_redirects: true,
-            max_redirects: 10,
-            verify_ssl: true,
-            ca_bundle: None,
-            cert_file: None,
-            key_file: None,
-            key_password: None,
-            proxy: None,
-            auth: None,
-            http2: false,
-            limits: Limits::default(),
-            default_encoding: None,
-            trust_env: true,
-        }
-    }
-}
-
-/// Load certificate from PEM file
-fn load_cert_pem(path: &str) -> Result<Vec<reqwest::Certificate>> {
-    let mut file = File::open(path).map_err(|e| Error::request(format!("Failed to open cert file: {e}")))?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)
-        .map_err(|e| Error::request(format!("Failed to read cert file: {e}")))?;
-
-    let cert = reqwest::Certificate::from_pem(&buf).map_err(|e| Error::request(format!("Failed to parse cert: {e}")))?;
-    Ok(vec![cert])
-}
-
-/// Load identity (client cert + key) from PEM files
-fn load_identity_pem(cert_path: &str, key_path: Option<&str>) -> Result<reqwest::Identity> {
-    let mut cert_buf = Vec::new();
-    File::open(cert_path)
-        .map_err(|e| Error::request(format!("Failed to open cert file: {e}")))?
-        .read_to_end(&mut cert_buf)
-        .map_err(|e| Error::request(format!("Failed to read cert file: {e}")))?;
-
-    if let Some(key_path) = key_path {
-        // Separate key file - combine them
-        let mut key_buf = Vec::new();
-        File::open(key_path)
-            .map_err(|e| Error::request(format!("Failed to open key file: {e}")))?
-            .read_to_end(&mut key_buf)
-            .map_err(|e| Error::request(format!("Failed to read key file: {e}")))?;
-
-        // Combine cert and key
-        cert_buf.extend_from_slice(b"\n");
-        cert_buf.extend_from_slice(&key_buf);
-    }
-
-    reqwest::Identity::from_pem(&cert_buf).map_err(|e| Error::request(format!("Failed to create identity: {e}")))
-}
-
-/// Build reqwest client from config
-fn build_reqwest_client(config: &ClientConfig) -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder();
-
-    // Timeout configuration
-    if let Some(timeout) = config.timeout.total {
-        builder = builder.timeout(timeout);
-    }
-    if let Some(connect) = config.timeout.connect {
-        builder = builder.connect_timeout(connect);
-    }
-    if let Some(read) = config.timeout.read {
-        builder = builder.read_timeout(read);
-    }
-    if let Some(pool) = config.timeout.pool {
-        builder = builder.pool_idle_timeout(pool);
-    }
-
-    // Resource limits
-    if let Some(max_idle) = config.limits.max_keepalive_connections {
-        builder = builder.pool_max_idle_per_host(max_idle);
-    }
-
-    // Redirect policy
-    if config.follow_redirects {
-        builder = builder.redirect(Policy::limited(config.max_redirects));
-    } else {
-        builder = builder.redirect(Policy::none());
-    }
-
-    // SSL verification
-    if !config.verify_ssl {
-        builder = builder.danger_accept_invalid_certs(true);
-    }
-
-    // Custom CA bundle
-    let ca_bundle = config.ca_bundle.clone().or_else(|| {
-        if config.trust_env {
-            get_env_ssl_cert()
-        } else {
-            None
-        }
-    });
-    if let Some(ref ca_path) = ca_bundle {
-        for cert in load_cert_pem(ca_path)? {
-            builder = builder.add_root_certificate(cert);
-        }
-    }
-
-    // Client certificate
-    if let Some(ref cert_path) = config.cert_file {
-        let identity = load_identity_pem(cert_path, config.key_file.as_deref())?;
-        builder = builder.identity(identity);
-    }
-
-    // HTTP/2
-    if config.http2 {
-        builder = builder.http2_prior_knowledge();
-    }
-
-    // Proxy configuration
-    let proxy = config.proxy.clone().or_else(|| {
-        if config.trust_env {
-            get_env_proxy()
-        } else {
-            None
-        }
-    });
-    if let Some(ref proxy_config) = proxy {
-        if let Some(ref all_proxy) = proxy_config.all {
-            if let Ok(p) = reqwest::Proxy::all(all_proxy) {
-                builder = builder.proxy(p);
-            }
-        } else {
-            if let Some(ref http_proxy) = proxy_config.http {
-                if let Ok(p) = reqwest::Proxy::http(http_proxy) {
-                    builder = builder.proxy(p);
-                }
-            }
-            if let Some(ref https_proxy) = proxy_config.https {
-                if let Ok(p) = reqwest::Proxy::https(https_proxy) {
-                    builder = builder.proxy(p);
-                }
-            }
-        }
-    }
-
-    // Default headers
-    builder = builder.default_headers(config.headers.to_reqwest_headers());
-
-    // Cookie store
-    builder = builder.cookie_store(true);
-
-    builder.build().map_err(|e| Error::request(e.to_string()))
-}
-
-/// Build reqwest blocking client from config
-fn build_blocking_client(config: &ClientConfig) -> Result<reqwest::blocking::Client> {
-    let mut builder = reqwest::blocking::Client::builder();
-
-    // Timeout configuration
-    // Note: blocking client only supports total timeout and connect_timeout
-    // read_timeout is applied via the total timeout for blocking client
-    if let Some(timeout) = config.timeout.total {
-        builder = builder.timeout(timeout);
-    } else if let Some(read) = config.timeout.read {
-        // Use read timeout as the general timeout if no total timeout is set
-        builder = builder.timeout(read);
-    }
-    if let Some(connect) = config.timeout.connect {
-        builder = builder.connect_timeout(connect);
-    }
-
-    // Resource limits
-    if let Some(max_idle) = config.limits.max_keepalive_connections {
-        builder = builder.pool_max_idle_per_host(max_idle);
-    }
-
-    // Redirect policy
-    if config.follow_redirects {
-        builder = builder.redirect(Policy::limited(config.max_redirects));
-    } else {
-        builder = builder.redirect(Policy::none());
-    }
-
-    // SSL verification
-    if !config.verify_ssl {
-        builder = builder.danger_accept_invalid_certs(true);
-    }
-
-    // Custom CA bundle
-    let ca_bundle = config.ca_bundle.clone().or_else(|| {
-        if config.trust_env {
-            get_env_ssl_cert()
-        } else {
-            None
-        }
-    });
-    if let Some(ref ca_path) = ca_bundle {
-        for cert in load_cert_pem(ca_path)? {
-            builder = builder.add_root_certificate(cert);
-        }
-    }
-
-    // Client certificate
-    if let Some(ref cert_path) = config.cert_file {
-        let identity = load_identity_pem(cert_path, config.key_file.as_deref())?;
-        builder = builder.identity(identity);
-    }
-
-    // HTTP/2
-    if config.http2 {
-        builder = builder.http2_prior_knowledge();
-    }
-
-    // Proxy configuration
-    let proxy = config.proxy.clone().or_else(|| {
-        if config.trust_env {
-            get_env_proxy()
-        } else {
-            None
-        }
-    });
-    if let Some(ref proxy_config) = proxy {
-        if let Some(ref all_proxy) = proxy_config.all {
-            if let Ok(p) = reqwest::Proxy::all(all_proxy) {
-                builder = builder.proxy(p);
-            }
-        } else {
-            if let Some(ref http_proxy) = proxy_config.http {
-                if let Ok(p) = reqwest::Proxy::http(http_proxy) {
-                    builder = builder.proxy(p);
-                }
-            }
-            if let Some(ref https_proxy) = proxy_config.https {
-                if let Ok(p) = reqwest::Proxy::https(https_proxy) {
-                    builder = builder.proxy(p);
-                }
-            }
-        }
-    }
-
-    // Default headers
-    builder = builder.default_headers(config.headers.to_reqwest_headers());
-
-    // Cookie store
-    builder = builder.cookie_store(true);
-
-    builder.build().map_err(|e| Error::request(e.to_string()))
-}
-
-/// Resolve URL with base URL
-fn resolve_url(base_url: &Option<String>, url: &str) -> Result<String> {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return Ok(url.to_string());
-    }
-
-    if let Some(ref base) = base_url {
-        let base_url = url::Url::parse(base)?;
-        let resolved = base_url.join(url)?;
-        Ok(resolved.to_string())
-    } else {
-        Err(Error::invalid_url(format!("Relative URL '{url}' requires a base_url")))
-    }
+/// Event hooks storage
+#[derive(Default)]
+struct EventHooks {
+    request: Vec<Py<PyAny>>,
+    response: Vec<Py<PyAny>>,
 }
 
 /// Synchronous HTTP Client
-#[pyclass(name = "Client", subclass)]
+#[pyclass(name = "Client")]
 pub struct Client {
-    client: reqwest::blocking::Client,
-    config: ClientConfig,
-    /// Whether the client is closed
-    closed: bool,
+    inner: reqwest::blocking::Client,
+    base_url: Option<URL>,
+    headers: Headers,
+    cookies: Cookies,
+    timeout: Timeout,
+    #[allow(dead_code)]
+    follow_redirects: bool,
+    #[allow(dead_code)]
+    max_redirects: usize,
+    event_hooks: EventHooks,
+    trust_env: bool,
+    mounts: HashMap<String, Py<PyAny>>,
+    transport: Option<Py<PyAny>>,
+    /// Cached default transport - created lazily and reused
+    default_transport: Option<Py<PyAny>>,
+    /// Client-level auth
+    auth: Option<(String, String)>,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self::new_impl(None, None, None, None, None, None, None).unwrap()
+    }
+}
+
+impl Client {
+    fn new_impl(
+        auth: Option<(String, String)>,
+        headers: Option<Headers>,
+        cookies: Option<Cookies>,
+        timeout: Option<Timeout>,
+        follow_redirects: Option<bool>,
+        max_redirects: Option<usize>,
+        base_url: Option<URL>,
+    ) -> PyResult<Self> {
+        let timeout = timeout.unwrap_or_default();
+        let follow_redirects = follow_redirects.unwrap_or(true);
+        let max_redirects = max_redirects.unwrap_or(20);
+
+        let mut builder = reqwest::blocking::Client::builder().redirect(if follow_redirects {
+            reqwest::redirect::Policy::limited(max_redirects)
+        } else {
+            reqwest::redirect::Policy::none()
+        });
+
+        if let Some(dur) = timeout.to_duration() {
+            builder = builder.timeout(dur);
+        }
+
+        if let Some(connect_dur) = timeout.connect_duration() {
+            builder = builder.connect_timeout(connect_dur);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create client: {}", e)))?;
+
+        // Create default headers, merging user-provided headers on top
+        let final_headers = crate::common::make_default_headers(headers.as_ref());
+
+        Ok(Self {
+            inner: client,
+            base_url,
+            headers: final_headers,
+            cookies: cookies.unwrap_or_default(),
+            timeout,
+            follow_redirects,
+            max_redirects,
+            event_hooks: EventHooks::default(),
+            trust_env: true,
+            mounts: HashMap::new(),
+            transport: None,
+            default_transport: None,
+            auth,
+        })
+    }
+
+    fn resolve_url(&self, url: &str) -> PyResult<String> {
+        if let Some(base) = &self.base_url {
+            if !url.contains("://") {
+                return Ok(base.join_url(url)?.to_string());
+            }
+        }
+        Ok(url.to_string())
+    }
+
+    /// Extract a string URL from a &str or URL object
+    fn url_to_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
+        // Try to extract as string first
+        if let Ok(s) = url.extract::<String>() {
+            return Ok(s);
+        }
+        // Try to extract as URL object
+        if let Ok(url_obj) = url.extract::<URL>() {
+            return Ok(url_obj.to_string());
+        }
+        // Try calling str() on the object
+        let s = url.str()?.to_string();
+        Ok(s)
+    }
+
+    pub fn execute_request(
+        &self,
+        py: Python<'_>,
+        method: &str,
+        url: &str,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        _timeout: Option<&Bound<'_, PyAny>>,
+        _follow_redirects: Option<bool>,
+    ) -> PyResult<Response> {
+        let resolved_url = self.resolve_url(url)?;
+
+        // Build URL with params
+        let final_url = if let Some(p) = params {
+            let qp = crate::queryparams::QueryParams::from_py(p)?;
+            let qs = qp.to_query_string();
+            if qs.is_empty() {
+                resolved_url
+            } else if resolved_url.contains('?') {
+                format!("{}&{}", resolved_url, qs)
+            } else {
+                format!("{}?{}", resolved_url, qs)
+            }
+        } else {
+            resolved_url
+        };
+
+        // If a custom transport is set, use it instead of making HTTP requests
+        if let Some(ref transport) = self.transport {
+            // Build the Request object with all the headers and body
+            let mut request_headers = self.headers.clone();
+            if let Some(h) = headers {
+                merge_headers_from_py(h, &mut request_headers)?;
+            }
+
+            // Add cookies to headers
+            let mut all_cookies = self.cookies.clone();
+            if let Some(c) = cookies {
+                merge_cookies_from_py(c, &mut all_cookies)?;
+            }
+            let cookie_header = all_cookies.to_header_value();
+            if !cookie_header.is_empty() {
+                request_headers.set("Cookie".to_string(), cookie_header);
+            }
+
+            // Check if we need multipart encoding (files provided)
+            let (body_content, content_type) = if files.is_some() {
+                // Check if boundary was already set in headers BEFORE reading files
+                let existing_ct = request_headers.get("content-type", None);
+
+                let (body, content_type) = if let Some(ref ct) = existing_ct {
+                    if ct.contains("boundary=") {
+                        // Extract boundary from existing header and use it
+                        let boundary_str = extract_boundary_from_content_type(ct);
+                        if let Some(b) = boundary_str {
+                            let (body, _, _) = build_multipart_body_with_boundary(py, data, files, &b)?;
+                            (body, ct.clone())
+                        } else {
+                            // Invalid boundary format, use auto-generated
+                            let (body, boundary, _) = build_multipart_body(py, data, files)?;
+                            (body, format!("multipart/form-data; boundary={}", boundary))
+                        }
+                    } else {
+                        // Content-Type set but no boundary - use content-type as is (will auto-generate boundary in body)
+                        let (body, _boundary, _) = build_multipart_body(py, data, files)?;
+                        // Keep the existing content-type but we generated body with auto boundary
+                        // This case is when user sets content-type without boundary - we keep their content-type
+                        (body, ct.clone())
+                    }
+                } else {
+                    // No Content-Type set, use auto-generated boundary
+                    let (body, boundary, _) = build_multipart_body(py, data, files)?;
+                    (body, format!("multipart/form-data; boundary={}", boundary))
+                };
+
+                (Some(body), Some(content_type))
+            } else if let Some(c) = content {
+                (Some(c), None)
+            } else if let Some(d) = data {
+                let mut form_data = Vec::new();
+                for (key, value) in d.iter() {
+                    let k: String = key.extract()?;
+                    // Handle both string and bytes values
+                    let v: String = if let Ok(s) = value.extract::<String>() {
+                        s
+                    } else if let Ok(b) = value.extract::<Vec<u8>>() {
+                        String::from_utf8_lossy(&b).to_string()
+                    } else {
+                        value.str()?.to_string()
+                    };
+                    form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                }
+                let ct = if !request_headers.contains("content-type") {
+                    Some("application/x-www-form-urlencoded".to_string())
+                } else {
+                    None
+                };
+                (Some(form_data.join("&").into_bytes()), ct)
+            } else if let Some(j) = json {
+                let json_str = crate::common::py_to_json_string(j)?;
+                let ct = if !request_headers.contains("content-type") {
+                    Some("application/json".to_string())
+                } else {
+                    None
+                };
+                (Some(json_str.into_bytes()), ct)
+            } else {
+                (None, None)
+            };
+
+            if let Some(ct) = content_type {
+                request_headers.set("Content-Type".to_string(), ct);
+            }
+
+            // Apply auth using shared helper
+            let auth_action = extract_auth_action_bound(auth);
+            resolve_and_apply_auth(auth_action, &self.auth, &mut request_headers);
+
+            let url_obj = URL::parse(&final_url)?;
+            let host_header = crate::common::get_host_header(&url_obj);
+
+            // Extract auth from URL userinfo if no auth was set
+            apply_url_auth(&mut request_headers, &url_obj);
+
+            // Only add Host header if not already present (required for HTTP)
+            // Other headers (accept, accept-encoding, connection, user-agent) come from
+            // client.headers which has defaults set at initialization
+            if !request_headers.contains("host") {
+                request_headers.insert_front("Host".to_string(), host_header);
+            }
+
+            let mut request = Request::new(method, url_obj);
+            request.set_headers(request_headers);
+            if let Some(body) = body_content {
+                request.set_content(body);
+            }
+
+            // Call the transport's handle_request method
+            let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
+            let mut response = response.extract::<Response>(py)?;
+            // Set the request on the response
+            response.set_request_attr(Some(request));
+            return Ok(response);
+        }
+
+        // Standard HTTP request path
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", method)))?;
+
+        let mut builder = self.inner.request(method.clone(), &final_url);
+
+        // Add default headers
+        for (k, v) in self.headers.inner() {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+
+        // Add request-specific headers
+        if let Some(h) = headers {
+            if let Ok(headers_obj) = h.extract::<Headers>() {
+                for (k, v) in headers_obj.inner() {
+                    builder = builder.header(k.as_str(), v.as_str());
+                }
+            } else if let Ok(dict) = h.cast::<PyDict>() {
+                for (key, value) in dict.iter() {
+                    let k: String = key.extract()?;
+                    let v: String = value.extract()?;
+                    builder = builder.header(k.as_str(), v.as_str());
+                }
+            }
+        }
+
+        // Add cookies
+        let mut all_cookies = self.cookies.clone();
+        if let Some(c) = cookies {
+            if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                for (k, v) in cookies_obj.inner() {
+                    all_cookies.set(&k, &v);
+                }
+            }
+        }
+        let cookie_header = all_cookies.to_header_value();
+        if !cookie_header.is_empty() {
+            builder = builder.header("cookie", cookie_header);
+        }
+
+        // Add authentication using shared helper
+        let auth_action = extract_auth_action_bound(auth);
+        match &auth_action {
+            AuthAction::UseClientDefault => {
+                if let Some((username, password)) = &self.auth {
+                    builder = builder.basic_auth(username, Some(password));
+                }
+            }
+            AuthAction::Basic(username, password) => {
+                builder = builder.basic_auth(username, Some(password));
+            }
+            AuthAction::Disabled | AuthAction::Callable(_) => {}
+        }
+
+        // Add body
+        if let Some(c) = content {
+            builder = builder.body(c);
+        } else if let Some(d) = data {
+            // Form data
+            let mut form_data = Vec::new();
+            for (key, value) in d.iter() {
+                let k: String = key.extract()?;
+                let v: String = value.extract()?;
+                form_data.push((k, v));
+            }
+            builder = builder.form(&form_data);
+        } else if let Some(j) = json {
+            let json_str = crate::common::py_to_json_string(j)?;
+            builder = builder
+                .header("content-type", "application/json")
+                .body(json_str);
+        }
+
+        // Create request object for response
+        let request = Request::new(method.as_str(), URL::parse(&final_url)?);
+
+        // Execute request (release GIL during I/O) and measure elapsed time
+        let start = std::time::Instant::now();
+        let response = py
+            .detach(|| builder.send())
+            .map_err(convert_reqwest_error)?;
+        let elapsed = start.elapsed();
+
+        let mut result = Response::from_reqwest(response, Some(request))?;
+        result.set_elapsed(elapsed);
+        Ok(result)
+    }
 }
 
 #[pymethods]
 impl Client {
     #[new]
-    #[pyo3(signature = (
-        base_url=None,
-        headers=None,
-        cookies=None,
-        timeout=None,
-        follow_redirects=true,
-        max_redirects=10,
-        verify=None,
-        cert=None,
-        proxy=None,
-        auth=None,
-        http2=false,
-        limits=None,
-        default_encoding=None,
-        trust_env=true
-    ))]
-    pub fn new(
-        base_url: Option<String>,
-        headers: Option<&Bound<'_, PyAny>>,
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
+    fn new(
+        py: Python<'_>,
+        auth: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: bool,
-        max_redirects: usize,
-        verify: Option<&Bound<'_, PyAny>>,
-        cert: Option<&Bound<'_, PyAny>>,
-        proxy: Option<Proxy>,
-        auth: Option<Auth>,
-        http2: bool,
-        limits: Option<&Bound<'_, PyAny>>,
-        default_encoding: Option<String>,
-        trust_env: bool,
+        follow_redirects: Option<bool>,
+        max_redirects: Option<usize>,
+        base_url: Option<&Bound<'_, PyAny>>,
+        event_hooks: Option<&Bound<'_, PyDict>>,
+        trust_env: Option<bool>,
+        transport: Option<Py<PyAny>>,
+        mounts: Option<&Bound<'_, PyDict>>,
+        proxy: Option<&str>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        let mut config = ClientConfig {
-            base_url,
-            follow_redirects,
-            max_redirects,
-            proxy,
-            auth,
-            http2,
-            default_encoding,
-            trust_env,
-            ..Default::default()
+        let auth_tuple = if let Some(a) = auth {
+            if let Ok(basic) = a.extract::<BasicAuth>() {
+                Some((basic.username, basic.password))
+            } else {
+                a.extract::<(String, String)>().ok()
+            }
+        } else {
+            None
         };
 
-        if let Some(h) = headers {
-            config.headers = extract_headers(h)?;
-        }
-        if let Some(c) = cookies {
-            config.cookies = Cookies { inner: extract_cookies(c)? };
-        }
-        if let Some(t) = timeout {
-            config.timeout = extract_timeout(t)?;
-        }
-        if let Some(v) = verify {
-            let (verify_ssl, ca_bundle) = extract_verify(v)?;
-            config.verify_ssl = verify_ssl;
-            config.ca_bundle = ca_bundle;
-        }
-        if let Some(c) = cert {
-            let (cert_file, key_file, key_password) = extract_cert(c)?;
-            config.cert_file = cert_file;
-            config.key_file = key_file;
-            config.key_password = key_password;
-        }
-        if let Some(l) = limits {
-            config.limits = extract_limits(l)?;
+        let headers_obj = if let Some(h) = headers {
+            if let Ok(headers_obj) = h.extract::<Headers>() {
+                Some(headers_obj)
+            } else if let Ok(dict) = h.cast::<PyDict>() {
+                let mut hdr = Headers::new();
+                for (key, value) in dict.iter() {
+                    let k: String = key.extract()?;
+                    let v: String = value.extract()?;
+                    hdr.set(k, v);
+                }
+                Some(hdr)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let cookies_obj = if let Some(c) = cookies {
+            // Try to extract as Cookies first
+            if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                Some(cookies_obj)
+            } else if let Ok(dict) = c.cast::<PyDict>() {
+                // Handle Python dict
+                let mut cookies = Cookies::new();
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        cookies.set(&k, &v);
+                    }
+                }
+                Some(cookies)
+            } else {
+                // Try iterating over CookieJar (has __iter__ that yields Cookie objects)
+                let mut cookies = Cookies::new();
+                let mut found_any = false;
+                if let Ok(py_iter) = c.try_iter() {
+                    for cookie in py_iter.flatten() {
+                        // Cookie object has name and value attributes
+                        if let Ok(name) = cookie.getattr("name") {
+                            if let Ok(value) = cookie.getattr("value") {
+                                if let (Ok(n), Ok(v)) = (name.extract::<String>(), value.extract::<String>()) {
+                                    cookies.set(&n, &v);
+                                    found_any = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if found_any {
+                    Some(cookies)
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let timeout_obj = if let Some(t) = timeout {
+            if let Ok(timeout_obj) = t.extract::<Timeout>() {
+                Some(timeout_obj)
+            } else if let Ok(secs) = t.extract::<f64>() {
+                Some(Timeout::new(Some(secs), None, None, None, None))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let base_url_obj = if let Some(url) = base_url {
+            if let Ok(url_obj) = url.extract::<URL>() {
+                Some(url_obj)
+            } else if let Ok(url_str) = url.extract::<String>() {
+                Some(URL::parse(&url_str)?)
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err("base_url must be a string or URL object"));
+            }
+        } else {
+            None
+        };
+
+        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, follow_redirects, max_redirects, base_url_obj)?;
+
+        // Set trust_env
+        if let Some(trust) = trust_env {
+            client.trust_env = trust;
         }
 
-        let client = build_blocking_client(&config)?;
+        // Parse event_hooks dict if provided
+        if let Some(hooks_dict) = event_hooks {
+            if let Some(request_hooks) = hooks_dict.get_item("request")? {
+                if let Ok(list) = request_hooks.cast::<PyList>() {
+                    for item in list.iter() {
+                        client.event_hooks.request.push(item.unbind());
+                    }
+                }
+            }
+            if let Some(response_hooks) = hooks_dict.get_item("response")? {
+                if let Ok(list) = response_hooks.cast::<PyList>() {
+                    for item in list.iter() {
+                        client.event_hooks.response.push(item.unbind());
+                    }
+                }
+            }
+        }
 
-        Ok(Self { client, config, closed: false })
+        // Set transport if provided
+        client.transport = transport;
+
+        // Initialize default transport (with proxy if specified)
+        let http_transport = if proxy.is_some() {
+            crate::transport::HTTPTransport::with_proxy(proxy)?
+        } else {
+            crate::transport::HTTPTransport::default()
+        };
+        client.default_transport = Some(Py::new(py, http_transport)?.into_any());
+
+        // Handle mounts with validation
+        if let Some(mounts_dict) = mounts {
+            for (key, value) in mounts_dict.iter() {
+                let pattern: String = key.extract()?;
+                // Validate mount key format - must contain "://"
+                if !pattern.contains("://") {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Mount pattern '{}' is invalid. Did you mean '{}://'?",
+                        pattern, pattern
+                    )));
+                }
+                client.mounts.insert(pattern, value.unbind());
+            }
+        }
+
+        Ok(client)
     }
 
-    /// Whether the client is closed
-    #[getter]
-    pub fn is_closed(&self) -> bool {
-        self.closed
+    #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn get(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "GET", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
-    /// Get the client timeout configuration
-    #[getter]
-    pub fn timeout(&self) -> Timeout {
-        self.config.timeout.clone()
+    #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn post(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "POST", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
-    /// Get the base URL (HTTPX compatibility)
-    #[getter]
-    pub fn base_url(&self) -> Option<URL> {
-        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+    #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn put(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "PUT", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
-    /// Build a request without sending it
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        timeout=None
-    ))]
-    pub fn build_request(
+    #[pyo3(signature = (url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn patch(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "PATCH", &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn delete(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "DELETE", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn head(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "HEAD", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    #[pyo3(signature = (url, *, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn options(
+        &self,
+        py: Python<'_>,
+        url: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, "OPTIONS", &url_str, None, None, None, None, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn request(
+        &self,
+        py: Python<'_>,
+        method: &str,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None, auth=None, follow_redirects=None, timeout=None))]
+    fn stream(
+        &self,
+        py: Python<'_>,
+        method: &str,
+        url: &Bound<'_, PyAny>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+        headers: Option<&Bound<'_, PyAny>>,
+        cookies: Option<&Bound<'_, PyAny>>,
+        auth: Option<&Bound<'_, PyAny>>,
+        follow_redirects: Option<bool>,
+        timeout: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Response> {
+        // For now, stream behaves the same as request
+        let url_str = Self::url_to_string(url)?;
+        self.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
+    }
+
+    fn send(&self, py: Python<'_>, request: &Request) -> PyResult<Response> {
+        // If a custom transport is set, use it directly with the request
+        if let Some(ref transport) = self.transport {
+            let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
+            let mut response = response.extract::<Response>(py)?;
+            response.set_request_attr(Some(request.clone()));
+            return Ok(response);
+        }
+
+        // For regular HTTP, use execute_request but pass the request's headers
+        let headers_bound = pyo3::types::PyDict::new(py);
+        for (k, v) in request.headers_ref().inner() {
+            headers_bound.set_item(k, v)?;
+        }
+
+        self.execute_request(
+            py,
+            request.method(),
+            &request.url_ref().to_string(),
+            request.content_bytes().map(|b| b.to_vec()),
+            None,
+            None,
+            None,
+            None,
+            Some(&headers_bound.as_borrowed()),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None))]
+    fn build_request(
         &self,
         method: &str,
         url: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
+        content: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyDict>>,
+        files: Option<&Bound<'_, PyAny>>,
+        json: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] timeout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Request> {
-        // Accept both string and URL object
-        let url_str = if let Ok(s) = url.extract::<String>() {
-            s
-        } else if let Ok(url_obj) = url.extract::<URL>() {
-            url_obj.as_url().to_string()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
-        };
-        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
-        let parsed_url = URL::new(&resolved_url)?;
+        let url_str = Self::url_to_string(url)?;
+        let resolved_url = self.resolve_url(&url_str)?;
+        let parsed_url = URL::new_impl(Some(&resolved_url), None, None, None, None, None, None, None, None, params, None, None)?;
 
-        // Merge headers
-        let mut final_headers = self.config.headers.clone();
-        if let Some(h) = headers {
-            let req_headers = extract_headers(h)?;
-            for (key, values) in &req_headers.inner {
-                for value in values {
-                    final_headers.add(key, value);
+        // Extract Host header info before moving parsed_url
+        let host_header_value: Option<String> = if let Some(host) = parsed_url.inner().host_str() {
+            let host_value = if let Some(port) = parsed_url.inner().port() {
+                // Include non-default port in Host header
+                let scheme = parsed_url.inner().scheme();
+                let default_port: u16 = match scheme {
+                    "http" => 80,
+                    "https" => 443,
+                    _ => 0,
+                };
+                if port != default_port {
+                    format!("{}:{}", host, port)
+                } else {
+                    host.to_string()
                 }
+            } else {
+                host.to_string()
+            };
+            Some(host_value)
+        } else {
+            None
+        };
+
+        let mut request = Request::new(method, parsed_url);
+
+        // Add headers
+        let mut all_headers = self.headers.clone();
+        if let Some(h) = headers {
+            if let Ok(headers_obj) = h.extract::<Headers>() {
+                for (k, v) in headers_obj.inner() {
+                    all_headers.set(k.clone(), v.clone());
+                }
+            } else if let Ok(dict) = h.cast::<pyo3::types::PyDict>() {
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        all_headers.set(k, v);
+                    }
+                }
+            } else if let Ok(list) = h.cast::<pyo3::types::PyList>() {
+                for item in list.iter() {
+                    if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>() {
+                        if tuple.len() == 2 {
+                            if let (Ok(k), Ok(v)) = (tuple.get_item(0).and_then(|i| i.extract::<String>()), tuple.get_item(1).and_then(|i| i.extract::<String>())) {
+                                all_headers.append(k, v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add Host header from URL if not already set
+        if !all_headers.contains("host") {
+            if let Some(host_value) = host_header_value {
+                all_headers.insert_front("Host".to_string(), host_value);
             }
         }
 
         // Add cookies to headers
+        let mut all_cookies = self.cookies.clone();
         if let Some(c) = cookies {
-            let cookies_map = extract_cookies(c)?;
-            for (name, value) in &cookies_map {
-                final_headers.add("cookie", &format!("{name}={value}"));
+            if let Ok(cookies_obj) = c.extract::<Cookies>() {
+                for (k, v) in cookies_obj.inner() {
+                    all_cookies.set(&k, &v);
+                }
+            } else if let Ok(dict) = c.cast::<pyo3::types::PyDict>() {
+                for (key, value) in dict.iter() {
+                    if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                        all_cookies.set(&k, &v);
+                    }
+                }
             }
         }
-        for (name, value) in &self.config.cookies.inner {
-            final_headers.add("cookie", &format!("{name}={value}"));
+        let cookie_header = all_cookies.to_header_value();
+        if !cookie_header.is_empty() {
+            all_headers.set("Cookie".to_string(), cookie_header);
         }
 
-        // Add query params to URL
-        let final_url = if let Some(p) = params {
-            let params_vec = extract_params(Some(p))?;
-            if !params_vec.is_empty() {
-                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
-                for (k, v) in params_vec {
-                    parsed.query_pairs_mut().append_pair(&k, &v);
-                }
-                URL::from_url(parsed)
+        request.set_headers(all_headers);
+
+        // Handle content
+        if let Some(c) = content {
+            // Set Content-Length header for the content
+            let content_len = c.len();
+            request.set_content(c);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("Content-Length".to_string(), content_len.to_string());
+            request.set_headers(headers_mut);
+        } else if let Some(j) = json {
+            // Handle JSON body using sonic-rs via common
+            let json_str = crate::common::py_to_json_string(j)?;
+            let json_bytes = json_str.into_bytes();
+            let content_len = json_bytes.len();
+            request.set_content(json_bytes);
+            let mut headers_mut = request.headers_ref().clone();
+            headers_mut.set("Content-Length".to_string(), content_len.to_string());
+            if !headers_mut.contains("content-type") {
+                headers_mut.set("Content-Type".to_string(), "application/json".to_string());
+            }
+            request.set_headers(headers_mut);
+        } else if let Some(f) = files {
+            // Check if files is not empty
+            let files_not_empty = if let Ok(dict) = f.cast::<pyo3::types::PyDict>() {
+                !dict.is_empty()
+            } else if let Ok(list) = f.cast::<pyo3::types::PyList>() {
+                !list.is_empty()
             } else {
-                parsed_url
+                true // Unknown type, assume not empty
+            };
+
+            if files_not_empty {
+                // Handle multipart files (and data)
+                let py = f.py();
+                let mut headers_mut = request.headers_ref().clone();
+
+                // Check if boundary was already set in headers
+                let existing_ct = headers_mut.get("content-type", None);
+                let (body, content_type) = if let Some(ref ct) = existing_ct {
+                    if ct.contains("boundary=") {
+                        let boundary = crate::multipart::extract_boundary_from_content_type(ct);
+                        if let Some(b) = boundary {
+                            let (body, _, _) = crate::multipart::build_multipart_body_with_boundary(py, data, Some(f), &b)?;
+                            (body, ct.clone())
+                        } else {
+                            let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
+                            (body, format!("multipart/form-data; boundary={}", boundary))
+                        }
+                    } else {
+                        // Content-Type set but no boundary - preserve the original
+                        let (body, _, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
+                        (body, ct.clone())
+                    }
+                } else {
+                    let (body, boundary, _) = crate::multipart::build_multipart_body(py, data, Some(f))?;
+                    (body, format!("multipart/form-data; boundary={}", boundary))
+                };
+
+                let content_len = body.len();
+                request.set_content(body);
+                headers_mut.set("Content-Length".to_string(), content_len.to_string());
+                headers_mut.set("Content-Type".to_string(), content_type);
+                request.set_headers(headers_mut);
+            } else if let Some(d) = data {
+                // files was empty, but data might not be - handle form data
+                if !d.is_empty() {
+                    let mut form_data = Vec::new();
+                    for (key, value) in d.iter() {
+                        let k: String = key.extract()?;
+                        if let Ok(list) = value.cast::<pyo3::types::PyList>() {
+                            for item in list.iter() {
+                                let v = py_value_to_form_str(&item)?;
+                                form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                            }
+                        } else {
+                            let v = py_value_to_form_str(&value)?;
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    }
+                    let body = form_data.join("&").into_bytes();
+                    let content_len = body.len();
+                    request.set_content(body);
+                    let mut headers_mut = request.headers_ref().clone();
+                    headers_mut.set("Content-Length".to_string(), content_len.to_string());
+                    if !headers_mut.contains("content-type") {
+                        headers_mut.set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
+                    }
+                    request.set_headers(headers_mut);
+                }
+            }
+        } else if let Some(d) = data {
+            // Handle form data (no files) - only if not empty
+            if !d.is_empty() {
+                let mut form_data = Vec::new();
+                for (key, value) in d.iter() {
+                    let k: String = key.extract()?;
+                    // Handle lists - create multiple key=value pairs
+                    if let Ok(list) = value.cast::<pyo3::types::PyList>() {
+                        for item in list.iter() {
+                            let v = py_value_to_form_str(&item)?;
+                            form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                        }
+                    } else {
+                        let v = py_value_to_form_str(&value)?;
+                        form_data.push(format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v)));
+                    }
+                }
+                let body = form_data.join("&").into_bytes();
+                let content_len = body.len();
+                request.set_content(body);
+                let mut headers_mut = request.headers_ref().clone();
+                headers_mut.set("Content-Length".to_string(), content_len.to_string());
+                if !headers_mut.contains("content-type") {
+                    headers_mut.set("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string());
+                }
+                request.set_headers(headers_mut);
+            } else {
+                // Empty data dict - set Content-Length: 0 for body methods
+                let method_upper = method.to_uppercase();
+                if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
+                    let mut headers_mut = request.headers_ref().clone();
+                    headers_mut.set("Content-Length".to_string(), "0".to_string());
+                    request.set_headers(headers_mut);
+                }
             }
         } else {
-            parsed_url
-        };
-
-        // Build content
-        let body_content = if let Some(json_data) = json {
-            let json_str = py_to_json_string(json_data)?;
-            final_headers.set("content-type", "application/json");
-            Some(json_str.into_bytes())
-        } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            let encoded = form
-                .iter()
-                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-                .collect::<Vec<_>>()
-                .join("&");
-            final_headers.set("content-type", "application/x-www-form-urlencoded");
-            Some(encoded.into_bytes())
-        } else {
-            content.map(|body| body.as_bytes().to_vec())
-        };
-
-        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
-    }
-
-    /// Send a pre-built request
-    #[pyo3(signature = (request, stream=false))]
-    pub fn send(&self, py: Python<'_>, request: &Request, stream: bool) -> PyResult<Py<PyAny>> {
-        if stream {
-            let streaming_response = self.send_streaming(request)?;
-            Ok(streaming_response.into_pyobject(py)?.into_any().unbind())
-        } else {
-            let response = self.send_request(request)?;
-            Ok(response.into_pyobject(py)?.into_any().unbind())
-        }
-    }
-
-    /// Perform a request
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        files=None,
-        auth=None,
-        timeout=None,
-        follow_redirects=None
-    ))]
-    pub fn request(
-        &self,
-        method: &str,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
-        let start = Instant::now();
-
-        // Build request
-        let mut req = self.client.request(
-            method
-                .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
-            &resolved_url,
-        );
-
-        // Add query parameters
-        if let Some(p) = params {
-            let params_vec = extract_params(Some(p))?;
-            req = req.query(&params_vec);
-        }
-
-        // Add headers
-        if let Some(h) = headers {
-            let headers_obj = extract_headers(h)?;
-            for (key, values) in &headers_obj.inner {
-                for value in values {
-                    req = req.header(key.as_str(), value.as_str());
-                }
+            // For methods that expect a body (POST, PUT, PATCH), add Content-length: 0
+            let method_upper = method.to_uppercase();
+            if method_upper == "POST" || method_upper == "PUT" || method_upper == "PATCH" {
+                let mut headers_mut = request.headers_ref().clone();
+                headers_mut.set("Content-Length".to_string(), "0".to_string());
+                request.set_headers(headers_mut);
             }
         }
 
-        // Add cookies
-        if let Some(c) = cookies {
-            let cookies_map = extract_cookies(c)?;
-            for (name, value) in &cookies_map {
-                req = req.header("Cookie", format!("{name}={value}"));
-            }
-        }
-
-        // Add client-level cookies
-        for (name, value) in &self.config.cookies.inner {
-            req = req.header("Cookie", format!("{name}={value}"));
-        }
-
-        // Set body
-        if let Some(json_data) = json {
-            let json_str = py_to_json_string(json_data)?;
-            req = req.header("Content-Type", "application/json");
-            req = req.body(json_str);
-        } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            req = req.form(&form);
-        } else if let Some(body) = content {
-            req = req.body(body.as_bytes().to_vec());
-        } else if let Some(files_dict) = files {
-            let mut form = reqwest::blocking::multipart::Form::new();
-            for (field_name, file_info) in files_dict.iter() {
-                let field_name: String = field_name.extract()?;
-                if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
-                    let (filename, content, content_type) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
-                    let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
-                    form = form.part(field_name, part);
-                }
-            }
-            req = req.multipart(form);
-        }
-
-        // Authentication
-        let auth_to_use = auth.as_ref().or(self.config.auth.as_ref());
-        if let Some(auth_config) = auth_to_use {
-            match &auth_config.auth_type {
-                AuthType::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                AuthType::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                AuthType::Digest { username, password } => {
-                    // Reqwest doesn't support digest auth natively, fall back to basic
-                    req = req.basic_auth(username, Some(password));
-                }
-            }
-        }
-
-        // Timeout (per-request)
-        if let Some(t) = timeout {
-            let timeout_config = extract_timeout(t)?;
-            if let Some(total) = timeout_config.total {
-                req = req.timeout(total);
-            }
-        }
-
-        // Execute request
-        let response = req.send().map_err(Error::from)?;
-
-        // Convert to our Response type with default encoding
-        let status_code = response.status().as_u16();
-        let reason_phrase = response
-            .status()
-            .canonical_reason()
-            .unwrap_or("Unknown")
-            .to_string();
-        let final_url = response.url().to_string();
-        let http_version = format!("{:?}", response.version());
-
-        let resp_headers = Headers::from_reqwest_headers(response.headers());
-
-        let mut cookies_map = HashMap::new();
-        for cookie in response.cookies() {
-            cookies_map.insert(cookie.name().to_string(), cookie.value().to_string());
-        }
-
-        let body = response.bytes().map_err(Error::from)?.to_vec();
-        let elapsed = start.elapsed().as_secs_f64();
-
-        let mut resp = Response::new(
-            status_code,
-            resp_headers,
-            body,
-            final_url.clone(),
-            http_version,
-            Cookies { inner: cookies_map },
-            elapsed,
-            method.to_uppercase(),
-            reason_phrase,
-        );
-
-        // Create and attach a Request object for HTTPX compatibility
-        let request_url = URL::new(&final_url).ok();
-        if let Some(url) = request_url {
-            let request = Request::new_internal(
-                method.to_uppercase(),
-                url,
-                Headers::default(), // The actual headers are already sent
-                None,
-                false,
-            );
-            resp.set_request(request);
-        }
-
-        // Set default encoding if configured
-        if let Some(ref encoding) = self.config.default_encoding {
-            resp.set_default_encoding(encoding.clone());
-        }
-
-        Ok(resp)
+        Ok(request)
     }
 
-    /// GET request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn get(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("GET", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
+    fn close(&self) {
+        // Client doesn't need explicit close in reqwest
     }
 
-    /// POST request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn post(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("POST", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// PUT request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn put(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("PUT", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// PATCH request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn patch(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("PATCH", url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// DELETE request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn delete(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("DELETE", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// HEAD request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn head(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("HEAD", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// OPTIONS request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn options(
-        &self,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Response> {
-        self.request("OPTIONS", url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// Close the client
-    pub fn close(&mut self) {
-        self.closed = true;
-    }
-
-    /// Stream a request - returns StreamingResponse without loading body
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        files=None,
-        auth=None,
-        timeout=None,
-        follow_redirects=None
-    ))]
-    pub fn stream(
-        &self,
-        method: &str,
-        url: &str,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] follow_redirects: Option<bool>,
-    ) -> PyResult<StreamingResponse> {
-        let resolved_url = resolve_url(&self.config.base_url, url)?;
-        let start = Instant::now();
-
-        // Build request
-        let mut req = self.client.request(
-            method
-                .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
-            &resolved_url,
-        );
-
-        // Add query parameters
-        if let Some(p) = params {
-            let params_vec = extract_params(Some(p))?;
-            req = req.query(&params_vec);
-        }
-
-        // Add headers
-        if let Some(h) = headers {
-            let headers_obj = extract_headers(h)?;
-            for (key, values) in &headers_obj.inner {
-                for value in values {
-                    req = req.header(key.as_str(), value.as_str());
-                }
-            }
-        }
-
-        // Add cookies
-        if let Some(c) = cookies {
-            let cookies_map = extract_cookies(c)?;
-            for (name, value) in &cookies_map {
-                req = req.header("Cookie", format!("{name}={value}"));
-            }
-        }
-
-        // Add client-level cookies
-        for (name, value) in &self.config.cookies.inner {
-            req = req.header("Cookie", format!("{name}={value}"));
-        }
-
-        // Set body
-        if let Some(json_data) = json {
-            let json_str = py_to_json_string(json_data)?;
-            req = req.header("Content-Type", "application/json");
-            req = req.body(json_str);
-        } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            req = req.form(&form);
-        } else if let Some(body) = content {
-            req = req.body(body.as_bytes().to_vec());
-        } else if let Some(files_dict) = files {
-            let mut form = reqwest::blocking::multipart::Form::new();
-            for (field_name, file_info) in files_dict.iter() {
-                let field_name: String = field_name.extract()?;
-                if let Ok(tuple) = file_info.extract::<(String, Vec<u8>, String)>() {
-                    let (filename, content, content_type) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                } else if let Ok(tuple) = file_info.extract::<(String, Vec<u8>)>() {
-                    let (filename, content) = tuple;
-                    let part = reqwest::blocking::multipart::Part::bytes(content).file_name(filename);
-                    form = form.part(field_name, part);
-                }
-            }
-            req = req.multipart(form);
-        }
-
-        // Authentication
-        let auth_to_use = auth.as_ref().or(self.config.auth.as_ref());
-        if let Some(auth_config) = auth_to_use {
-            match &auth_config.auth_type {
-                AuthType::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                AuthType::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                AuthType::Digest { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-            }
-        }
-
-        // Timeout (per-request)
-        if let Some(t) = timeout {
-            let timeout_config = extract_timeout(t)?;
-            if let Some(total) = timeout_config.total {
-                req = req.timeout(total);
-            }
-        }
-
-        // Execute request - don't consume body
-        let response = req.send().map_err(Error::from)?;
-        let elapsed = start.elapsed().as_secs_f64();
-
-        Ok(StreamingResponse::from_blocking(response, elapsed, &method.to_uppercase()))
-    }
-
-    /// Context manager enter
-    pub fn __enter__(slf: Py<Self>) -> Py<Self> {
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    /// Context manager exit
-    #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __exit__(&mut self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) {
+    fn __exit__(&self, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> bool {
         self.close();
+        false
     }
 
-    pub fn __repr__(&self) -> String {
-        format!("<Client base_url={:?}>", self.config.base_url)
-    }
-}
-
-impl Client {
-    /// Internal method to send a Request and get a Response
-    fn send_request(&self, request: &Request) -> PyResult<Response> {
-        let start = Instant::now();
-
-        // Build reqwest request
-        let mut req = self.client.request(
-            request
-                .method
-                .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
-            request.url_str(),
-        );
-
-        // Add headers
-        for (key, values) in &request.headers_ref().inner {
-            for value in values {
-                req = req.header(key.as_str(), value.as_str());
-            }
-        }
-
-        // Add body
-        if let Some(body) = request.content_ref() {
-            req = req.body(body.clone());
-        }
-
-        // Authentication
-        if let Some(auth_config) = self.config.auth.as_ref() {
-            match &auth_config.auth_type {
-                AuthType::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                AuthType::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                AuthType::Digest { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-            }
-        }
-
-        // Execute request
-        let response = req.send().map_err(Error::from)?;
-
-        // Convert to our Response type
-        let status_code = response.status().as_u16();
-        let reason_phrase = response
-            .status()
-            .canonical_reason()
-            .unwrap_or("Unknown")
-            .to_string();
-        let final_url = response.url().to_string();
-        let http_version = format!("{:?}", response.version());
-
-        let resp_headers = Headers::from_reqwest_headers(response.headers());
-
-        let mut cookies_map = HashMap::new();
-        for cookie in response.cookies() {
-            cookies_map.insert(cookie.name().to_string(), cookie.value().to_string());
-        }
-
-        let body = response.bytes().map_err(Error::from)?.to_vec();
-        let elapsed = start.elapsed().as_secs_f64();
-
-        let mut resp = Response::new(
-            status_code,
-            resp_headers,
-            body,
-            final_url,
-            http_version,
-            Cookies { inner: cookies_map },
-            elapsed,
-            request.method.clone(),
-            reason_phrase,
-        );
-
-        // Set the request on the response
-        resp.set_request(request.clone());
-
-        // Set default encoding if configured
-        if let Some(ref encoding) = self.config.default_encoding {
-            resp.set_default_encoding(encoding.clone());
-        }
-
-        Ok(resp)
-    }
-
-    /// Internal method to send a Request and get a StreamingResponse
-    fn send_streaming(&self, request: &Request) -> PyResult<StreamingResponse> {
-        let start = Instant::now();
-
-        // Build reqwest request
-        let mut req = self.client.request(
-            request
-                .method
-                .parse()
-                .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
-            request.url_str(),
-        );
-
-        // Add headers
-        for (key, values) in &request.headers_ref().inner {
-            for value in values {
-                req = req.header(key.as_str(), value.as_str());
-            }
-        }
-
-        // Add body
-        if let Some(body) = request.content_ref() {
-            req = req.body(body.clone());
-        }
-
-        // Authentication
-        if let Some(auth_config) = self.config.auth.as_ref() {
-            match &auth_config.auth_type {
-                AuthType::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                AuthType::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                AuthType::Digest { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-            }
-        }
-
-        // Execute request
-        let response = req.send().map_err(Error::from)?;
-        let elapsed = start.elapsed().as_secs_f64();
-
-        let mut streaming_resp = StreamingResponse::from_blocking(response, elapsed, &request.method);
-        streaming_resp = streaming_resp.with_request(request.clone());
-
-        Ok(streaming_resp)
-    }
-}
-
-/// Asynchronous HTTP Client
-#[pyclass(name = "AsyncClient", subclass)]
-pub struct AsyncClient {
-    client: Arc<reqwest::Client>,
-    config: ClientConfig,
-    #[allow(dead_code)]
-    runtime: Arc<Runtime>,
-    /// Whether the client is closed
-    closed: Arc<std::sync::Mutex<bool>>,
-}
-
-#[pymethods]
-impl AsyncClient {
-    #[new]
-    #[pyo3(signature = (
-        base_url=None,
-        headers=None,
-        cookies=None,
-        timeout=None,
-        follow_redirects=true,
-        max_redirects=10,
-        verify=None,
-        cert=None,
-        proxy=None,
-        auth=None,
-        http2=false,
-        limits=None,
-        default_encoding=None,
-        trust_env=true
-    ))]
-    pub fn new(
-        base_url: Option<String>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        timeout: Option<&Bound<'_, PyAny>>,
-        follow_redirects: bool,
-        max_redirects: usize,
-        verify: Option<&Bound<'_, PyAny>>,
-        cert: Option<&Bound<'_, PyAny>>,
-        proxy: Option<Proxy>,
-        auth: Option<Auth>,
-        http2: bool,
-        limits: Option<&Bound<'_, PyAny>>,
-        default_encoding: Option<String>,
-        trust_env: bool,
-    ) -> PyResult<Self> {
-        let mut config = ClientConfig {
-            base_url,
-            follow_redirects,
-            max_redirects,
-            proxy,
-            auth,
-            http2,
-            default_encoding,
-            trust_env,
-            ..Default::default()
-        };
-
-        if let Some(h) = headers {
-            config.headers = extract_headers(h)?;
-        }
-        if let Some(c) = cookies {
-            config.cookies = Cookies { inner: extract_cookies(c)? };
-        }
-        if let Some(t) = timeout {
-            config.timeout = extract_timeout(t)?;
-        }
-        if let Some(v) = verify {
-            let (verify_ssl, ca_bundle) = extract_verify(v)?;
-            config.verify_ssl = verify_ssl;
-            config.ca_bundle = ca_bundle;
-        }
-        if let Some(c) = cert {
-            let (cert_file, key_file, key_password) = extract_cert(c)?;
-            config.cert_file = cert_file;
-            config.key_file = key_file;
-            config.key_password = key_password;
-        }
-        if let Some(l) = limits {
-            config.limits = extract_limits(l)?;
-        }
-
-        let client = build_reqwest_client(&config)?;
-        let runtime = Runtime::new().map_err(|e| Error::request(e.to_string()))?;
-
-        Ok(Self {
-            client: Arc::new(client),
-            config,
-            runtime: Arc::new(runtime),
-            closed: Arc::new(std::sync::Mutex::new(false)),
-        })
-    }
-
-    /// Whether the client is closed
+    /// Get event_hooks as a dict
     #[getter]
-    pub fn is_closed(&self) -> bool {
-        *self.closed.lock().unwrap_or_else(|e| e.into_inner())
+    fn event_hooks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        create_event_hooks_dict(py, &self.event_hooks.request, &self.event_hooks.response)
     }
 
-    /// Get the client timeout configuration
+    /// Set event_hooks from a dict
+    #[setter]
+    fn set_event_hooks(&mut self, hooks: &Bound<'_, PyDict>) -> PyResult<()> {
+        let (request, response) = parse_event_hooks_dict(hooks)?;
+        self.event_hooks.request = request;
+        self.event_hooks.response = response;
+        Ok(())
+    }
+
     #[getter]
-    pub fn timeout(&self) -> Timeout {
-        self.config.timeout.clone()
+    fn trust_env(&self) -> bool {
+        self.trust_env
     }
 
-    /// Get the base URL (HTTPX compatibility)
+    #[setter]
+    fn set_trust_env(&mut self, value: bool) {
+        self.trust_env = value;
+    }
+
+    /// Get base_url
     #[getter]
-    pub fn base_url(&self) -> Option<URL> {
-        self.config.base_url.as_ref().and_then(|s| URL::new(s).ok())
+    fn base_url(&self) -> Option<URL> {
+        self.base_url.clone()
     }
 
-    /// Build a request without sending it
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        timeout=None
-    ))]
-    pub fn build_request(
-        &self,
-        method: &str,
-        url: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] timeout: Option<f64>,
-    ) -> PyResult<Request> {
-        // Accept both string and URL object
-        let url_str = if let Ok(s) = url.extract::<String>() {
-            s
-        } else if let Ok(url_obj) = url.extract::<URL>() {
-            url_obj.as_url().to_string()
+    /// Set base_url (ensures trailing slash for paths)
+    #[setter]
+    fn set_base_url(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if value.is_none() {
+            self.base_url = None;
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err("url must be a string or URL object"));
-        };
-        let resolved_url = resolve_url(&self.config.base_url, &url_str)?;
-        let parsed_url = URL::new(&resolved_url)?;
-
-        // Merge headers
-        let mut final_headers = self.config.headers.clone();
-        if let Some(h) = headers {
-            let req_headers = extract_headers(h)?;
-            for (key, values) in &req_headers.inner {
-                for value in values {
-                    final_headers.add(key, value);
-                }
-            }
-        }
-
-        // Add cookies to headers
-        if let Some(c) = cookies {
-            let cookies_map = extract_cookies(c)?;
-            for (name, value) in &cookies_map {
-                final_headers.add("cookie", &format!("{name}={value}"));
-            }
-        }
-        for (name, value) in &self.config.cookies.inner {
-            final_headers.add("cookie", &format!("{name}={value}"));
-        }
-
-        // Add query params to URL
-        let final_url = if let Some(p) = params {
-            let params_vec = extract_params(Some(p))?;
-            if !params_vec.is_empty() {
-                let mut parsed = url::Url::parse(&resolved_url).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid URL: {e}")))?;
-                for (k, v) in params_vec {
-                    parsed.query_pairs_mut().append_pair(&k, &v);
-                }
-                URL::from_url(parsed)
+            let url_str = if let Ok(url) = value.extract::<URL>() {
+                url.to_string()
+            } else if let Ok(s) = value.extract::<String>() {
+                s
             } else {
-                parsed_url
-            }
-        } else {
-            parsed_url
-        };
+                return Err(pyo3::exceptions::PyTypeError::new_err("base_url must be a string or URL object"));
+            };
 
-        // Build content
-        let body_content = if let Some(json_data) = json {
-            let json_str = py_to_json_string(json_data)?;
-            final_headers.set("content-type", "application/json");
-            Some(json_str.into_bytes())
-        } else if let Some(form_data) = data {
-            let form: HashMap<String, String> = form_data
-                .iter()
-                .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                .collect::<PyResult<_>>()?;
-            let encoded = form
-                .iter()
-                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-                .collect::<Vec<_>>()
-                .join("&");
-            final_headers.set("content-type", "application/x-www-form-urlencoded");
-            Some(encoded.into_bytes())
-        } else {
-            content.map(|body| body.as_bytes().to_vec())
-        };
-
-        Ok(Request::new_internal(method.to_uppercase(), final_url, final_headers, body_content, false))
-    }
-
-    /// Send a pre-built request (async)
-    #[pyo3(signature = (request, stream=false))]
-    pub fn send<'py>(&self, py: Python<'py>, request: Request, stream: bool) -> PyResult<Bound<'py, PyAny>> {
-        let client = self.client.clone();
-        let config = self.config.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let start = Instant::now();
-
-            // Build reqwest request
-            let mut req = client.request(
-                request
-                    .method
-                    .parse()
-                    .map_err(|_| Error::request(format!("Invalid method: {}", request.method)))?,
-                request.url_str(),
-            );
-
-            // Add headers
-            for (key, values) in &request.headers_ref().inner {
-                for value in values {
-                    req = req.header(key.as_str(), value.as_str());
-                }
-            }
-
-            // Add body
-            if let Some(body) = request.content_ref() {
-                req = req.body(body.clone());
-            }
-
-            // Authentication
-            if let Some(auth_config) = config.auth.as_ref() {
-                match &auth_config.auth_type {
-                    AuthType::Basic { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                    AuthType::Bearer { token } => {
-                        req = req.bearer_auth(token);
-                    }
-                    AuthType::Digest { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                }
-            }
-
-            // Execute request
-            let response = req.send().await.map_err(Error::from)?;
-            let elapsed = start.elapsed().as_secs_f64();
-
-            if stream {
-                let mut streaming_resp = AsyncStreamingResponse::from_async(response, elapsed, &request.method);
-                streaming_resp = streaming_resp.with_request(request);
-                Ok(Python::attach(|py| {
-                    streaming_resp
-                        .into_pyobject(py)
-                        .map(|o| o.into_any().unbind())
-                })?)
+            // Normalize base_url: ensure trailing slash for paths
+            let normalized = if !url_str.ends_with('/') {
+                // Check if URL has a path component (not just domain)
+                // If URL has a path, add trailing slash
+                format!("{}/", url_str)
             } else {
-                let mut resp = crate::response::Response::from_reqwest(response, start, &request.method).await?;
-                resp.set_request(request);
-                if let Some(ref encoding) = config.default_encoding {
-                    resp.set_default_encoding(encoding.clone());
-                }
-                Ok(Python::attach(|py| resp.into_pyobject(py).map(|o| o.into_any().unbind()))?)
-            }
-        })
-    }
+                url_str
+            };
 
-    /// Perform an async request - returns a coroutine
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        files=None,
-        auth=None,
-        timeout=None,
-        follow_redirects=None
-    ))]
-    pub fn request<'py>(
-        &self,
-        py: Python<'py>,
-        method: String,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        #[allow(unused_variables)] follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
-        let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
-        let cookies_obj = cookies
-            .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
-            .transpose()?;
-        let content_vec = content.map(|c| c.as_bytes().to_vec());
-        let data_map = data
-            .map(|d| {
-                d.iter()
-                    .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                    .collect::<PyResult<HashMap<String, String>>>()
-            })
-            .transpose()?;
-        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
-        let files_map = files
-            .map(|f| {
-                f.iter()
-                    .map(|(k, v)| {
-                        let field_name: String = k.extract()?;
-                        let tuple: (String, Vec<u8>, String) = v.extract()?;
-                        Ok((field_name, tuple))
-                    })
-                    .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
-            })
-            .transpose()?;
-
-        let client = self.client.clone();
-        let config = self.config.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let resolved_url = resolve_url(&config.base_url, &url)?;
-            let start = Instant::now();
-
-            // Build request
-            let mut req = client.request(
-                method
-                    .parse()
-                    .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
-                &resolved_url,
-            );
-
-            // Add query parameters
-            if let Some(p) = params_vec {
-                req = req.query(&p);
-            }
-
-            // Add headers
-            if let Some(h) = headers_obj {
-                for (key, values) in &h.inner {
-                    for value in values {
-                        req = req.header(key.as_str(), value.as_str());
-                    }
-                }
-            }
-
-            // Add cookies
-            if let Some(c) = cookies_obj {
-                for (name, value) in &c.inner {
-                    req = req.header("Cookie", format!("{name}={value}"));
-                }
-            }
-
-            // Add client-level cookies
-            for (name, value) in &config.cookies.inner {
-                req = req.header("Cookie", format!("{name}={value}"));
-            }
-
-            // Set body
-            if let Some(json_str) = json_str {
-                req = req.header("Content-Type", "application/json");
-                req = req.body(json_str);
-            } else if let Some(form_data) = data_map {
-                req = req.form(&form_data);
-            } else if let Some(body) = content_vec {
-                req = req.body(body);
-            } else if let Some(files_map) = files_map {
-                let mut form = reqwest::multipart::Form::new();
-                for (field_name, (filename, file_content, content_type)) in files_map {
-                    let part = reqwest::multipart::Part::bytes(file_content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                }
-                req = req.multipart(form);
-            }
-
-            // Authentication
-            let auth_to_use = auth.as_ref().or(config.auth.as_ref());
-            if let Some(auth_config) = auth_to_use {
-                match &auth_config.auth_type {
-                    AuthType::Basic { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                    AuthType::Bearer { token } => {
-                        req = req.bearer_auth(token);
-                    }
-                    AuthType::Digest { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                }
-            }
-
-            // Timeout (per-request)
-            if let Some(t) = timeout {
-                req = req.timeout(Duration::from_secs_f64(t));
-            }
-
-            // Execute request
-            let response = req.send().await.map_err(Error::from)?;
-
-            // Capture final URL before consuming response
-            let final_url = response.url().to_string();
-
-            // Convert to our Response type
-            let mut resp = Response::from_reqwest(response, start, &method).await?;
-
-            // Create and attach a Request object for HTTPX compatibility
-            if let Ok(url) = URL::new(&final_url) {
-                let request = Request::new_internal(method.to_uppercase(), url, Headers::default(), None, false);
-                resp.set_request(request);
-            }
-
-            // Set default encoding if configured
-            if let Some(ref encoding) = config.default_encoding {
-                resp.set_default_encoding(encoding.clone());
-            }
-
-            Ok(resp)
-        })
-    }
-
-    /// Async GET request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn get<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "GET".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// Async POST request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn post<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "POST".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// Async PUT request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn put<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "PUT".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// Async PATCH request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, content=None, data=None, json=None, files=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn patch<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "PATCH".to_string(), url, params, headers, cookies, content, data, json, files, auth, timeout, follow_redirects)
-    }
-
-    /// Async DELETE request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn delete<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "DELETE".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// Async HEAD request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn head<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "HEAD".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// Async OPTIONS request
-    #[pyo3(signature = (url, params=None, headers=None, cookies=None, auth=None, timeout=None, follow_redirects=None))]
-    pub fn options<'py>(
-        &self,
-        py: Python<'py>,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.request(py, "OPTIONS".to_string(), url, params, headers, cookies, None, None, None, None, auth, timeout, follow_redirects)
-    }
-
-    /// Close the client
-    pub fn aclose<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let closed = self.closed.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            *closed.lock().unwrap_or_else(|e| e.into_inner()) = true;
-            Ok(())
-        })
-    }
-
-    /// Async stream a request - returns AsyncStreamingResponse without loading body
-    #[pyo3(signature = (
-        method,
-        url,
-        params=None,
-        headers=None,
-        cookies=None,
-        content=None,
-        data=None,
-        json=None,
-        files=None,
-        auth=None,
-        timeout=None,
-        follow_redirects=None
-    ))]
-    pub fn stream<'py>(
-        &self,
-        py: Python<'py>,
-        method: String,
-        url: String,
-        params: Option<&Bound<'_, PyDict>>,
-        headers: Option<&Bound<'_, PyAny>>,
-        cookies: Option<&Bound<'_, PyAny>>,
-        content: Option<&Bound<'_, PyBytes>>,
-        data: Option<&Bound<'_, PyDict>>,
-        json: Option<&Bound<'_, PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        auth: Option<Auth>,
-        timeout: Option<f64>,
-        #[allow(unused_variables)] follow_redirects: Option<bool>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let params_vec = params.map(|p| extract_params(Some(p))).transpose()?;
-        let headers_obj = headers.map(|h| extract_headers(h)).transpose()?;
-        let cookies_obj = cookies
-            .map(|c| Ok::<_, PyErr>(Cookies { inner: extract_cookies(c)? }))
-            .transpose()?;
-        let content_vec = content.map(|c| c.as_bytes().to_vec());
-        let data_map = data
-            .map(|d| {
-                d.iter()
-                    .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
-                    .collect::<PyResult<HashMap<String, String>>>()
-            })
-            .transpose()?;
-        let json_str = json.map(|j| py_to_json_string(j)).transpose()?;
-        let files_map = files
-            .map(|f| {
-                f.iter()
-                    .map(|(k, v)| {
-                        let field_name: String = k.extract()?;
-                        let tuple: (String, Vec<u8>, String) = v.extract()?;
-                        Ok((field_name, tuple))
-                    })
-                    .collect::<PyResult<HashMap<String, (String, Vec<u8>, String)>>>()
-            })
-            .transpose()?;
-
-        let client = self.client.clone();
-        let config = self.config.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let resolved_url = resolve_url(&config.base_url, &url)?;
-            let start = Instant::now();
-
-            // Build request
-            let mut req = client.request(
-                method
-                    .parse()
-                    .map_err(|_| Error::request(format!("Invalid method: {method}")))?,
-                &resolved_url,
-            );
-
-            // Add query parameters
-            if let Some(p) = params_vec {
-                req = req.query(&p);
-            }
-
-            // Add headers
-            if let Some(h) = headers_obj {
-                for (key, values) in &h.inner {
-                    for value in values {
-                        req = req.header(key.as_str(), value.as_str());
-                    }
-                }
-            }
-
-            // Add cookies
-            if let Some(c) = cookies_obj {
-                for (name, value) in &c.inner {
-                    req = req.header("Cookie", format!("{name}={value}"));
-                }
-            }
-
-            // Add client-level cookies
-            for (name, value) in &config.cookies.inner {
-                req = req.header("Cookie", format!("{name}={value}"));
-            }
-
-            // Set body
-            if let Some(json_str) = json_str {
-                req = req.header("Content-Type", "application/json");
-                req = req.body(json_str);
-            } else if let Some(form_data) = data_map {
-                req = req.form(&form_data);
-            } else if let Some(body) = content_vec {
-                req = req.body(body);
-            } else if let Some(files_map) = files_map {
-                let mut form = reqwest::multipart::Form::new();
-                for (field_name, (filename, file_content, content_type)) in files_map {
-                    let part = reqwest::multipart::Part::bytes(file_content)
-                        .file_name(filename)
-                        .mime_str(&content_type)
-                        .map_err(|e| Error::request(e.to_string()))?;
-                    form = form.part(field_name, part);
-                }
-                req = req.multipart(form);
-            }
-
-            // Authentication
-            let auth_to_use = auth.as_ref().or(config.auth.as_ref());
-            if let Some(auth_config) = auth_to_use {
-                match &auth_config.auth_type {
-                    AuthType::Basic { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                    AuthType::Bearer { token } => {
-                        req = req.bearer_auth(token);
-                    }
-                    AuthType::Digest { username, password } => {
-                        req = req.basic_auth(username, Some(password));
-                    }
-                }
-            }
-
-            // Timeout (per-request)
-            if let Some(t) = timeout {
-                req = req.timeout(Duration::from_secs_f64(t));
-            }
-
-            // Execute request - don't consume body
-            let response = req.send().await.map_err(Error::from)?;
-            let elapsed = start.elapsed().as_secs_f64();
-
-            Ok(AsyncStreamingResponse::from_async(response, elapsed, &method.to_uppercase()))
-        })
-    }
-
-    /// Async context manager enter
-    pub fn __aenter__<'py>(slf: Py<Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let slf_clone = slf.clone_ref(py);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_clone) })
-    }
-
-    /// Async context manager exit
-    #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
-    pub fn __aexit__<'py>(&self, py: Python<'py>, _exc_type: Option<&Bound<'_, PyAny>>, _exc_val: Option<&Bound<'_, PyAny>>, _exc_tb: Option<&Bound<'_, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
-        let closed = self.closed.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            *closed.lock().unwrap_or_else(|e| e.into_inner()) = true;
-            Ok(())
-        })
-    }
-
-    pub fn __repr__(&self) -> String {
-        format!("<AsyncClient base_url={:?}>", self.config.base_url)
-    }
-}
-
-/// Convert Python object to JSON string
-fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let value = py_to_json_value(obj)?;
-    sonic_rs::to_string(&value).map_err(|e| Error::request(e.to_string()).into())
-}
-
-/// Convert Python object to sonic_rs::Value
-fn py_to_json_value(obj: &Bound<'_, PyAny>) -> PyResult<sonic_rs::Value> {
-    use pyo3::types::PyList;
-    use sonic_rs::json;
-
-    if obj.is_none() {
-        Ok(sonic_rs::Value::default())
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Ok(json!(b))
-    } else if let Ok(i) = obj.extract::<i64>() {
-        Ok(json!(i))
-    } else if let Ok(f) = obj.extract::<f64>() {
-        Ok(json!(f))
-    } else if let Ok(s) = obj.extract::<String>() {
-        Ok(json!(s))
-    } else if obj.is_instance_of::<PyList>() {
-        let list = obj.extract::<Bound<'_, PyList>>()?;
-        let arr: Vec<sonic_rs::Value> = list
-            .iter()
-            .map(|item| py_to_json_value(&item))
-            .collect::<PyResult<_>>()?;
-        Ok(sonic_rs::Value::from(arr))
-    } else if obj.is_instance_of::<PyDict>() {
-        let dict = obj.extract::<Bound<'_, PyDict>>()?;
-        let mut obj_map = sonic_rs::Object::new();
-        for (key, value) in dict.iter() {
-            let key: String = key.extract()?;
-            let value = py_to_json_value(&value)?;
-            obj_map.insert(&key, value);
+            self.base_url = Some(URL::parse(&normalized)?);
         }
-        Ok(sonic_rs::Value::from(obj_map))
-    } else {
-        // Try to convert to string as fallback
-        let s = obj.str()?.extract::<String>()?;
-        Ok(json!(s))
+        Ok(())
+    }
+
+    /// Get headers
+    #[getter]
+    fn headers(&self) -> Headers {
+        self.headers.clone()
+    }
+
+    /// Set headers
+    #[setter]
+    fn set_headers(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(headers) = value.extract::<Headers>() {
+            self.headers = headers;
+        } else if let Ok(dict) = value.cast::<PyDict>() {
+            let mut headers = Headers::default();
+            for (key, val) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = val.extract()?;
+                headers.set(k, v);
+            }
+            self.headers = headers;
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err("headers must be a Headers object or dict"));
+        }
+        Ok(())
+    }
+
+    /// Get cookies
+    #[getter]
+    fn cookies(&self) -> Cookies {
+        self.cookies.clone()
+    }
+
+    /// Set cookies
+    #[setter]
+    fn set_cookies(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(cookies) = value.extract::<Cookies>() {
+            self.cookies = cookies;
+        } else if let Ok(dict) = value.cast::<PyDict>() {
+            let mut cookies = Cookies::default();
+            for (key, val) in dict.iter() {
+                let k: String = key.extract()?;
+                let v: String = val.extract()?;
+                cookies.set(&k, &v);
+            }
+            self.cookies = cookies;
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err("cookies must be a Cookies object or dict"));
+        }
+        Ok(())
+    }
+
+    /// Get timeout
+    #[getter]
+    fn timeout(&self) -> Timeout {
+        self.timeout.clone()
+    }
+
+    /// Set timeout
+    #[setter]
+    fn set_timeout(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(timeout) = value.extract::<Timeout>() {
+            self.timeout = timeout;
+        } else if let Ok(seconds) = value.extract::<f64>() {
+            self.timeout = Timeout::new(Some(seconds), None, None, None, None);
+        } else if value.is_none() {
+            self.timeout = Timeout::default();
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err("timeout must be a Timeout object or number"));
+        }
+        Ok(())
+    }
+
+    /// Mount a transport for a given URL pattern
+    fn mount(&mut self, pattern: &str, transport: Py<PyAny>) {
+        self.mounts.insert(pattern.to_string(), transport);
+    }
+
+    /// Get the default transport
+    #[getter]
+    fn _transport<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if let Some(ref t) = self.transport {
+            Ok(t.bind(py).clone())
+        } else if let Some(ref t) = self.default_transport {
+            Ok(t.bind(py).clone())
+        } else {
+            // This shouldn't happen if initialized properly
+            let transport_module = py.import("requestx")?;
+            let http_transport = transport_module.getattr("HTTPTransport")?;
+            let transport = http_transport.call0()?;
+            Ok(transport)
+        }
+    }
+
+    /// Get the transport for a given URL, considering mounts
+    fn _transport_for_url<'py>(&self, py: Python<'py>, url: &URL) -> PyResult<Bound<'py, PyAny>> {
+        let url_str = url.to_string();
+
+        // Check mounts in order of specificity (longer patterns first)
+        let mut sorted_patterns: Vec<_> = self.mounts.keys().collect();
+        sorted_patterns.sort_by_key(|b| std::cmp::Reverse(b.len()));
+
+        for pattern in sorted_patterns {
+            if crate::common::url_matches_pattern(&url_str, pattern) {
+                if let Some(transport) = self.mounts.get(pattern) {
+                    return Ok(transport.bind(py).clone());
+                }
+            }
+        }
+
+        // Return default transport
+        self._transport(py)
+    }
+
+    fn __repr__(&self) -> String {
+        "<Client>".to_string()
+    }
+
+    /// Compute headers for a redirect request.
+    /// This handles cross-origin auth header stripping.
+    fn _redirect_headers(&self, request: &Request, url: &URL, _method: &str) -> Headers {
+        let mut headers = request.headers_ref().clone();
+
+        // Determine if same origin - same scheme, host, port
+        let request_url = request.url_ref();
+        let same_host = request_url.get_host_str().to_lowercase() == url.get_host_str().to_lowercase();
+        let same_scheme = request_url.get_scheme().to_uppercase() == url.get_scheme().to_uppercase();
+
+        // Get ports, defaulting to standard ports for comparison
+        let request_port = request_url.get_port().unwrap_or_else(|| {
+            if request_url.get_scheme() == "https" {
+                443
+            } else {
+                80
+            }
+        });
+        let url_port = url
+            .get_port()
+            .unwrap_or_else(|| if url.get_scheme() == "https" { 443 } else { 80 });
+        let same_port = request_port == url_port;
+
+        let same_origin = same_scheme && same_host && same_port;
+
+        // Check if this is an HTTPS upgrade (http -> https on same host with default ports)
+        let is_https_upgrade = !same_scheme && request_url.get_scheme() == "http" && url.get_scheme() == "https" && same_host && request_port == 80 && url_port == 443;
+
+        // Update Host header for the new URL
+        let new_host = crate::common::get_host_header(url);
+        headers.set("Host".to_string(), new_host);
+
+        // Strip Authorization header unless same origin or HTTPS upgrade
+        if !same_origin && !is_https_upgrade {
+            headers.remove("authorization");
+        }
+
+        headers
     }
 }

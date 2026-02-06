@@ -341,7 +341,7 @@ jobs:
         run: uv run maturin develop
 
       - name: Run Python tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests_requestx/ -v
 
   # ===========================================================================
   # GitHub Release

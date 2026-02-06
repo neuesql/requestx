@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version Bump Script for Requestx
-# Updates version in all 3 files: Cargo.toml, pyproject.toml, python/requestx/__init__.py
+# Updates version in: Cargo.toml, pyproject.toml
 #
 # Usage:
 #   ./bump.sh 1.2.3        # Set specific version
@@ -22,7 +22,6 @@ NC='\033[0m' # No Color
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CARGO_TOML="$PROJECT_ROOT/Cargo.toml"
 PYPROJECT_TOML="$PROJECT_ROOT/pyproject.toml"
-INIT_PY="$PROJECT_ROOT/python/requestx/__init__.py"
 
 # Get current version from pyproject.toml
 get_current_version() {
@@ -72,14 +71,12 @@ update_file() {
 verify_versions() {
     local cargo_ver=$(grep '^version = ' "$CARGO_TOML" | head -1 | sed 's/version = "\(.*\)"/\1/')
     local pyproject_ver=$(grep '^version = ' "$PYPROJECT_TOML" | head -1 | sed 's/version = "\(.*\)"/\1/')
-    local init_ver=$(grep '__version__ = ' "$INIT_PY" | sed 's/__version__ = "\(.*\)"/\1/')
 
     echo -e "${BLUE}Current versions:${NC}"
     echo "  Cargo.toml:     $cargo_ver"
     echo "  pyproject.toml: $pyproject_ver"
-    echo "  __init__.py:    $init_ver"
 
-    if [[ "$cargo_ver" == "$pyproject_ver" && "$cargo_ver" == "$init_ver" ]]; then
+    if [[ "$cargo_ver" == "$pyproject_ver" ]]; then
         echo -e "${GREEN}All versions in sync${NC}"
         return 0
     else
@@ -128,9 +125,6 @@ main() {
     update_file "$PYPROJECT_TOML" "$current_version" "$new_version" "version = "
     echo "  Updated pyproject.toml"
 
-    # Update __init__.py
-    update_file "$INIT_PY" "$current_version" "$new_version" "__version__ = "
-    echo "  Updated python/requestx/__init__.py"
 
     # Verify
     echo ""
@@ -140,7 +134,7 @@ main() {
     echo -e "${GREEN}Version updated to $new_version${NC}"
     echo ""
     echo "Next steps:"
-    echo "  git add Cargo.toml pyproject.toml python/requestx/__init__.py"
+    echo "  git add Cargo.toml pyproject.toml"
     echo "  git commit -m \"chore: bump version to $new_version\""
     echo "  git tag v$new_version"
     echo "  git push origin main --tags"

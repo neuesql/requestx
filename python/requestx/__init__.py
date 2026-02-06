@@ -1,118 +1,89 @@
-"""
-Requestx - High-performance Python HTTP client based on reqwest (Rust)
+# RequestX - High-performance Python HTTP client
+# API-compatible with httpx, powered by Rust's reqwest via PyO3
 
-This library provides a fast HTTP client with an API compatible with HTTPX,
-powered by the Rust reqwest library for maximum performance.
+import http.cookiejar as _http_cookiejar  # noqa: F401  # Import for side effect (httpx compat)
 
-Example usage:
-
-    # Sync API
-    import requestx
-
-    response = requestx.get("https://httpbin.org/get")
-    print(response.status_code)
-    print(response.json())
-
-    # Using client for connection pooling
-    with requestx.Client() as client:
-        response = client.get("https://httpbin.org/get")
-        print(response.text)
-
-    # Async API
-    import asyncio
-
-    async def main():
-        async with requestx.AsyncClient() as client:
-            response = await client.get("https://httpbin.org/get")
-            print(response.json())
-
-    asyncio.run(main())
-
-    # Streaming Responses (sync)
-    with requestx.Client() as client:
-        with client.stream("GET", "https://httpbin.org/bytes/1000") as response:
-            for chunk in response.iter_bytes(chunk_size=100):
-                print(len(chunk))
-
-    # Streaming Responses (async)
-    async def stream_example():
-        async with requestx.AsyncClient() as client:
-            async with await client.stream("GET", "https://httpbin.org/bytes/1000") as response:
-                async for chunk in response.aiter_bytes(chunk_size=100):
-                    print(len(chunk))
-
-    asyncio.run(stream_example())
-"""
-
-from typing import (
-    Protocol,
-    runtime_checkable,
+from ._core import (  # noqa: F401
+    # Version info
+    __version__,
+    __title__,
+    __description__,
+    # Core types
+    URL,
+    Headers,
+    QueryParams,
+    Cookies,
+    # Configuration
+    Timeout,
+    Limits,
+    Proxy,
+    # Transport types (Rust implementations)
+    HTTPTransport,
+    AsyncHTTPTransport,
+    WSGITransport,
+    # Exceptions (pass-through from Rust)
+    InvalidURL,
+    HTTPError,
+    CookieConflict,
 )
 
-from requestx._core import (
-    # Client classes
-    Client,
-    AsyncClient,
-    # Response classes
-    Response,
-    StreamingResponse,
-    AsyncStreamingResponse,
-    # Iterator classes
-    BytesIterator,
-    TextIterator,
-    LinesIterator,
-    AsyncBytesIterator,
-    AsyncTextIterator,
-    AsyncLinesIterator,
-    # Type classes
-    Headers,
-    Cookies,
-    Timeout,
-    Proxy,
-    Auth,
-    Limits,
-    SSLConfig,
-    URL,
-    Request,
-    QueryParams,
-    # Exception classes - Base
+# Compatibility: sentinels, codes wrapper, SSL context, ExplicitPortURL
+from ._compat import (  # noqa: F401
+    USE_CLIENT_DEFAULT,
+    _AuthUnset,
+    _AUTH_DISABLED,
+    _ExplicitPortURL,
+    codes,
+    create_ssl_context,
+)
+
+# Exception hierarchy with request attribute support
+from ._exceptions import (  # noqa: F401
     RequestError,
-    # Transport errors
     TransportError,
-    ConnectError,
-    ReadError,
-    WriteError,
-    CloseError,
-    ProxyError,
-    UnsupportedProtocol,
-    # Protocol errors
-    ProtocolError,
-    LocalProtocolError,
-    RemoteProtocolError,
-    # Timeout errors
     TimeoutException,
     ConnectTimeout,
     ReadTimeout,
     WriteTimeout,
     PoolTimeout,
-    # HTTP status errors
-    HTTPStatusError,
-    # Redirect errors
-    TooManyRedirects,
-    # Decoding errors
+    NetworkError,
+    ConnectError,
+    ReadError,
+    WriteError,
+    CloseError,
+    ProxyError,
+    ProtocolError,
+    LocalProtocolError,
+    RemoteProtocolError,
+    UnsupportedProtocol,
     DecodingError,
-    # Stream errors
+    TooManyRedirects,
     StreamError,
     StreamConsumed,
     StreamClosed,
     ResponseNotRead,
     RequestNotRead,
-    # URL errors
-    InvalidURL,
-    # Cookie errors
-    CookieConflict,
-    # Module-level functions
-    request,
+    _convert_exception,
+)
+
+# Stream classes
+from ._streams import (  # noqa: F401
+    SyncByteStream,
+    AsyncByteStream,
+    ByteStream,
+)
+
+# Transport base classes and implementations
+from ._transports import (  # noqa: F401
+    BaseTransport,
+    AsyncBaseTransport,
+    MockTransport,
+    AsyncMockTransport,
+    ASGITransport,
+)
+
+# Top-level API functions
+from ._api import (  # noqa: F401
     get,
     post,
     put,
@@ -120,144 +91,104 @@ from requestx._core import (
     delete,
     head,
     options,
+    request,
+    stream,
 )
 
-# HTTPX-compatible transport protocol classes
-# These are Protocol stubs to allow type checking and isinstance checks
-# for custom transport implementations
+# Request wrapper
+from ._request import Request  # noqa: F401
 
+# Response wrapper (includes HTTPStatusError)
+from ._response import Response, HTTPStatusError  # noqa: F401
 
-@runtime_checkable
-class BaseTransport(Protocol):
-    """
-    Base class for synchronous HTTP transports.
+# Auth wrappers
+from ._auth import (  # noqa: F401
+    Auth,
+    BasicAuth,
+    DigestAuth,
+    NetRCAuth,
+    FunctionAuth,
+)
 
-    This is a Protocol stub for HTTPX compatibility. Custom transports
-    should implement the handle_request method.
-    """
+# Client classes
+from ._async_client import AsyncClient  # noqa: F401
+from ._client import Client  # noqa: F401
 
-    def handle_request(self, request: Request) -> Response:
-        """
-        Handle a single HTTP request.
+# Import _utils module for utility functions
+from . import _utils  # noqa: F401
 
-        Args:
-            request: The HTTP request to send.
-
-        Returns:
-            The HTTP response.
-        """
-        ...
-
-    def close(self) -> None:
-        """
-        Close the transport.
-        """
-        ...
-
-
-@runtime_checkable
-class AsyncBaseTransport(Protocol):
-    """
-    Base class for asynchronous HTTP transports.
-
-    This is a Protocol stub for HTTPX compatibility. Custom transports
-    should implement the handle_async_request method.
-    """
-
-    async def handle_async_request(self, request: Request) -> Response:
-        """
-        Handle a single HTTP request asynchronously.
-
-        Args:
-            request: The HTTP request to send.
-
-        Returns:
-            The HTTP response.
-        """
-        ...
-
-    async def aclose(self) -> None:
-        """
-        Close the transport asynchronously.
-        """
-        ...
-
-
-__version__ = "1.0.8"
-__all__ = [
-    # Version
-    "__version__",
-    # Client classes
-    "Client",
-    "AsyncClient",
-    # Response classes
-    "Response",
-    "StreamingResponse",
-    "AsyncStreamingResponse",
-    # Iterator classes (for streaming)
-    "BytesIterator",
-    "TextIterator",
-    "LinesIterator",
-    "AsyncBytesIterator",
-    "AsyncTextIterator",
-    "AsyncLinesIterator",
-    # Type classes
-    "Headers",
-    "Cookies",
-    "Timeout",
-    "Proxy",
-    "Auth",
-    "Limits",
-    "SSLConfig",
-    "URL",
-    "Request",
-    "QueryParams",
-    # Transport protocol classes (HTTPX compatibility)
-    "BaseTransport",
-    "AsyncBaseTransport",
-    # Exception classes - Base
-    "RequestError",
-    # Transport errors
-    "TransportError",
-    "ConnectError",
-    "ReadError",
-    "WriteError",
-    "CloseError",
-    "ProxyError",
-    "UnsupportedProtocol",
-    # Protocol errors
-    "ProtocolError",
-    "LocalProtocolError",
-    "RemoteProtocolError",
-    # Timeout errors
-    "TimeoutException",
-    "ConnectTimeout",
-    "ReadTimeout",
-    "WriteTimeout",
-    "PoolTimeout",
-    # HTTP status errors
-    "HTTPStatusError",
-    # Redirect errors
-    "TooManyRedirects",
-    # Decoding errors
-    "DecodingError",
-    # Stream errors
-    "StreamError",
-    "StreamConsumed",
-    "StreamClosed",
-    "ResponseNotRead",
-    "RequestNotRead",
-    # URL errors
-    "InvalidURL",
-    # Cookie errors
-    "CookieConflict",
-    # Module-level functions (sync)
-    "request",
-    "get",
-    "post",
-    "put",
-    "patch",
-    "delete",
-    "head",
-    "options",
-]
+__all__ = sorted(
+    [
+        "__description__",
+        "__title__",
+        "__version__",
+        "ASGITransport",
+        "AsyncBaseTransport",
+        "AsyncByteStream",
+        "AsyncClient",
+        "AsyncHTTPTransport",
+        "AsyncMockTransport",
+        "Auth",
+        "BaseTransport",
+        "BasicAuth",
+        "ByteStream",
+        "Client",
+        "CloseError",
+        "codes",
+        "ConnectError",
+        "ConnectTimeout",
+        "CookieConflict",
+        "Cookies",
+        "create_ssl_context",
+        "DecodingError",
+        "delete",
+        "DigestAuth",
+        "FunctionAuth",
+        "get",
+        "head",
+        "Headers",
+        "HTTPError",
+        "HTTPStatusError",
+        "HTTPTransport",
+        "InvalidURL",
+        "Limits",
+        "LocalProtocolError",
+        "MockTransport",
+        "NetRCAuth",
+        "NetworkError",
+        "options",
+        "patch",
+        "PoolTimeout",
+        "post",
+        "ProtocolError",
+        "Proxy",
+        "ProxyError",
+        "put",
+        "QueryParams",
+        "ReadError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+        "request",
+        "Request",
+        "RequestError",
+        "RequestNotRead",
+        "Response",
+        "ResponseNotRead",
+        "stream",
+        "StreamClosed",
+        "StreamConsumed",
+        "StreamError",
+        "SyncByteStream",
+        "Timeout",
+        "TimeoutException",
+        "TooManyRedirects",
+        "TransportError",
+        "UnsupportedProtocol",
+        "URL",
+        "USE_CLIENT_DEFAULT",
+        "WriteError",
+        "WriteTimeout",
+        "WSGITransport",
+    ],
+    key=str.casefold,
+)
