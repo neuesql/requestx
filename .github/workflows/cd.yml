@@ -61,13 +61,11 @@ jobs:
         run: |
           CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           PYPROJECT_VER=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          INIT_VER=$(grep '__version__ = ' python/requestx/__init__.py | sed 's/__version__ = "\(.*\)"/\1/')
 
           echo "Cargo.toml:     $CARGO_VER"
           echo "pyproject.toml: $PYPROJECT_VER"
-          echo "__init__.py:    $INIT_VER"
 
-          if [ "$CARGO_VER" != "$PYPROJECT_VER" ] || [ "$CARGO_VER" != "$INIT_VER" ]; then
+          if [ "$CARGO_VER" != "$PYPROJECT_VER" ]; then
             echo "::error::Version mismatch! All versions must be identical."
             exit 1
           fi

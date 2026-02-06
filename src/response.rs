@@ -859,7 +859,9 @@ impl Response {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
-        if self.is_stream_consumed && self.stream.is_none() {
+        // Allow iteration if we have content (even if stream was previously consumed)
+        // Only block if we have no content AND stream was consumed
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -900,7 +902,9 @@ impl Response {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
-        if self.is_stream_consumed && self.stream.is_none() {
+        // Allow iteration if we have content (even if stream was previously consumed)
+        // Only block if we have no content AND stream was consumed
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -941,7 +945,9 @@ impl Response {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
-        if self.is_stream_consumed && self.stream.is_none() {
+        // Allow iteration if we have content (even if stream was previously consumed)
+        // Only block if we have no content AND stream was consumed
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
@@ -962,7 +968,9 @@ impl Response {
             return Err(pyo3::exceptions::PyRuntimeError::new_err("Attempted to call an async iterator method on a sync stream."));
         }
 
-        if self.is_stream_consumed && self.stream.is_none() {
+        // Allow iteration if we have content (even if stream was previously consumed)
+        // Only block if we have no content AND stream was consumed
+        if self.is_stream_consumed && self.content.is_empty() && self.stream.is_none() {
             return Err(crate::exceptions::StreamConsumed::new_err(
                 "Attempted to read or stream content, but the content has already been streamed.",
             ));
