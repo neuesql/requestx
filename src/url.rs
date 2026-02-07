@@ -21,7 +21,7 @@ fn decode_fragment(encoded: &str) -> String {
 
 /// URL parsing and manipulation
 #[allow(clippy::upper_case_acronyms)]
-#[pyclass(name = "URL")]
+#[pyclass(name = "URL", freelist = 128)]
 #[derive(Clone, Debug)]
 pub struct URL {
     inner: Url,

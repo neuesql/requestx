@@ -78,7 +78,7 @@ fn extract_key_or_bytes(obj: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
 }
 
 /// HTTP Headers with case-insensitive keys
-#[pyclass(name = "Headers", subclass)]
+#[pyclass(name = "Headers", subclass, freelist = 256)]
 #[derive(Clone, Debug, Default)]
 pub struct Headers {
     /// Store headers as list of (name, value) tuples to preserve order and duplicates

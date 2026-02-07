@@ -8,7 +8,7 @@ impl_byte_stream!(SyncByteStream, "SyncByteStream");
 impl_byte_stream!(AsyncByteStream, "AsyncByteStream");
 
 /// Basic authentication
-#[pyclass(name = "BasicAuth")]
+#[pyclass(name = "BasicAuth", frozen)]
 #[derive(Clone, Debug)]
 pub struct BasicAuth {
     #[pyo3(get)]
@@ -38,7 +38,7 @@ impl BasicAuth {
 }
 
 /// Digest authentication (placeholder)
-#[pyclass(name = "DigestAuth")]
+#[pyclass(name = "DigestAuth", frozen)]
 #[derive(Clone, Debug)]
 pub struct DigestAuth {
     #[pyo3(get)]
@@ -63,7 +63,7 @@ impl DigestAuth {
 }
 
 /// NetRC authentication (placeholder)
-#[pyclass(name = "NetRCAuth")]
+#[pyclass(name = "NetRCAuth", frozen)]
 #[derive(Clone, Debug)]
 pub struct NetRCAuth {
     #[pyo3(get)]
@@ -85,7 +85,7 @@ impl NetRCAuth {
 
 /// HTTP status codes - provides flexible access patterns
 #[allow(non_camel_case_types)]
-#[pyclass(name = "codes", subclass)]
+#[pyclass(name = "codes", subclass, frozen)]
 pub struct codes;
 
 impl codes {
