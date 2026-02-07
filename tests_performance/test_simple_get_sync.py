@@ -4,7 +4,7 @@ import pytest
 from http_benchmark.benchmark import BenchmarkConfiguration, BenchmarkRunner
 
 # Test URL - using localhost for faster benchmarks
-TEST_URL = "http://localhost/get"
+TEST_URL = "http://0.0.0.0/get"
 
 
 def run_benchmark(client_library: str) -> dict:
@@ -17,7 +17,7 @@ def run_benchmark(client_library: str) -> dict:
         client_library=client_library,
         is_async=False,
         timeout=30,
-        verify_ssl=True,
+        verify_ssl=False,
         name=f"{client_library}_sync_get",
     )
     runner = BenchmarkRunner(config)
