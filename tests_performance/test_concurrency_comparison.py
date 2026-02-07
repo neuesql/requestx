@@ -3,7 +3,7 @@
 import pytest
 from http_benchmark.benchmark import BenchmarkConfiguration, BenchmarkRunner
 
-TEST_URL = "http://localhost/get"
+TEST_URL = "http://0.0.0.0/get"
 CONCURRENCY_LEVELS = [1, 2, 4, 6, 8, 10]
 
 
