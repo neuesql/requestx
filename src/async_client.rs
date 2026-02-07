@@ -56,7 +56,7 @@ pub struct AsyncClient {
 
 impl Default for AsyncClient {
     fn default() -> Self {
-        Self::new_impl(None, None, None, None, None, None, None, None).unwrap()
+        Self::new_impl(None, None, None, None, None, None, None, None, None).unwrap()
     }
 }
 
@@ -70,6 +70,7 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<URL>,
+        verify: Option<bool>,
     ) -> PyResult<Self> {
         let timeout = timeout.unwrap_or_default();
         let limits = limits.unwrap_or_default();
@@ -81,6 +82,11 @@ impl AsyncClient {
         } else {
             reqwest::redirect::Policy::none()
         });
+
+        // Disable TLS certificate verification if verify=false
+        if verify == Some(false) {
+            builder = builder.tls_danger_accept_invalid_certs(true);
+        }
 
         // Configure timeouts properly based on what's set
         // Connect timeout is specific to connection establishment
@@ -147,7 +153,7 @@ impl AsyncClient {
 #[pymethods]
 impl AsyncClient {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, verify=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
@@ -163,6 +169,7 @@ impl AsyncClient {
         transport: Option<Py<PyAny>>,
         mounts: Option<&Bound<'_, PyDict>>,
         proxy: Option<&str>,
+        verify: Option<bool>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -229,7 +236,7 @@ impl AsyncClient {
             None
         };
 
-        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, limits_obj, follow_redirects, max_redirects, base_url_obj)?;
+        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, limits_obj, follow_redirects, max_redirects, base_url_obj, verify)?;
 
         // Set trust_env
         if let Some(trust) = trust_env {
