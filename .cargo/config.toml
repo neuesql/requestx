@@ -1,0 +1,10 @@
+# PyO3 0.28 Performance Optimization
+# Note: pyo3_disable_reference_pool was considered but removed because
+# this codebase uses many Py<T> types in async contexts which may be
+# dropped outside the GIL. The overhead of the reference pool is
+# acceptable compared to potential aborts/segfaults.
+#
+# If you want maximum performance and can guarantee all Py<T> drops
+# happen within Python::attach contexts, you can re-enable:
+# [build]
+# rustflags = ["--cfg", "pyo3_disable_reference_pool"]

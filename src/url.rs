@@ -21,7 +21,7 @@ fn decode_fragment(encoded: &str) -> String {
 
 /// URL parsing and manipulation
 #[allow(clippy::upper_case_acronyms)]
-#[pyclass(name = "URL")]
+#[pyclass(name = "URL", freelist = 128, frozen)]
 #[derive(Clone, Debug)]
 pub struct URL {
     inner: Url,
@@ -48,6 +48,22 @@ impl URL {
             inner: url,
             fragment,
             has_trailing_slash: true,
+            empty_scheme: false,
+            empty_host: false,
+            original_host: None,
+            relative_path: None,
+            original_raw_path: None,
+        }
+    }
+
+    /// Create URL directly from reqwest::Url (avoids re-parsing the URL string)
+    pub fn from_reqwest_url(url: &reqwest::Url) -> Self {
+        let fragment = url.fragment().map(decode_fragment).unwrap_or_default();
+        let has_trailing_slash = url.path().ends_with('/');
+        Self {
+            inner: url.clone(),
+            fragment,
+            has_trailing_slash,
             empty_scheme: false,
             empty_host: false,
             original_host: None,

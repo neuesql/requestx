@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # PyO3 for Python bindings
-pyo3 = { version = "0.27", features = ["extension-module"] }
-pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
 # Reqwest for HTTP
 reqwest = { version = "0.13", features = [
@@ -30,6 +30,7 @@ reqwest = { version = "0.13", features = [
     "rustls",
     "socks",
     "http2",
+    "hickory-dns",
 ] }
 
 # Async runtime
@@ -76,7 +77,14 @@ hex = "0.4"
 # Thread-safe primitives
 parking_lot = "0.12"
 
+[features]
+default = []
+
 [profile.release]
 lto = true
 codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.release.build-override]
 opt-level = 3

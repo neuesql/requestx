@@ -18,13 +18,16 @@ use crate::url::URL;
 
 /// Helper to extract URL string from either String or URL object
 fn extract_url_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(s) = url.extract::<String>() {
-        Ok(s)
-    } else if let Ok(u) = url.extract::<URL>() {
-        Ok(u.to_string())
-    } else {
-        Err(pyo3::exceptions::PyTypeError::new_err("URL must be a string or URL object"))
+    // Use cast for type check (avoids PyErr creation on mismatch)
+    if let Ok(s) = url.cast::<pyo3::types::PyString>() {
+        return Ok(s.to_string());
     }
+    // Check if it's a URL object
+    if url.is_instance_of::<URL>() {
+        let url_obj: URL = url.extract()?;
+        return Ok(url_obj.to_string());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err("URL must be a string or URL object"))
 }
 
 /// Event hooks storage
@@ -56,7 +59,7 @@ pub struct AsyncClient {
 
 impl Default for AsyncClient {
     fn default() -> Self {
-        Self::new_impl(None, None, None, None, None, None, None, None).unwrap()
+        Self::new_impl(None, None, None, None, None, None, None, None, None).unwrap()
     }
 }
 
@@ -70,6 +73,7 @@ impl AsyncClient {
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<URL>,
+        verify: Option<bool>,
     ) -> PyResult<Self> {
         let timeout = timeout.unwrap_or_default();
         let limits = limits.unwrap_or_default();
@@ -81,6 +85,11 @@ impl AsyncClient {
         } else {
             reqwest::redirect::Policy::none()
         });
+
+        // Disable TLS certificate verification if verify=false
+        if verify == Some(false) {
+            builder = builder.tls_danger_accept_invalid_certs(true);
+        }
 
         // Configure timeouts properly based on what's set
         // Connect timeout is specific to connection establishment
@@ -99,9 +108,11 @@ impl AsyncClient {
             builder = builder.timeout(dur);
         }
 
-        // Configure pool limits
-        if let Some(max_conn) = limits.max_connections {
-            builder = builder.pool_max_idle_per_host(max_conn);
+        // Configure max keepalive connections (idle pool limit per host)
+        // Note: reqwest doesn't support total max_connections like httpx, only max_idle_per_host
+        // We use max_keepalive_connections for this (falling back to max_connections for compat)
+        if let Some(max_keepalive) = limits.max_keepalive_connections.or(limits.max_connections) {
+            builder = builder.pool_max_idle_per_host(max_keepalive);
         }
 
         // Configure pool idle timeout
@@ -147,7 +158,7 @@ impl AsyncClient {
 #[pymethods]
 impl AsyncClient {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, verify=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
@@ -163,6 +174,7 @@ impl AsyncClient {
         transport: Option<Py<PyAny>>,
         mounts: Option<&Bound<'_, PyDict>>,
         proxy: Option<&str>,
+        verify: Option<bool>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let auth_tuple = if let Some(a) = auth {
@@ -176,8 +188,9 @@ impl AsyncClient {
         };
 
         let headers_obj = if let Some(h) = headers {
-            if let Ok(headers_obj) = h.extract::<Headers>() {
-                Some(headers_obj)
+            // Use is_instance_of for type check (avoids PyErr creation on mismatch)
+            if h.is_instance_of::<Headers>() {
+                Some(h.extract::<Headers>()?)
             } else if let Ok(dict) = h.cast::<PyDict>() {
                 let mut hdr = Headers::new();
                 for (key, value) in dict.iter() {
@@ -229,7 +242,7 @@ impl AsyncClient {
             None
         };
 
-        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, limits_obj, follow_redirects, max_redirects, base_url_obj)?;
+        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, limits_obj, follow_redirects, max_redirects, base_url_obj, verify)?;
 
         // Set trust_env
         if let Some(trust) = trust_env {
@@ -774,7 +787,7 @@ impl AsyncClient {
         let default_cookies = self.cookies.clone();
         let base_url = self.base_url.clone();
 
-        // Resolve URL
+        // Phase 1: URL resolution
         let resolved_url = if let Some(base) = &base_url {
             if !url.contains("://") {
                 base.join_url(&url)?.to_string()
@@ -785,7 +798,7 @@ impl AsyncClient {
             url.clone()
         };
 
-        // Process params
+        // Phase 2: Process params
         let final_url = if let Some(p) = &params {
             Python::attach(|py| {
                 let p_bound = p.bind(py);
@@ -803,32 +816,37 @@ impl AsyncClient {
             resolved_url.clone()
         };
 
-        // Build headers for request
-        let mut request_headers = default_headers.clone();
-        if let Some(h) = &headers {
-            Python::attach(|py| {
-                let h_bound = h.bind(py);
-                if let Ok(headers_obj) = h_bound.extract::<Headers>() {
-                    for (k, v) in headers_obj.inner() {
-                        request_headers.set(k.clone(), v.clone());
-                    }
-                } else if let Ok(dict) = h_bound.cast::<PyDict>() {
-                    for (key, value) in dict.iter() {
-                        if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
-                            request_headers.set(k, v);
+        // Phase 3: Build headers for request
+        let mut request_headers = {
+            let mut request_headers = default_headers.clone();
+            if let Some(h) = &headers {
+                Python::attach(|py| {
+                    let h_bound = h.bind(py);
+                    if let Ok(headers_obj) = h_bound.extract::<Headers>() {
+                        for (k, v) in headers_obj.inner() {
+                            request_headers.set(k.clone(), v.clone());
+                        }
+                    } else if let Ok(dict) = h_bound.cast::<PyDict>() {
+                        for (key, value) in dict.iter() {
+                            if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                                request_headers.set(k, v);
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
+            request_headers
+        };
+
+        // Phase 4: Add cookies to headers
+        {
+            let cookie_header = default_cookies.to_header_value();
+            if !cookie_header.is_empty() {
+                request_headers.set("Cookie".to_string(), cookie_header);
+            }
         }
 
-        // Add cookies to headers
-        let cookie_header = default_cookies.to_header_value();
-        if !cookie_header.is_empty() {
-            request_headers.set("Cookie".to_string(), cookie_header);
-        }
-
-        // Process body
+        // Phase 5: Process body
         let body_content = if let Some(c) = content {
             Some(c)
         } else if let Some(j) = &json {
@@ -862,23 +880,25 @@ impl AsyncClient {
             None
         };
 
-        // Process auth using shared helper
-        let auth_action = Python::attach(|py| extract_auth_action(py, auth.as_ref()));
+        // Phase 6: Process auth using shared helper
+        let callable_auth: Option<Py<PyAny>> = {
+            let auth_action = Python::attach(|py| extract_auth_action(py, auth.as_ref()));
 
-        // Apply auth based on action
-        let callable_auth: Option<Py<PyAny>> = match auth_action {
-            AuthAction::UseClientDefault => {
-                if let Some((username, password)) = &self.auth {
-                    apply_basic_auth(&mut request_headers, username, password);
+            // Apply auth based on action
+            match auth_action {
+                AuthAction::UseClientDefault => {
+                    if let Some((username, password)) = &self.auth {
+                        apply_basic_auth(&mut request_headers, username, password);
+                    }
+                    None
                 }
-                None
+                AuthAction::Disabled => None,
+                AuthAction::Basic(username, password) => {
+                    apply_basic_auth(&mut request_headers, &username, &password);
+                    None
+                }
+                AuthAction::Callable(auth_fn) => Some(auth_fn),
             }
-            AuthAction::Disabled => None,
-            AuthAction::Basic(username, password) => {
-                apply_basic_auth(&mut request_headers, &username, &password);
-                None
-            }
-            AuthAction::Callable(auth_fn) => Some(auth_fn),
         };
 
         // Clone transport outside the borrow so the clone lives beyond &self
@@ -966,19 +986,22 @@ impl AsyncClient {
             });
         }
 
-        // Standard HTTP request path using reqwest
+        // Phase 7: Standard HTTP request path using reqwest
         let client = self.inner.clone();
         let method_clone = method.clone();
         let url_clone = final_url.clone();
         let timeout_context = self.timeout.timeout_context().map(|s| s.to_string());
 
-        // Convert Headers to reqwest::header::HeaderMap
-        let mut all_headers = reqwest::header::HeaderMap::new();
-        for (k, v) in request_headers.inner() {
-            if let (Ok(name), Ok(val)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
-                all_headers.insert(name, val);
+        // Phase 8: Convert Headers to reqwest::header::HeaderMap
+        let all_headers = {
+            let mut all_headers = reqwest::header::HeaderMap::new();
+            for (k, v) in request_headers.inner() {
+                if let (Ok(name), Ok(val)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
+                    all_headers.insert(name, val);
+                }
             }
-        }
+            all_headers
+        };
 
         future_into_py(py, async move {
             let method = reqwest::Method::from_bytes(method_clone.as_bytes()).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid HTTP method"))?;
@@ -990,16 +1013,19 @@ impl AsyncClient {
                 builder = builder.body(b);
             }
 
+            // Network I/O
             let start = std::time::Instant::now();
             let response = builder
                 .send()
                 .await
                 .map_err(|e| convert_reqwest_error_with_context(e, timeout_context.as_deref()))?;
-            let elapsed = start.elapsed();
+            let network_elapsed = start.elapsed();
 
+            // Response parsing
             let request = Request::new(method.as_str(), URL::parse(&url_clone)?);
             let mut result = Response::from_reqwest_async_with_context(response, Some(request), timeout_context.as_deref()).await?;
-            result.set_elapsed(elapsed);
+
+            result.set_elapsed(network_elapsed);
             Ok(result)
         })
     }

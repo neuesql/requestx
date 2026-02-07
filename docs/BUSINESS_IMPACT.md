@@ -808,5 +808,5 @@ The combination of **massive performance gains**, **zero-friction adoption**, an
 ---
 
 *Data sources: pypistats.org (January 2025), AWS/GCP/Azure pricing, internal benchmarks*
-*See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmark methodology*
+*See [PERFORMANCE.md](p1.md) for detailed benchmark methodology*
 *Financial estimates based on industry-standard cloud pricing and usage patterns*
