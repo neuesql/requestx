@@ -11,7 +11,6 @@ use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
-use crate::profiling::time_phase;
 use crate::request::{py_value_to_form_str, Request};
 use crate::response::Response;
 use crate::timeout::{Limits, Timeout};

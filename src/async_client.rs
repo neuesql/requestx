@@ -108,9 +108,11 @@ impl AsyncClient {
             builder = builder.timeout(dur);
         }
 
-        // Configure pool limits
-        if let Some(max_conn) = limits.max_connections {
-            builder = builder.pool_max_idle_per_host(max_conn);
+        // Configure max keepalive connections (idle pool limit per host)
+        // Note: reqwest doesn't support total max_connections like httpx, only max_idle_per_host
+        // We use max_keepalive_connections for this (falling back to max_connections for compat)
+        if let Some(max_keepalive) = limits.max_keepalive_connections.or(limits.max_connections) {
+            builder = builder.pool_max_idle_per_host(max_keepalive);
         }
 
         // Configure pool idle timeout
@@ -785,7 +787,7 @@ impl AsyncClient {
         let default_cookies = self.cookies.clone();
         let base_url = self.base_url.clone();
 
-        // Resolve URL
+        // Phase 1: URL resolution
         let resolved_url = if let Some(base) = &base_url {
             if !url.contains("://") {
                 base.join_url(&url)?.to_string()
@@ -796,7 +798,7 @@ impl AsyncClient {
             url.clone()
         };
 
-        // Process params
+        // Phase 2: Process params
         let final_url = if let Some(p) = &params {
             Python::attach(|py| {
                 let p_bound = p.bind(py);
@@ -814,32 +816,37 @@ impl AsyncClient {
             resolved_url.clone()
         };
 
-        // Build headers for request
-        let mut request_headers = default_headers.clone();
-        if let Some(h) = &headers {
-            Python::attach(|py| {
-                let h_bound = h.bind(py);
-                if let Ok(headers_obj) = h_bound.extract::<Headers>() {
-                    for (k, v) in headers_obj.inner() {
-                        request_headers.set(k.clone(), v.clone());
-                    }
-                } else if let Ok(dict) = h_bound.cast::<PyDict>() {
-                    for (key, value) in dict.iter() {
-                        if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
-                            request_headers.set(k, v);
+        // Phase 3: Build headers for request
+        let mut request_headers = {
+            let mut request_headers = default_headers.clone();
+            if let Some(h) = &headers {
+                Python::attach(|py| {
+                    let h_bound = h.bind(py);
+                    if let Ok(headers_obj) = h_bound.extract::<Headers>() {
+                        for (k, v) in headers_obj.inner() {
+                            request_headers.set(k.clone(), v.clone());
+                        }
+                    } else if let Ok(dict) = h_bound.cast::<PyDict>() {
+                        for (key, value) in dict.iter() {
+                            if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
+                                request_headers.set(k, v);
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
+            request_headers
+        };
+
+        // Phase 4: Add cookies to headers
+        {
+            let cookie_header = default_cookies.to_header_value();
+            if !cookie_header.is_empty() {
+                request_headers.set("Cookie".to_string(), cookie_header);
+            }
         }
 
-        // Add cookies to headers
-        let cookie_header = default_cookies.to_header_value();
-        if !cookie_header.is_empty() {
-            request_headers.set("Cookie".to_string(), cookie_header);
-        }
-
-        // Process body
+        // Phase 5: Process body
         let body_content = if let Some(c) = content {
             Some(c)
         } else if let Some(j) = &json {
@@ -873,23 +880,25 @@ impl AsyncClient {
             None
         };
 
-        // Process auth using shared helper
-        let auth_action = Python::attach(|py| extract_auth_action(py, auth.as_ref()));
+        // Phase 6: Process auth using shared helper
+        let callable_auth: Option<Py<PyAny>> = {
+            let auth_action = Python::attach(|py| extract_auth_action(py, auth.as_ref()));
 
-        // Apply auth based on action
-        let callable_auth: Option<Py<PyAny>> = match auth_action {
-            AuthAction::UseClientDefault => {
-                if let Some((username, password)) = &self.auth {
-                    apply_basic_auth(&mut request_headers, username, password);
+            // Apply auth based on action
+            match auth_action {
+                AuthAction::UseClientDefault => {
+                    if let Some((username, password)) = &self.auth {
+                        apply_basic_auth(&mut request_headers, username, password);
+                    }
+                    None
                 }
-                None
+                AuthAction::Disabled => None,
+                AuthAction::Basic(username, password) => {
+                    apply_basic_auth(&mut request_headers, &username, &password);
+                    None
+                }
+                AuthAction::Callable(auth_fn) => Some(auth_fn),
             }
-            AuthAction::Disabled => None,
-            AuthAction::Basic(username, password) => {
-                apply_basic_auth(&mut request_headers, &username, &password);
-                None
-            }
-            AuthAction::Callable(auth_fn) => Some(auth_fn),
         };
 
         // Clone transport outside the borrow so the clone lives beyond &self
@@ -977,19 +986,22 @@ impl AsyncClient {
             });
         }
 
-        // Standard HTTP request path using reqwest
+        // Phase 7: Standard HTTP request path using reqwest
         let client = self.inner.clone();
         let method_clone = method.clone();
         let url_clone = final_url.clone();
         let timeout_context = self.timeout.timeout_context().map(|s| s.to_string());
 
-        // Convert Headers to reqwest::header::HeaderMap
-        let mut all_headers = reqwest::header::HeaderMap::new();
-        for (k, v) in request_headers.inner() {
-            if let (Ok(name), Ok(val)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
-                all_headers.insert(name, val);
+        // Phase 8: Convert Headers to reqwest::header::HeaderMap
+        let all_headers = {
+            let mut all_headers = reqwest::header::HeaderMap::new();
+            for (k, v) in request_headers.inner() {
+                if let (Ok(name), Ok(val)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
+                    all_headers.insert(name, val);
+                }
             }
-        }
+            all_headers
+        };
 
         future_into_py(py, async move {
             let method = reqwest::Method::from_bytes(method_clone.as_bytes()).map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid HTTP method"))?;
@@ -1001,16 +1013,19 @@ impl AsyncClient {
                 builder = builder.body(b);
             }
 
+            // Network I/O
             let start = std::time::Instant::now();
             let response = builder
                 .send()
                 .await
                 .map_err(|e| convert_reqwest_error_with_context(e, timeout_context.as_deref()))?;
-            let elapsed = start.elapsed();
+            let network_elapsed = start.elapsed();
 
+            // Response parsing
             let request = Request::new(method.as_str(), URL::parse(&url_clone)?);
             let mut result = Response::from_reqwest_async_with_context(response, Some(request), timeout_context.as_deref()).await?;
-            result.set_elapsed(elapsed);
+
+            result.set_elapsed(network_elapsed);
             Ok(result)
         })
     }
