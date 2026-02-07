@@ -18,13 +18,16 @@ use crate::url::URL;
 
 /// Helper to extract URL string from either String or URL object
 fn extract_url_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(s) = url.extract::<String>() {
-        Ok(s)
-    } else if let Ok(u) = url.extract::<URL>() {
-        Ok(u.to_string())
-    } else {
-        Err(pyo3::exceptions::PyTypeError::new_err("URL must be a string or URL object"))
+    // Use cast for type check (avoids PyErr creation on mismatch)
+    if let Ok(s) = url.cast::<pyo3::types::PyString>() {
+        return Ok(s.to_string());
     }
+    // Check if it's a URL object
+    if url.is_instance_of::<URL>() {
+        let url_obj: URL = url.extract()?;
+        return Ok(url_obj.to_string());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err("URL must be a string or URL object"))
 }
 
 /// Event hooks storage
@@ -183,8 +186,9 @@ impl AsyncClient {
         };
 
         let headers_obj = if let Some(h) = headers {
-            if let Ok(headers_obj) = h.extract::<Headers>() {
-                Some(headers_obj)
+            // Use is_instance_of for type check (avoids PyErr creation on mismatch)
+            if h.is_instance_of::<Headers>() {
+                Some(h.extract::<Headers>()?)
             } else if let Ok(dict) = h.cast::<PyDict>() {
                 let mut hdr = Headers::new();
                 for (key, value) in dict.iter() {

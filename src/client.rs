@@ -121,15 +121,16 @@ impl Client {
 
     /// Extract a string URL from a &str or URL object
     fn url_to_string(url: &Bound<'_, PyAny>) -> PyResult<String> {
-        // Try to extract as string first
-        if let Ok(s) = url.extract::<String>() {
-            return Ok(s);
+        // Use cast for type check (avoids PyErr creation on mismatch)
+        if let Ok(s) = url.cast::<pyo3::types::PyString>() {
+            return Ok(s.to_string());
         }
-        // Try to extract as URL object
-        if let Ok(url_obj) = url.extract::<URL>() {
+        // Check if it's a URL object
+        if url.is_instance_of::<URL>() {
+            let url_obj: URL = url.extract()?;
             return Ok(url_obj.to_string());
         }
-        // Try calling str() on the object
+        // Fall back to calling str() on the object
         let s = url.str()?.to_string();
         Ok(s)
     }
@@ -297,7 +298,9 @@ impl Client {
 
         // Add request-specific headers
         if let Some(h) = headers {
-            if let Ok(headers_obj) = h.extract::<Headers>() {
+            // Use is_instance_of for type check (avoids PyErr creation on mismatch)
+            if h.is_instance_of::<Headers>() {
+                let headers_obj: Headers = h.extract()?;
                 for (k, v) in headers_obj.inner() {
                     builder = builder.header(k.as_str(), v.as_str());
                 }
@@ -405,8 +408,9 @@ impl Client {
         };
 
         let headers_obj = if let Some(h) = headers {
-            if let Ok(headers_obj) = h.extract::<Headers>() {
-                Some(headers_obj)
+            // Use is_instance_of for type check (avoids PyErr creation on mismatch)
+            if h.is_instance_of::<Headers>() {
+                Some(h.extract::<Headers>()?)
             } else if let Ok(dict) = h.cast::<PyDict>() {
                 let mut hdr = Headers::new();
                 for (key, value) in dict.iter() {
@@ -423,9 +427,9 @@ impl Client {
         };
 
         let cookies_obj = if let Some(c) = cookies {
-            // Try to extract as Cookies first
-            if let Ok(cookies_obj) = c.extract::<Cookies>() {
-                Some(cookies_obj)
+            // Use is_instance_of for type check (avoids PyErr creation on mismatch)
+            if c.is_instance_of::<Cookies>() {
+                Some(c.extract::<Cookies>()?)
             } else if let Ok(dict) = c.cast::<PyDict>() {
                 // Handle Python dict
                 let mut cookies = Cookies::new();

@@ -10,9 +10,25 @@ use crate::url::URL;
 /// Uses sonic-rs for primitive serialization but walks the Python structure directly
 /// to maintain key order (sonic_rs::Object may reorder keys).
 pub(crate) fn py_to_json_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    let mut buf = String::new();
+    // Estimate capacity to reduce reallocations
+    let estimated = estimate_json_size(obj);
+    let mut buf = String::with_capacity(estimated);
     py_to_json_string_impl(obj, &mut buf)?;
     Ok(buf)
+}
+
+/// Estimate the JSON output size for pre-allocation.
+fn estimate_json_size(obj: &Bound<'_, PyAny>) -> usize {
+    use pyo3::types::{PyDict, PyList, PyString};
+    if let Ok(s) = obj.cast::<PyString>() {
+        s.len().unwrap_or(32) + 2 // +2 for quotes
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        list.len() * 32
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
+        dict.len() * 64
+    } else {
+        64 // Default estimate for other types
+    }
 }
 
 /// Recursive JSON string builder that preserves Python dict insertion order.

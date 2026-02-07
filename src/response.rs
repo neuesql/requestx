@@ -10,7 +10,7 @@ use crate::request::Request;
 use crate::url::URL;
 
 /// HTTP Response object
-#[pyclass(name = "Response", subclass)]
+#[pyclass(name = "Response", subclass, freelist = 64)]
 pub struct Response {
     status_code: u16,
     headers: Headers,
