@@ -1,0 +1,24 @@
+services:
+  httpbin:
+    image: mccutchen/go-httpbin
+    container_name: httpbin-go
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      PORT: "80"
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 1G
+        reservations:
+          cpus: '2.0'
+          memory: 512M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    sysctls:
+      - net.core.somaxconn=65535
+      - net.ipv4.tcp_tw_reuse=1
