@@ -30,6 +30,7 @@ reqwest = { version = "0.13", features = [
     "rustls",
     "socks",
     "http2",
+    "hickory-dns",
 ] }
 
 # Async runtime
