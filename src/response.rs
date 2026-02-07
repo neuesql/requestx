@@ -9,6 +9,18 @@ use crate::headers::Headers;
 use crate::request::Request;
 use crate::url::URL;
 
+/// Convert reqwest HTTP version to static string (avoids format! allocation)
+fn http_version_str(version: reqwest::Version) -> &'static str {
+    match version {
+        reqwest::Version::HTTP_09 => "HTTP/0.9",
+        reqwest::Version::HTTP_10 => "HTTP/1.0",
+        reqwest::Version::HTTP_11 => "HTTP/1.1",
+        reqwest::Version::HTTP_2 => "HTTP/2",
+        reqwest::Version::HTTP_3 => "HTTP/3",
+        _ => "HTTP/1.1",
+    }
+}
+
 /// HTTP Response object
 #[pyclass(name = "Response", subclass, freelist = 64)]
 pub struct Response {
@@ -94,8 +106,8 @@ impl Response {
     pub fn from_reqwest(response: reqwest::blocking::Response, request: Option<Request>) -> PyResult<Self> {
         let status_code = response.status().as_u16();
         let headers = Headers::from_reqwest(response.headers());
-        let url = URL::parse(response.url().as_str()).ok();
-        let http_version = format!("{:?}", response.version());
+        let url = Some(URL::from_reqwest_url(response.url()));
+        let http_version = http_version_str(response.version()).to_string();
 
         let content = response.bytes().map_err(|e| {
             if e.is_timeout() {
@@ -132,8 +144,8 @@ impl Response {
     pub async fn from_reqwest_async_with_context(response: reqwest::Response, request: Option<Request>, timeout_context: Option<&str>) -> PyResult<Self> {
         let status_code = response.status().as_u16();
         let headers = Headers::from_reqwest(response.headers());
-        let url = URL::parse(response.url().as_str()).ok();
-        let http_version = format!("{:?}", response.version());
+        let url = Some(URL::from_reqwest_url(response.url()));
+        let http_version = http_version_str(response.version()).to_string();
 
         let content = response.bytes().await.map_err(|e| {
             if e.is_timeout() {

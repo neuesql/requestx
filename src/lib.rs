@@ -14,6 +14,7 @@ mod cookies;
 mod exceptions;
 mod headers;
 mod multipart;
+mod profiling;
 mod queryparams;
 mod request;
 mod response;

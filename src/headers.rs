@@ -132,12 +132,17 @@ impl Headers {
     }
 
     pub fn from_reqwest(headers: &reqwest::header::HeaderMap) -> Self {
-        let inner: Vec<(String, String)> = headers
-            .iter()
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-        // reqwest header names are already lowercase, but we still compute for consistency
-        let lower_keys = inner.iter().map(|(k, _)| k.to_lowercase()).collect();
+        let len = headers.len();
+        let mut inner = Vec::with_capacity(len);
+        let mut lower_keys = Vec::with_capacity(len);
+
+        for (k, v) in headers.iter() {
+            let key = k.as_str().to_string();
+            // reqwest header names are already lowercase, but we compute for consistency
+            lower_keys.push(key.clone());
+            inner.push((key, v.to_str().unwrap_or("").to_string()));
+        }
+
         Self {
             inner,
             lower_keys,

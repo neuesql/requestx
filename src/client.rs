@@ -11,9 +11,10 @@ use crate::cookies::Cookies;
 use crate::exceptions::convert_reqwest_error;
 use crate::headers::Headers;
 use crate::multipart::{build_multipart_body, build_multipart_body_with_boundary, extract_boundary_from_content_type};
+use crate::profiling::time_phase;
 use crate::request::{py_value_to_form_str, Request};
 use crate::response::Response;
-use crate::timeout::Timeout;
+use crate::timeout::{Limits, Timeout};
 use crate::types::BasicAuth;
 use crate::url::URL;
 
@@ -48,7 +49,7 @@ pub struct Client {
 
 impl Default for Client {
     fn default() -> Self {
-        Self::new_impl(None, None, None, None, None, None, None, None).unwrap()
+        Self::new_impl(None, None, None, None, None, None, None, None, None).unwrap()
     }
 }
 
@@ -58,12 +59,14 @@ impl Client {
         headers: Option<Headers>,
         cookies: Option<Cookies>,
         timeout: Option<Timeout>,
+        limits: Option<Limits>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<URL>,
         verify: Option<bool>,
     ) -> PyResult<Self> {
         let timeout = timeout.unwrap_or_default();
+        let limits = limits.unwrap_or_default();
         let follow_redirects = follow_redirects.unwrap_or(true);
         let max_redirects = max_redirects.unwrap_or(20);
 
@@ -84,6 +87,18 @@ impl Client {
 
         if let Some(connect_dur) = timeout.connect_duration() {
             builder = builder.connect_timeout(connect_dur);
+        }
+
+        // Configure max keepalive connections (idle pool limit per host)
+        // Note: reqwest doesn't support total max_connections like httpx, only max_idle_per_host
+        // We use max_keepalive_connections for this (falling back to max_connections for compat)
+        if let Some(max_keepalive) = limits.max_keepalive_connections.or(limits.max_connections) {
+            builder = builder.pool_max_idle_per_host(max_keepalive);
+        }
+
+        // Configure pool idle timeout
+        if let Some(keepalive) = limits.keepalive_expiry {
+            builder = builder.pool_idle_timeout(std::time::Duration::from_secs_f64(keepalive));
         }
 
         let client = builder
@@ -379,13 +394,14 @@ impl Client {
 #[pymethods]
 impl Client {
     #[new]
-    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, verify=None, **_kwargs))]
+    #[pyo3(signature = (*, auth=None, cookies=None, headers=None, timeout=None, limits=None, follow_redirects=None, max_redirects=None, base_url=None, event_hooks=None, trust_env=None, transport=None, mounts=None, proxy=None, verify=None, **_kwargs))]
     fn new(
         py: Python<'_>,
         auth: Option<&Bound<'_, PyAny>>,
         cookies: Option<&Bound<'_, PyAny>>,
         headers: Option<&Bound<'_, PyAny>>,
         timeout: Option<&Bound<'_, PyAny>>,
+        limits: Option<&Bound<'_, PyAny>>,
         follow_redirects: Option<bool>,
         max_redirects: Option<usize>,
         base_url: Option<&Bound<'_, PyAny>>,
@@ -478,6 +494,12 @@ impl Client {
             None
         };
 
+        let limits_obj = if let Some(l) = limits {
+            l.extract::<Limits>().ok()
+        } else {
+            None
+        };
+
         let base_url_obj = if let Some(url) = base_url {
             if let Ok(url_obj) = url.extract::<URL>() {
                 Some(url_obj)
@@ -490,7 +512,7 @@ impl Client {
             None
         };
 
-        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, follow_redirects, max_redirects, base_url_obj, verify)?;
+        let mut client = Self::new_impl(auth_tuple, headers_obj, cookies_obj, timeout_obj, limits_obj, follow_redirects, max_redirects, base_url_obj, verify)?;
 
         // Set trust_env
         if let Some(trust) = trust_env {
