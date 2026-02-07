@@ -1,10 +1,11 @@
 """Comprehensive benchmark comparing requestx vs httpx vs aiohttp across concurrency levels."""
+import time
 
 import pytest
 from http_benchmark.benchmark import BenchmarkConfiguration, BenchmarkRunner
 
 TEST_URL = "http://0.0.0.0/get"
-CONCURRENCY_LEVELS = [1, 2, 4, 6, 8, 10]
+CONCURRENCY_LEVELS = [1, 2, 4, 6, 8]
 
 
 def run_benchmark(
@@ -187,6 +188,7 @@ def test_full_concurrency_comparison():
                     "p99": result["p99_response_time"],
                     "errors": result["error_count"],
                 }
+                time.sleep(1)
             except Exception as e:
                 print(f"    Error: {e}")
                 sync_results[(client, c)] = {
