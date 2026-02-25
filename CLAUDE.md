@@ -5,7 +5,7 @@ High-performance Python HTTP client, API-compatible with httpx, powered by Rust'
 ## Features
 
 - **httpx API compatibility** — Drop-in replacement: `import requestx as httpx` works
-- **AI SDK compatible** — Works with OpenAI, Anthropic SDKs via `http_client=requestx.Client()`
+- **AI SDK compatible** — Works with OpenAI, Anthropic SDKs via `http_client=requestx.Client()` or `AsyncClient`
 - **High performance** — Rust-powered with GIL-free I/O, SIMD JSON (sonic-rs), zero-copy bytes
 - **Full async support** — Tokio runtime for true concurrent multiplexing
 - **Standards compliant** — WHATWG URL, RFC 2388 (multipart), RFC 7616 (digest auth), HTTP/2
@@ -189,9 +189,9 @@ let mut headers = Vec::with_capacity(response.headers().len());
 ```
 
 ### 7. SDK Compatibility
-- requestx patches `type.__instancecheck__` at import to pass httpx.Client isinstance checks
+- requestx patches `builtins.isinstance` at import to pass httpx.Client isinstance checks
 - This enables AI SDK compatibility (OpenAI, Anthropic accept requestx.Client)
-- Patch is global but detection is narrow (class + module name matching)
+- Patch is global but detection is narrow (checks `__name__` == "Client"/"AsyncClient" and `__module__` starts with "requestx")
 
 ## Don't
 
