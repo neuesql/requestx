@@ -78,6 +78,9 @@ class AsyncClient:
         )
         self._pool_timeout = _pool_timeout
 
+        # Store timeout for SDK compatibility (SDK checks http_client.timeout)
+        self._timeout = _timeout_arg
+
         # Extract auth from kwargs before passing to Rust client
         auth = kwargs.pop("auth", None)
         # Validate and convert auth value
@@ -113,21 +116,26 @@ class AsyncClient:
         # Store mounts dictionary
         self._mounts = mounts or {}
 
+        # Extract verify parameter for transport (default True)
+        verify = kwargs.pop("verify", True)
+
         # Create default transport (with proxy if specified)
         custom_transport = kwargs.get("transport", None)
         if custom_transport is not None:
             self._default_transport = custom_transport
         elif proxy is not None:
-            self._default_transport = AsyncHTTPTransport(proxy=proxy)
+            self._default_transport = AsyncHTTPTransport(verify=verify, proxy=proxy)
         else:
             # Check for proxy env vars if trust_env is True
             env_proxy = None
             if trust_env:
                 env_proxy = _get_proxy_from_env_impl()
             if env_proxy:
-                self._default_transport = AsyncHTTPTransport(proxy=env_proxy)
+                self._default_transport = AsyncHTTPTransport(
+                    verify=verify, proxy=env_proxy
+                )
             else:
-                self._default_transport = AsyncHTTPTransport()
+                self._default_transport = AsyncHTTPTransport(verify=verify)
 
         self._custom_transport = (
             custom_transport  # Keep reference to user-provided transport
@@ -139,6 +147,8 @@ class AsyncClient:
         # Always create Rust client with follow_redirects=False so Python handles redirects
         # This allows proper logging and history tracking
         kwargs["follow_redirects"] = False
+        # Pass verify to Rust client so it creates its reqwest client with proper TLS settings
+        kwargs["verify"] = verify
         self._client = _AsyncClient(*args, **kwargs)
         self._is_closed = False
 
@@ -293,11 +303,11 @@ class AsyncClient:
 
     @property
     def timeout(self):
-        return self._client.timeout
+        return self._timeout
 
     @timeout.setter
     def timeout(self, value):
-        self._client.timeout = value
+        self._timeout = value
 
     @property
     def event_hooks(self):

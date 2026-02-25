@@ -118,7 +118,7 @@ pub fn compute_digest_response(
 }
 
 /// Base Auth class that can be subclassed in Python
-#[pyclass(name = "Auth", subclass)]
+#[pyclass(name = "Auth", subclass, frozen)]
 #[derive(Clone, Default)]
 pub struct Auth {
     requires_request_body: bool,

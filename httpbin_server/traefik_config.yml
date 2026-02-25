@@ -1,0 +1,35 @@
+# Traefik configuration file
+# Main entrypoint configuration
+entryPoints:
+  http:
+    address: ":80"
+  https:
+    address: ":443"
+
+# Enable Docker provider
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: httpbin_server
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+# Enable access log
+accessLog:
+  filePath: "/var/log/traefik/access.log"
+  format: json
+
+# Enable Traefik log
+log:
+  level: INFO
+
+# Dashboard and API (enabled for debugging)
+api:
+  dashboard: true
+  insecure: true
+
+# Enable health check
+healthcheck:
+  address: ":8082"

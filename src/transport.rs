@@ -262,7 +262,7 @@ impl HTTPTransport {
         let mut builder = reqwest::blocking::Client::builder();
 
         if !verify {
-            builder = builder.danger_accept_invalid_certs(true);
+            builder = builder.tls_danger_accept_invalid_certs(true);
         }
 
         // Add proxy if specified
@@ -407,7 +407,7 @@ impl AsyncHTTPTransport {
         let mut builder = reqwest::Client::builder();
 
         if !verify {
-            builder = builder.danger_accept_invalid_certs(true);
+            builder = builder.tls_danger_accept_invalid_certs(true);
         }
 
         // Add proxy if specified

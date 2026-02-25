@@ -29,7 +29,7 @@ fn py_to_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 /// Query Parameters with support for multiple values per key
-#[pyclass(name = "QueryParams")]
+#[pyclass(name = "QueryParams", frozen, freelist = 128)]
 #[derive(Clone, Debug, Default)]
 pub struct QueryParams {
     inner: Vec<(String, String)>,

@@ -1,0 +1,25 @@
+services:
+  httpbin:
+    image: kennethreitz/httpbin
+    container_name: httpbin
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      WEB_CONCURRENCY: "9"
+      GUNICORN_CMD_ARGS: "--worker-connections=10000 --max-requests=10000 --max-requests-jitter=1000 --timeout=120 --keep-alive=5 --access-logfile /dev/null --error-logfile - --log-level error"
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 4G
+        reservations:
+          cpus: '4.0'
+          memory: 2G
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    sysctls:
+      - net.core.somaxconn=65535
+      - net.ipv4.tcp_tw_reuse=1

@@ -1,0 +1,135 @@
+services:
+  traefik:
+    image: traefik:v3.1.4
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./certs:/certs:ro
+      - ./traefik_config.yml:/etc/traefik/traefik_config.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-logs:/var/log/traefik
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - httpbin_server
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+
+  httpbin1:
+    image: kennethreitz/httpbin
+    container_name: httpbin1
+    restart: unless-stopped
+    networks:
+      - httpbin_server
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.httpbin-http.service=httpbin
+      - traefik.http.services.httpbin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  httpbin2:
+    image: kennethreitz/httpbin
+    container_name: httpbin2
+    restart: unless-stopped
+    networks:
+      - httpbin_server
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.httpbin-http.service=httpbin
+      - traefik.http.services.httpbin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  httpbin3:
+    image: kennethreitz/httpbin
+    container_name: httpbin3
+    restart: unless-stopped
+    networks:
+      - httpbin_server
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.httpbin-http.service=httpbin
+      - traefik.http.services.httpbin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  httpbin4:
+    image: kennethreitz/httpbin
+    container_name: httpbin4
+    restart: unless-stopped
+    networks:
+      - httpbin_server
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.httpbin-http.service=httpbin
+      - traefik.http.services.httpbin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  httpbin5:
+    image: kennethreitz/httpbin
+    container_name: httpbin5
+    restart: unless-stopped
+    networks:
+      - httpbin_server
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.httpbin-http.service=httpbin
+      - traefik.http.services.httpbin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+networks:
+  httpbin_server:
+    name: httpbin_server
+    driver: bridge
+
+volumes:
+  traefik-logs:

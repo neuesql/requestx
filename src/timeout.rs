@@ -263,8 +263,8 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_connections: Some(100),
-            max_keepalive_connections: Some(20),
-            keepalive_expiry: Some(5.0),
+            max_keepalive_connections: Some(30),
+            keepalive_expiry: Some(10.0),
         }
     }
 }

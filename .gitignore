@@ -164,3 +164,4 @@ docs/_build/*
 .env
 Cargo.lock
 uv.lock
+httpbin_server/certs

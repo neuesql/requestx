@@ -15,7 +15,7 @@ struct CookieEntry {
 }
 
 /// HTTP Cookies jar with domain/path support
-#[pyclass(name = "Cookies")]
+#[pyclass(name = "Cookies", freelist = 64)]
 #[derive(Clone, Debug, Default)]
 pub struct Cookies {
     entries: Vec<CookieEntry>,
