@@ -55,24 +55,22 @@ httpx performance **degrades** under concurrent load (1,576 → 1,322 RPS from c
 
 ## Usage
 
-**Sync:**
+**Basic:**
 
 ```python
 import requestx as httpx
 
-# GET
+# GET request
 r = httpx.get("https://api.example.com/users")
-r.json()
-r.status_code
-r.headers
+print(r.json())
 
-# POST
+# POST request
 r = httpx.post("https://api.example.com/users", json={"name": "Alice"})
 
-# With a client (connection pooling, auth, headers)
-with httpx.Client(base_url="https://api.example.com", headers={"Authorization": "Bearer token"}) as client:
+# With a client (connection pooling)
+with httpx.Client(base_url="https://api.example.com") as client:
     r = client.get("/users")
-    r = client.post("/users", json={"name": "Alice"})
+    print(r.status_code)
 ```
 
 **Async:**
@@ -89,14 +87,45 @@ async def main():
 asyncio.run(main())
 ```
 
-**Streaming:**
+**AI SDKs (OpenAI, Anthropic):**
+
+RequestX is a drop-in performance upgrade for AI SDKs that use httpx internally:
 
 ```python
-import requestx as httpx
+import requestx
+from openai import OpenAI
 
-with httpx.stream("GET", "https://example.com/large-file") as r:
-    for chunk in r.iter_bytes():
-        process(chunk)
+# Sync client - up to 4x faster
+client = OpenAI(http_client=requestx.Client())
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# Async client - scales linearly with concurrency
+from openai import AsyncOpenAI
+import asyncio
+
+async def main():
+    async_client = AsyncOpenAI(http_client=requestx.AsyncClient())
+    response = await async_client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": "Hello"}]
+    )
+
+asyncio.run(main())
+```
+
+```python
+import requestx
+from anthropic import Anthropic
+
+client = Anthropic(http_client=requestx.Client())
+message = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
 ```
 
 ---
