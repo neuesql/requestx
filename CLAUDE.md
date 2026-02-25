@@ -2,6 +2,14 @@
 
 High-performance Python HTTP client, API-compatible with httpx, powered by Rust's reqwest via PyO3.
 
+## Features
+
+- **httpx API compatibility** — Drop-in replacement: `import requestx as httpx` works
+- **AI SDK compatible** — Works with OpenAI, Anthropic SDKs via `http_client=requestx.Client()`
+- **High performance** — Rust-powered with GIL-free I/O, SIMD JSON (sonic-rs), zero-copy bytes
+- **Full async support** — Tokio runtime for true concurrent multiplexing
+- **Standards compliant** — WHATWG URL, RFC 2388 (multipart), RFC 7616 (digest auth), HTTP/2
+
 ## Quick Commands
 ```bash
 # Build (always use release for accurate perf testing)
@@ -179,6 +187,11 @@ fn content(&self, py: Python) -> Bound<'_, PyBytes> {
 // ✅ Pre-allocate when size known
 let mut headers = Vec::with_capacity(response.headers().len());
 ```
+
+### 7. SDK Compatibility
+- requestx patches `type.__instancecheck__` at import to pass httpx.Client isinstance checks
+- This enables AI SDK compatibility (OpenAI, Anthropic accept requestx.Client)
+- Patch is global but detection is narrow (class + module name matching)
 
 ## Don't
 
