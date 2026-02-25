@@ -1,4 +1,5 @@
 """Comprehensive benchmark comparing requestx vs httpx vs aiohttp across concurrency levels."""
+
 import time
 
 import pytest

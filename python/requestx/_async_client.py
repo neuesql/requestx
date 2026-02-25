@@ -131,7 +131,9 @@ class AsyncClient:
             if trust_env:
                 env_proxy = _get_proxy_from_env_impl()
             if env_proxy:
-                self._default_transport = AsyncHTTPTransport(verify=verify, proxy=env_proxy)
+                self._default_transport = AsyncHTTPTransport(
+                    verify=verify, proxy=env_proxy
+                )
             else:
                 self._default_transport = AsyncHTTPTransport(verify=verify)
 

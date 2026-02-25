@@ -20,23 +20,23 @@ class TestInstanceCheckCompatibility:
     def test_requestx_client_passes_httpx_isinstance_check(self):
         """requestx.Client should pass isinstance(client, httpx.Client) check."""
         client = requestx.Client()
-        assert isinstance(client, httpx.Client), (
-            "requestx.Client must pass isinstance check for httpx.Client"
-        )
+        assert isinstance(
+            client, httpx.Client
+        ), "requestx.Client must pass isinstance check for httpx.Client"
 
     def test_requestx_async_client_passes_httpx_isinstance_check(self):
         """requestx.AsyncClient should pass isinstance(client, httpx.AsyncClient) check."""
         client = requestx.AsyncClient()
-        assert isinstance(client, httpx.AsyncClient), (
-            "requestx.AsyncClient must pass isinstance check for httpx.AsyncClient"
-        )
+        assert isinstance(
+            client, httpx.AsyncClient
+        ), "requestx.AsyncClient must pass isinstance check for httpx.AsyncClient"
 
     def test_httpx_client_still_works(self):
         """Regression: real httpx.Client should still pass isinstance check."""
         client = httpx.Client()
-        assert isinstance(client, httpx.Client), (
-            "Real httpx.Client must still work after patching"
-        )
+        assert isinstance(
+            client, httpx.Client
+        ), "Real httpx.Client must still work after patching"
 
 
 class TestOpenAISDKCompatibility:
@@ -52,10 +52,7 @@ class TestOpenAISDKCompatibility:
         # OpenAI SDK checks isinstance(http_client, httpx.Client)
         # This should not raise TypeError
         try:
-            openai_client = OpenAI(
-                api_key="test-key",
-                http_client=client
-            )
+            openai_client = OpenAI(api_key="test-key", http_client=client)
         except TypeError as e:
             pytest.fail(f"OpenAI SDK rejected requestx.Client: {e}")
 
@@ -69,10 +66,7 @@ class TestOpenAISDKCompatibility:
         # OpenAI SDK checks isinstance(http_client, httpx.AsyncClient)
         # This should not raise TypeError
         try:
-            openai_client = AsyncOpenAI(
-                api_key="test-key",
-                http_client=client
-            )
+            openai_client = AsyncOpenAI(api_key="test-key", http_client=client)
         except TypeError as e:
             pytest.fail(f"AsyncOpenAI SDK rejected requestx.AsyncClient: {e}")
 
@@ -90,10 +84,7 @@ class TestAnthropicSDKCompatibility:
         # Anthropic SDK checks isinstance(http_client, httpx.Client)
         # This should not raise TypeError
         try:
-            anthropic_client = Anthropic(
-                api_key="test-key",
-                http_client=client
-            )
+            anthropic_client = Anthropic(api_key="test-key", http_client=client)
         except TypeError as e:
             pytest.fail(f"Anthropic SDK rejected requestx.Client: {e}")
 
@@ -107,9 +98,6 @@ class TestAnthropicSDKCompatibility:
         # Anthropic SDK checks isinstance(http_client, httpx.AsyncClient)
         # This should not raise TypeError
         try:
-            anthropic_client = AsyncAnthropic(
-                api_key="test-key",
-                http_client=client
-            )
+            anthropic_client = AsyncAnthropic(api_key="test-key", http_client=client)
         except TypeError as e:
             pytest.fail(f"AsyncAnthropic SDK rejected requestx.AsyncClient: {e}")

@@ -29,18 +29,20 @@ def _patch_httpx_isinstance():
         if classinfo is httpx.Client:
             instance_type = type(instance)
             # Accept actual httpx.Client OR requestx.Client
-            if (instance_type.__name__ == 'Client' and
-                (instance_type.__module__ == 'requestx' or
-                 instance_type.__module__.startswith('requestx.'))):
+            if instance_type.__name__ == "Client" and (
+                instance_type.__module__ == "requestx"
+                or instance_type.__module__.startswith("requestx.")
+            ):
                 return True
 
         # Special case: checking if instance is httpx.AsyncClient
         if classinfo is httpx.AsyncClient:
             instance_type = type(instance)
             # Accept actual httpx.AsyncClient OR requestx.AsyncClient
-            if (instance_type.__name__ == 'AsyncClient' and
-                (instance_type.__module__ == 'requestx' or
-                 instance_type.__module__.startswith('requestx.'))):
+            if instance_type.__name__ == "AsyncClient" and (
+                instance_type.__module__ == "requestx"
+                or instance_type.__module__.startswith("requestx.")
+            ):
                 return True
 
         # All other cases: use original isinstance
