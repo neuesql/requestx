@@ -78,6 +78,9 @@ class AsyncClient:
         )
         self._pool_timeout = _pool_timeout
 
+        # Store timeout for SDK compatibility (SDK checks http_client.timeout)
+        self._timeout = _timeout_arg
+
         # Extract auth from kwargs before passing to Rust client
         auth = kwargs.pop("auth", None)
         # Validate and convert auth value
@@ -298,11 +301,11 @@ class AsyncClient:
 
     @property
     def timeout(self):
-        return self._client.timeout
+        return self._timeout
 
     @timeout.setter
     def timeout(self, value):
-        self._client.timeout = value
+        self._timeout = value
 
     @property
     def event_hooks(self):
