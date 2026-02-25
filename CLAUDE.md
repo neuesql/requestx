@@ -21,21 +21,81 @@ cargo clippy && cargo fmt
 ruff check python/ && ruff format python/
 ```
 
-## Project Structure
-```
-src/                      # Rust implementation (ALL business logic here)
-python/requestx/
-└── __init__.py           # ONLY exports from Rust, NO business logic
+## Architecture
 
-tests_httpx/              # Reference tests (DO NOT MODIFY)
-tests_requestx/           # Target tests (must all pass)
+### Rust-First Design (12,021 LOC across 18 modules)
+
+All business logic lives in Rust. The Python layer contains only thin wrappers for auth protocol, exception conversion, and re-exports.
+
 ```
+src/                           # Rust implementation (ALL business logic)
+├── lib.rs             (121)   # PyModule definition & exports
+├── response.rs       (1866)   # Response handling, 8 iterator types (sync/async)
+├── url.rs            (1618)   # WHATWG-compliant URL parser
+├── client.rs         (1228)   # Sync HTTP client with event hooks
+├── async_client.rs   (1139)   # Async client, Tokio runtime
+├── request.rs         (936)   # Request building, MutableHeaders
+├── transport.rs       (706)   # Mock, HTTP, WSGI transports
+├── cookies.rs         (672)   # Domain/path-aware cookie jar
+├── headers.rs         (627)   # Case-preserving, encoding-aware headers
+├── types.rs           (626)   # Auth types, status codes
+├── common.rs          (488)   # JSON (sonic-rs), decompression, utilities
+├── timeout.rs         (409)   # Timeout, Limits, Proxy configuration
+├── multipart.rs       (387)   # RFC 2388 multipart encoding
+├── queryparams.rs     (338)   # Query string parser & builder
+├── client_common.rs   (252)   # Shared auth, headers, cookies merging
+├── api.rs             (237)   # Top-level module functions
+├── auth.rs            (208)   # DigestAuth (RFC 2069/7616)
+└── exceptions.rs      (163)   # httpx-compatible exception hierarchy
+
+python/requestx/               # Thin Python wrappers (re-exports only)
+├── __init__.py                # 67 public symbols, drop-in for httpx
+├── _client.py                 # Sync Client wrapper (auth, mounts, proxy)
+├── _async_client.py           # Async Client wrapper
+├── _request.py                # Request wrapper (_WrappedRequest for auth)
+├── _response.py               # Response wrapper with .stream property
+├── _client_common.py          # Shared proxy/transport utilities
+├── _api.py                    # Top-level get/post/put/patch/delete/head/options
+├── _auth.py                   # BasicAuth, DigestAuth, NetRCAuth, FunctionAuth
+├── _transports.py             # BaseTransport, MockTransport, ASGITransport
+├── _compat.py                 # Sentinels, SSL context, codes wrapper
+├── _exceptions.py             # Exception hierarchy with request attribute
+├── _streams.py                # ByteStream adapters, streaming wrappers
+└── _utils.py                  # Utility functions
+
+tests_httpx/                   # Reference tests — DO NOT MODIFY (30 files)
+tests_requestx/                # Target tests — must all pass (30 files)
+tests_performance/             # Benchmarks (3 files)
+```
+
+### Rust Exports: 65 types, 17 functions
+
+**Core types:** Client, AsyncClient, Request, Response, URL, Headers, QueryParams, Cookies, Timeout, Limits, Proxy
+
+**Auth:** Auth, BasicAuth, DigestAuth, NetRCAuth, FunctionAuth
+
+**Streaming (8 iterator types):** BytesIterator, TextIterator, LinesIterator, RawIterator + async variants
+
+**Transports:** MockTransport, AsyncMockTransport, HTTPTransport, AsyncHTTPTransport, WSGITransport
+
+**Exceptions (20+):** Full httpx exception hierarchy — HTTPError, TimeoutException, ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout, ConnectError, TooManyRedirects, StreamConsumed, etc.
+
+### Performance Architecture
+
+- **GIL-free I/O**: All network operations release the GIL via `py.allow_threads()` — enables true parallelism
+- **Tokio async runtime**: Async requests multiplex entirely outside Python's GIL
+- **sonic-rs JSON**: SIMD-accelerated parsing/serialization (gains scale with payload size)
+- **Zero-copy bytes**: `PyBytes` for response content, reference-returning getters
+- **Freelist caching**: Headers (256), Cookies (64), URL (128) — avoids repeated allocation
+- **Rust-native decompression**: gzip/brotli/deflate/zstd via flate2, brotli, zstd crates
+- **Connection pooling**: reqwest-level pool with HTTP/2 multiplexing via rustls
+- **Pre-allocation**: `Vec::with_capacity()` when sizes are known
 
 ## Core Dependencies (Cargo.toml)
 ```toml
 [dependencies]
-pyo3 = { version = "0.27", features = ["extension-module"] }
-pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 reqwest = { version = "0.13", features = ["blocking", "json", "cookies", "gzip", "brotli", "deflate", "zstd", "multipart", "stream", "rustls", "socks", "http2"] }
 tokio = { version = "1", features = ["full"] }
 sonic-rs = "0.5"
@@ -97,7 +157,7 @@ impl AsyncClient {
 
 ### 5. JSON: Always sonic-rs
 ```rust
-// ✅ sonic-rs (SIMD-accelerated, 50-300x faster than Python json)
+// ✅ sonic-rs (SIMD-accelerated)
 let parsed: Value = sonic_rs::from_str(&json_str)?;
 let output = sonic_rs::to_string(&value)?;
 
@@ -130,9 +190,15 @@ let mut headers = Vec::with_capacity(response.headers().len());
 
 ## API Compatibility
 
-Must implement all public APIs from [httpx](https://github.com/encode/httpx/tree/master/httpx), excluding CLI.
+98.5% coverage of httpx public API (65/66 symbols). Only `main` (CLI entry point) is excluded by design.
 
-Check `httpx/__init__.py` for the complete public API surface. Goal: `import requestx as httpx` works as drop-in replacement.
+Drop-in replacement: `import requestx as httpx` works.
+
+### Standards Compliance
+- WHATWG URL parsing
+- RFC 2388 (multipart)
+- RFC 2069/7616 (digest auth)
+- HTTP/2 support
 
 ## Success Criteria
 ```bash
@@ -152,69 +218,18 @@ pytest tests_requestx/ -v  # ALL PASSED
 
 ## Test Status: 0 failed / 1406 passed / 1 skipped (Total: 1407)
 
-### Recent Improvements
-- **Pool timeout support**: Python-level pool semaphore for AsyncClient connection limiting
-- **SSLContext support**: Widened verify parameter to accept SSLContext objects
-- **Header case preservation**: Raw header case, Host ordering, default_encoding callable support
-- **DigestAuth cnonce format**: RFC 7616 compliance fix for MD5 and SHA-256
-- **Non-seekable multipart**: Transfer-Encoding chunked for non-seekable file-like objects
-- **Redirect handling** (31/31 tests passing): Malformed redirect URL with explicit port preserved, streaming body redirect raises StreamConsumed, cookie persistence across redirects with proper expiration handling
-- **Auth improvements** (79/79 tests passing): Basic auth in URL, custom auth callables, NetRCAuth, RepeatAuth generator flow, ResponseBodyAuth, streaming body digest auth, MockTransport handler property
-- **Timeout exception types** (10/10 tests passing): ConnectTimeout, WriteTimeout, ReadTimeout now properly classified using timeout context
-- **URL fragment decoding**: Fragments are now properly percent-decoded when returned
-- **Limits support**: AsyncClient now accepts `limits` parameter for connection pool configuration
-- **Exception request attribute**: All exceptions now have `request` property that raises RuntimeError when not set
-- **Client headers isinstance**: `_HeadersProxy` now inherits from Headers, passing isinstance checks
-- **Top-level API iterators**: `post()`, `put()`, `patch()` now consume generators/iterators before passing to Rust
-- **Headers repr encoding**: Repr now includes encoding suffix when not 'ascii'
-- **AsyncClient streaming** (52/52 tests passing): ResponseNotRead, StreamClosed, async iterator content, MockTransport, http_version extensions
-- **Response pickling** (106/106 tests passing): Streaming responses correctly raise StreamClosed after unpickling
-- **Client params**: Client now supports `params` constructor argument with proper QueryParams merging
-- **Module exports**: Fixed `__all__` to be case-insensitively sorted, hidden internal imports
-- **DigestAuth** (8/8 tests passing): Full RFC 2069/7616 compliance, nonce counting, cookie preservation
-- **Response constructor**: Properly unwraps `_WrappedRequest` to pass to Rust `_Response`
-- **Client/AsyncClient exception conversion**: All HTTP methods now properly convert Rust exceptions to Python
-- **URL validation**: Empty scheme (`://example.org`) and empty host (`http://`) now raise UnsupportedProtocol
-- **Iterator type checking**: Sync Client rejects async iterators, AsyncClient rejects sync iterators with RuntimeError
-- **Content streaming** (43/43 tests passing): BytesIO, iterators, async iterators, stream mode detection
-- **Request.stream**: Proper sync/async/dual mode detection with StreamConsumed handling
-- **Transport lifecycle**: Mounted transports properly enter/exit with context manager
-- Proxy support: `_transport_for_url`, `_transport`, `_mounts` dictionary, proxy env vars
-- Auth generator protocol: `sync_auth_flow` and `async_auth_flow` work with custom auth classes
-- **URL encoding** (90/90 tests passing): raw_path encoding, host percent-escape, kwargs validation, non-printable/long component checks
-- **Headers encoding** (27/27 tests passing): Explicit encoding re-decode when `headers.encoding` is set
+All 30 httpx compatibility test files pass. Key coverage areas:
 
-| ID | Test File | Failed | Features | Status | Priority | Effort |
-|----|-----------|--------|----------|--------|----------|--------|
-| 1 | client/test_auth.py | 0 | Basic auth URL, custom auth, netrc, digest, streaming | ✅ Done | - | - |
-| 2 | client/test_async_client.py | 0 | ResponseNotRead, async iterator, http_version | ✅ Done | - | - |
-| 3 | models/test_url.py | 0 | Query/fragment encoding, percent escape, validation | ✅ Done | - | - |
-| 4 | test_timeouts.py | 0 | Pool timeout, connect/read/write timeout | ✅ Done | - | - |
-| 5 | client/test_event_hooks.py | 0 | Hooks firing on redirects | ✅ Done | - | - |
-| 6 | client/test_redirects.py | 0 | Streaming body, malformed, cookies | ✅ Done | - | - |
-| 7 | client/test_client.py | 0 | Raw header, autodetect encoding, default_encoding | ✅ Done | - | - |
-| 8 | models/test_cookies.py | 0 | Domain/path support, repr | ✅ Done | - | - |
-| 9 | test_api.py | 0 | Iterator content in top-level API | ✅ Done | - | - |
-| 10 | models/test_headers.py | 0 | Explicit encoding decode | ✅ Done | - | - |
-| 11 | client/test_headers.py | 0 | Auth extraction from URL | ✅ Done | - | - |
-| 12 | test_multipart.py | 0 | Non-seekable file-like, Transfer-Encoding | ✅ Done | - | - |
-| 13 | models/test_responses.py | 0 | Response pickling | ✅ Done | - | - |
-| 14 | test_config.py | 0 | SSLContext with request | ✅ Done | - | - |
-| 15 | client/test_properties.py | 0 | Client headers case | ✅ Done | - | - |
-| 16 | test_exceptions.py | 0 | Request attribute on exception | ✅ Done | - | - |
-| 17 | test_auth.py | 0 | Digest auth RFC 7616 cnonce format | ✅ Done | - | - |
-| 18 | client/test_queryparams.py | 0 | Client query params | ✅ Done | - | - |
-| 19 | test_exported_members.py | 0 | Module exports | ✅ Done | - | - |
-| 20 | test_content.py | 0 | Stream markers, async iterators, bytesio | ✅ Done | - | - |
-| 21 | models/test_requests.py | 0 | Request.stream, pickle, generators | ✅ Done | - | - |
-| 22 | client/test_proxies.py | 0 | Proxy env vars | ✅ Done | - | - |
-| 23 | models/test_whatwg.py | 0 | WHATWG URL parsing | ✅ Done | - | - |
-| 24 | test_decoders.py | 0 | gzip/brotli/zstd/deflate | ✅ Done | - | - |
-| 25 | test_utils.py | 0 | guess_json_utf, BOM | ✅ Done | - | - |
-| 26 | test_asgi.py | 0 | ASGITransport | ✅ Done | - | - |
-| 27 | models/test_queryparams.py | 0 | set(), add(), remove() | ✅ Done | - | - |
-| 28 | test_wsgi.py | 0 | WSGI transport | ✅ Done | - | - |
-| 29 | client/test_cookies.py | 0 | Cookie jar, persistence | ✅ Done | - | - |
-| 30 | test_status_codes.py | 0 | Status codes | ✅ Done | - | - |
-
-All httpx compatibility tests are now passing.
+| Area | Tests | Features |
+|------|-------|----------|
+| Auth | 79+ | Basic, Digest (RFC 7616), NetRC, custom callables, streaming body |
+| Async Client | 52+ | ResponseNotRead, async iterators, http_version, MockTransport |
+| URL | 90+ | WHATWG parsing, percent-encoding, fragment decoding, validation |
+| Redirects | 31 | Malformed URLs, streaming body, cookie persistence |
+| Responses | 106+ | Pickling, streaming, content decoding |
+| Headers | 27+ | Case preservation, encoding-aware, repr |
+| Content | 43+ | BytesIO, sync/async iterators, stream mode detection |
+| Timeouts | 10+ | Pool, connect, read, write timeout classification |
+| Decoders | — | gzip, brotli, deflate, zstd |
+| Transports | — | Mock, HTTP, WSGI, ASGI |
+| Cookies | — | Domain/path, jar persistence, conflict handling |
