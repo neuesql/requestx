@@ -150,7 +150,7 @@ class TestAsyncOperations:
 class TestErrorHandling:
     """Test error handling with OpenAI SDK."""
 
-    def test_invalid_api_key(self, openai_api_key):
+    def test_invalid_api_key(self):
         """Test that invalid API key raises authentication error."""
         http_client = requestx.Client()
         client = OpenAI(api_key="invalid-key-12345", http_client=http_client)
