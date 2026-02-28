@@ -352,7 +352,15 @@ class Client:
             else:
                 kwargs["params"] = self._params
 
-        rust_request = self._client.build_request(method, merged_url, **kwargs)
+        # Filter to only parameters supported by Rust build_request
+        # Rust signature: (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None)
+        # Note: timeout and extensions are httpx API parameters but not supported by Rust
+        supported_kwargs = {}
+        for key in ["content", "data", "files", "json", "params", "headers", "cookies"]:
+            if key in kwargs and kwargs[key] is not None:
+                supported_kwargs[key] = kwargs[key]
+
+        rust_request = self._client.build_request(method, merged_url, **supported_kwargs)
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         wrapped = _WrappedRequest(rust_request, sync_stream=sync_stream)
         # Link the stream back to the owner for consumption tracking
