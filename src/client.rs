@@ -324,6 +324,14 @@ impl Client {
                     let v: String = value.extract()?;
                     builder = builder.header(k.as_str(), v.as_str());
                 }
+            } else if let Ok(items) = h.call_method0("items") {
+                // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                for item in items.try_iter()? {
+                    let item = item?;
+                    let k: String = item.get_item(0)?.extract()?;
+                    let v: String = item.get_item(1)?.extract()?;
+                    builder = builder.header(k.as_str(), v.as_str());
+                }
             }
         }
 
@@ -431,6 +439,16 @@ impl Client {
                 for (key, value) in dict.iter() {
                     let k: String = key.extract()?;
                     let v: String = value.extract()?;
+                    hdr.set(k, v);
+                }
+                Some(hdr)
+            } else if let Ok(items) = h.call_method0("items") {
+                // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                let mut hdr = Headers::new();
+                for item in items.try_iter()? {
+                    let item = item?;
+                    let k: String = item.get_item(0)?.extract()?;
+                    let v: String = item.get_item(1)?.extract()?;
                     hdr.set(k, v);
                 }
                 Some(hdr)
@@ -741,27 +759,36 @@ impl Client {
             return Ok(response);
         }
 
-        // For regular HTTP, use execute_request but pass the request's headers
-        let headers_bound = pyo3::types::PyDict::new(py);
+        // Build the reqwest request directly from the Request object's complete headers.
+        // The Request already has all headers merged (client defaults + request-specific)
+        // from build_request(), so we must NOT go through execute_request() which would
+        // re-add client defaults and cause header duplication.
+        let url_str = request.url_ref().to_string();
+        let method = reqwest::Method::from_bytes(request.method().as_bytes())
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", request.method())))?;
+
+        let mut builder = self.inner.request(method.clone(), &url_str);
+
+        // Add headers directly from the request (already includes client defaults)
         for (k, v) in request.headers_ref().inner() {
-            headers_bound.set_item(k, v)?;
+            builder = builder.header(k.as_str(), v.as_str());
         }
 
-        self.execute_request(
-            py,
-            request.method(),
-            &request.url_ref().to_string(),
-            request.content_bytes().map(|b| b.to_vec()),
-            None,
-            None,
-            None,
-            None,
-            Some(&headers_bound.as_borrowed()),
-            None,
-            None,
-            None,
-            None,
-        )
+        // Add body content if present
+        if let Some(body) = request.content_bytes() {
+            builder = builder.body(body.to_vec());
+        }
+
+        // Execute request (release GIL during I/O)
+        let start = std::time::Instant::now();
+        let response = py
+            .detach(|| builder.send())
+            .map_err(convert_reqwest_error)?;
+        let elapsed = start.elapsed();
+
+        let mut result = Response::from_reqwest(response, Some(request.clone()))?;
+        result.set_elapsed(elapsed);
+        Ok(result)
     }
 
     #[pyo3(signature = (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None))]
@@ -826,6 +853,15 @@ impl Client {
                             if let (Ok(k), Ok(v)) = (tuple.get_item(0).and_then(|i| i.extract::<String>()), tuple.get_item(1).and_then(|i| i.extract::<String>())) {
                                 all_headers.append(k, v);
                             }
+                        }
+                    }
+                }
+            } else if let Ok(items) = h.call_method0("items") {
+                // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                if let Ok(iter) = items.try_iter() {
+                    for item in iter.flatten() {
+                        if let (Ok(k), Ok(v)) = (item.get_item(0).and_then(|i| i.extract::<String>()), item.get_item(1).and_then(|i| i.extract::<String>())) {
+                            all_headers.set(k, v);
                         }
                     }
                 }

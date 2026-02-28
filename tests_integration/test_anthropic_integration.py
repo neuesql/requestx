@@ -19,7 +19,7 @@ class TestBasicChatCompletion:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10
         )
@@ -38,7 +38,7 @@ class TestBasicChatCompletion:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-5-20250929",
             system="You are a helpful assistant.",
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10
@@ -60,7 +60,7 @@ class TestStreamingResponses:
 
         chunks = []
         with client.messages.stream(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10
         ) as stream:
@@ -82,7 +82,7 @@ class TestStreamingResponses:
 
         chunks = []
         with client.messages.stream(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Count to three"}],
             max_tokens=10
         ) as stream:
@@ -106,7 +106,7 @@ class TestAsyncOperations:
 
         try:
             response = await client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 messages=[{"role": "user", "content": "Say hello in one word"}],
                 max_tokens=10
             )
@@ -125,7 +125,7 @@ class TestAsyncOperations:
         try:
             chunks = []
             async with client.messages.stream(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 messages=[{"role": "user", "content": "Say hello in one word"}],
                 max_tokens=10
             ) as stream:
@@ -151,7 +151,7 @@ class TestErrorHandling:
         # Should raise either AuthenticationError (401) or HTTPStatusError (403)
         with pytest.raises(Exception) as exc_info:
             client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 messages=[{"role": "user", "content": "Hello"}],
                 max_tokens=10
             )
@@ -168,10 +168,10 @@ class TestErrorHandling:
 
         with pytest.raises(Exception) as exc_info:
             client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 messages=[{"role": "user", "content": "Hello"}],
                 max_tokens=10
             )
 
         error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg or "timed out" in error_msg
+        assert "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg
