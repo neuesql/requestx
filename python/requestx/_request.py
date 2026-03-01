@@ -28,6 +28,7 @@ class _WrappedRequest:
         self._sync_stream = sync_stream  # Sync iterator/generator if any
         self._stream_consumed = False
         self._explicit_url = explicit_url  # URL string that should not be normalized
+        self._timeout = None  # Per-request timeout override
 
     def __getattr__(self, name):
         return getattr(self._rust_request, name)

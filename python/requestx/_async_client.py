@@ -385,6 +385,10 @@ class AsyncClient:
                 )
         # Handle URL merging with base_url
         merged_url = self._merge_url(url)
+        # Extract timeout before filtering — store on the request for per-request override
+        per_request_timeout = kwargs.pop("timeout", None)
+        # Also pop extensions (httpx API parameter, not supported by Rust)
+        kwargs.pop("extensions", None)
         # Filter to only parameters supported by Rust build_request
         supported_kwargs = {}
         if "content" in kwargs and kwargs["content"] is not None:
@@ -429,7 +433,11 @@ class AsyncClient:
             method, merged_url, **supported_kwargs
         )
         # Create a wrapper that delegates to the Rust request but has our headers proxy
-        return _WrappedRequest(rust_request)
+        wrapped = _WrappedRequest(rust_request)
+        # Store per-request timeout on the wrapped request
+        if per_request_timeout is not None:
+            wrapped._timeout = per_request_timeout
+        return wrapped
 
     def _merge_url(self, url):
         return _merge_url_impl(self, url)
@@ -552,7 +560,13 @@ class AsyncClient:
         else:
             # Use the Rust client's send
             try:
-                result = await self._client.send(rust_request)
+                # Extract per-request timeout if set on the request
+                send_kwargs = {}
+                req_timeout = getattr(request, "_timeout", None)
+                if req_timeout is not None:
+                    from ._client import _extract_timeout_seconds
+                    send_kwargs["timeout"] = _extract_timeout_seconds(req_timeout)
+                result = await self._client.send(rust_request, **send_kwargs)
                 response = Response(result)
             except (
                 _RequestError,

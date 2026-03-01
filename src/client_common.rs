@@ -147,6 +147,14 @@ pub fn merge_headers_from_py(source: &Bound<'_, PyAny>, target: &mut Headers) ->
             // For repeated headers, we need to append not replace
             target.append(k, v);
         }
+    } else if let Ok(items) = source.call_method0("items") {
+        // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+        for item in items.try_iter()? {
+            let item = item?;
+            let k: String = item.get_item(0)?.extract()?;
+            let v: String = item.get_item(1)?.extract()?;
+            target.set(k, v);
+        }
     }
     Ok(())
 }
