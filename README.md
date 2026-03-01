@@ -162,6 +162,45 @@ All network I/O runs outside Python's GIL, enabling true parallelism that httpx 
 
 ---
 
+## Integration Tests
+
+RequestX includes integration tests that verify compatibility with real AI SDK APIs (OpenAI and Anthropic). These tests make actual API calls and require API keys.
+
+### Setup
+
+1. Install integration dependencies:
+```bash
+pip install -e ".[integration]"
+```
+
+2. Set environment variables:
+```bash
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### Running Integration Tests
+
+```bash
+# Run all integration tests
+pytest tests_integration/ -v
+
+# Run only OpenAI tests
+pytest tests_integration/test_openai_integration.py -v
+
+# Run only Anthropic tests
+pytest tests_integration/test_anthropic_integration.py -v
+```
+
+### Important Notes
+
+- **Cost**: Tests make real API calls and incur costs (~$0.01 per full run)
+- **API Keys**: Tests skip gracefully if API keys are not set
+- **CI/CD**: These tests should NOT run in regular CI (require secrets, cost money)
+- Tests use minimal tokens (max_tokens=10) to minimize costs
+
+---
+
 ## Compatibility
 
 RequestX passes the full httpx test suite (1,406 tests). API coverage is 98.5% — the only excluded symbol is `main` (httpx's CLI entry point).

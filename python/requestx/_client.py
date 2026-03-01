@@ -46,6 +46,33 @@ from ._client_common import (
 )
 
 
+def _extract_timeout_seconds(timeout):
+    """Convert a timeout value to float seconds for Rust.
+
+    Accepts float/int, httpx.Timeout, or requestx.Timeout objects.
+    """
+    if timeout is None:
+        return None
+    if isinstance(timeout, (int, float)):
+        return float(timeout)
+    # httpx.Timeout or requestx.Timeout — use the overall timeout value
+    # httpx.Timeout stores the default as .timeout, requestx.Timeout may use .timeout too
+    if hasattr(timeout, "timeout"):
+        val = timeout.timeout
+        if val is not None:
+            return float(val)
+    # Try read timeout as fallback (used as overall timeout in many SDKs)
+    if hasattr(timeout, "read"):
+        val = timeout.read
+        if val is not None:
+            return float(val)
+    # Last resort: try to convert directly
+    try:
+        return float(timeout)
+    except (TypeError, ValueError):
+        return None
+
+
 class Client:
     """Sync HTTP client that wraps the Rust implementation with proper auth sentinel handling."""
 
@@ -352,17 +379,26 @@ class Client:
             else:
                 kwargs["params"] = self._params
 
+        # Extract timeout before filtering — store on the request for per-request override
+        per_request_timeout = kwargs.pop("timeout", None)
+        # Also pop extensions (httpx API parameter, not supported by Rust)
+        kwargs.pop("extensions", None)
+
         # Filter to only parameters supported by Rust build_request
         # Rust signature: (method, url, *, content=None, data=None, files=None, json=None, params=None, headers=None, cookies=None)
-        # Note: timeout and extensions are httpx API parameters but not supported by Rust
         supported_kwargs = {}
         for key in ["content", "data", "files", "json", "params", "headers", "cookies"]:
             if key in kwargs and kwargs[key] is not None:
                 supported_kwargs[key] = kwargs[key]
 
-        rust_request = self._client.build_request(method, merged_url, **supported_kwargs)
+        rust_request = self._client.build_request(
+            method, merged_url, **supported_kwargs
+        )
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         wrapped = _WrappedRequest(rust_request, sync_stream=sync_stream)
+        # Store per-request timeout on the wrapped request
+        if per_request_timeout is not None:
+            wrapped._timeout = per_request_timeout
         # Link the stream back to the owner for consumption tracking
         if sync_stream is not None:
             sync_stream._owner = wrapped
@@ -439,7 +475,13 @@ class Client:
                 response = Response(result, default_encoding=self._default_encoding)
         else:
             try:
-                result = self._client.send(rust_request)
+                # Extract per-request timeout if set on the request
+                send_kwargs = {}
+                req_timeout = getattr(request, "_timeout", None)
+                if req_timeout is not None:
+                    # Convert to float seconds for Rust
+                    send_kwargs["timeout"] = _extract_timeout_seconds(req_timeout)
+                result = self._client.send(rust_request, **send_kwargs)
                 response = Response(result, default_encoding=self._default_encoding)
             except _RUST_EXCEPTIONS as e:
                 raise _convert_exception(e) from None

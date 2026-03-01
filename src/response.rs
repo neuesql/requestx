@@ -22,7 +22,7 @@ fn http_version_str(version: reqwest::Version) -> &'static str {
 }
 
 /// HTTP Response object
-#[pyclass(name = "Response", subclass, freelist = 64)]
+#[pyclass(name = "Response", subclass, freelist = 64, from_py_object)]
 pub struct Response {
     status_code: u16,
     headers: Headers,

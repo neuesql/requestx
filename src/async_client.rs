@@ -199,6 +199,16 @@ impl AsyncClient {
                     hdr.set(k, v);
                 }
                 Some(hdr)
+            } else if let Ok(items) = h.call_method0("items") {
+                // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                let mut hdr = Headers::new();
+                for item in items.try_iter()? {
+                    let item: Bound<'_, PyAny> = item?;
+                    let k: String = item.get_item(0)?.extract()?;
+                    let v: String = item.get_item(1)?.extract()?;
+                    hdr.set(k, v);
+                }
+                Some(hdr)
             } else {
                 None
             }
@@ -538,6 +548,15 @@ impl AsyncClient {
                         }
                     }
                 }
+            } else if let Ok(items) = h.call_method0("items") {
+                // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                if let Ok(iter) = items.try_iter() {
+                    for item in iter.flatten() {
+                        if let (Ok(k), Ok(v)) = (item.get_item(0).and_then(|i| i.extract::<String>()), item.get_item(1).and_then(|i| i.extract::<String>())) {
+                            all_headers.set(k, v);
+                        }
+                    }
+                }
             }
         }
 
@@ -572,7 +591,8 @@ impl AsyncClient {
     }
 
     /// Send a pre-built request
-    fn send<'py>(&self, py: Python<'py>, request: Request) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (request, *, timeout=None))]
+    fn send<'py>(&self, py: Python<'py>, request: Request, timeout: Option<f64>) -> PyResult<Bound<'py, PyAny>> {
         // If a custom transport is set, use it
         if let Some(ref transport) = self.transport {
             let transport = transport.clone_ref(py);
@@ -631,6 +651,11 @@ impl AsyncClient {
             // Add content if present
             if let Some(body) = content {
                 req_builder = req_builder.body(body);
+            }
+
+            // Apply per-request timeout override if provided
+            if let Some(t) = timeout {
+                req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
             }
 
             let response = req_builder
@@ -830,6 +855,15 @@ impl AsyncClient {
                         for (key, value) in dict.iter() {
                             if let (Ok(k), Ok(v)) = (key.extract::<String>(), value.extract::<String>()) {
                                 request_headers.set(k, v);
+                            }
+                        }
+                    } else if let Ok(items) = h_bound.call_method0("items") {
+                        // Generic mapping fallback (httpx.Headers, MutableMapping, etc.)
+                        if let Ok(iter) = items.try_iter() {
+                            for item in iter.flatten() {
+                                if let (Ok(k), Ok(v)) = (item.get_item(0).and_then(|i| i.extract::<String>()), item.get_item(1).and_then(|i| i.extract::<String>())) {
+                                    request_headers.set(k, v);
+                                }
                             }
                         }
                     }

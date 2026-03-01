@@ -1,8 +1,9 @@
 # Response wrapper with proper stream property
 
+import httpx as _httpx
+
 from ._core import (
     Response as _Response,
-    HTTPStatusError as _HTTPStatusError,
     decompress as _decompress,
 )
 from ._exceptions import (
@@ -18,14 +19,17 @@ from ._streams import (
 )
 
 
-class HTTPStatusError(_HTTPStatusError):
+class HTTPStatusError(_httpx.HTTPStatusError):
     """HTTP Status Error with request and response attributes.
 
     Raised by Response.raise_for_status() when the response has a non-2xx status code.
+    Inherits from httpx.HTTPStatusError for SDK compatibility (e.g., Anthropic, OpenAI).
     """
 
     def __init__(self, message, *, request=None, response=None):
-        super().__init__(message)
+        # Skip httpx.HTTPStatusError.__init__ which requires non-None request/response.
+        # We just need the inheritance chain for except/isinstance checks.
+        Exception.__init__(self, message)
         self._request = request
         self._response = response
 
