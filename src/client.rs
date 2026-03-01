@@ -750,7 +750,8 @@ impl Client {
         self.execute_request(py, method, &url_str, content, data, files, json, params, headers, cookies, auth, timeout, follow_redirects)
     }
 
-    fn send(&self, py: Python<'_>, request: &Request) -> PyResult<Response> {
+    #[pyo3(signature = (request, *, timeout=None))]
+    fn send(&self, py: Python<'_>, request: &Request, timeout: Option<f64>) -> PyResult<Response> {
         // If a custom transport is set, use it directly with the request
         if let Some(ref transport) = self.transport {
             let response = transport.call_method1(py, "handle_request", (request.clone(),))?;
@@ -777,6 +778,11 @@ impl Client {
         // Add body content if present
         if let Some(body) = request.content_bytes() {
             builder = builder.body(body.to_vec());
+        }
+
+        // Apply per-request timeout override if provided
+        if let Some(t) = timeout {
+            builder = builder.timeout(std::time::Duration::from_secs_f64(t));
         }
 
         // Execute request (release GIL during I/O)
