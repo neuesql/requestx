@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::url::URL;
 
 /// Timeout configuration for HTTP requests
-#[pyclass(name = "Timeout")]
+#[pyclass(name = "Timeout", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct Timeout {
     #[pyo3(get)]
@@ -248,7 +248,7 @@ impl Timeout {
 }
 
 /// Connection pool limits
-#[pyclass(name = "Limits")]
+#[pyclass(name = "Limits", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct Limits {
     #[pyo3(get)]
@@ -311,7 +311,7 @@ impl Limits {
 }
 
 /// Proxy configuration
-#[pyclass(name = "Proxy")]
+#[pyclass(name = "Proxy", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct Proxy {
     url: URL,

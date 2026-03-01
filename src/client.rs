@@ -765,8 +765,7 @@ impl Client {
         // from build_request(), so we must NOT go through execute_request() which would
         // re-add client defaults and cause header duplication.
         let url_str = request.url_ref().to_string();
-        let method = reqwest::Method::from_bytes(request.method().as_bytes())
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", request.method())))?;
+        let method = reqwest::Method::from_bytes(request.method().as_bytes()).map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid HTTP method: {}", request.method())))?;
 
         let mut builder = self.inner.request(method.clone(), &url_str);
 

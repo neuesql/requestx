@@ -380,7 +380,7 @@ pub(crate) use impl_py_iterator;
 /// Usage: `impl_byte_stream!(StructName, "PythonClassName");`
 macro_rules! impl_byte_stream {
     ($name:ident, $pyname:literal) => {
-        #[pyo3::pyclass(name = $pyname, subclass)]
+        #[pyo3::pyclass(name = $pyname, subclass, from_py_object)]
         #[derive(Clone, Debug, Default)]
         pub struct $name {
             data: Vec<u8>,

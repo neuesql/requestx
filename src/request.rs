@@ -35,7 +35,7 @@ pub fn py_value_to_form_str(obj: &Bound<'_, PyAny>) -> PyResult<String> {
 
 /// Mutable headers wrapper for Request.headers
 /// This allows modifying headers in place and assigning back to Request
-#[pyclass(name = "MutableHeaders")]
+#[pyclass(name = "MutableHeaders", from_py_object)]
 #[derive(Clone)]
 pub struct MutableHeaders {
     pub headers: Headers,
@@ -249,7 +249,7 @@ pub enum StreamMode {
 }
 
 /// HTTP Request object
-#[pyclass(name = "Request", subclass, module = "requestx._core")]
+#[pyclass(name = "Request", subclass, module = "requestx._core", from_py_object)]
 pub struct Request {
     method: String,
     url: URL,

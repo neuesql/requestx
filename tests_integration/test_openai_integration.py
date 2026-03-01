@@ -31,7 +31,7 @@ class TestBasicChatCompletion:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": "Say hello in one word"}],
-            max_tokens=10
+            max_tokens=10,
         )
 
         validate_chat_response(response, MODEL)
@@ -47,9 +47,9 @@ class TestBasicChatCompletion:
             model=MODEL,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Say hello in one word"}
+                {"role": "user", "content": "Say hello in one word"},
             ],
-            max_tokens=10
+            max_tokens=10,
         )
 
         validate_chat_response(response, MODEL)
@@ -73,14 +73,15 @@ class TestMultiTurnConversation:
                 {"role": "assistant", "content": "Nice to meet you, Alice!"},
                 {"role": "user", "content": "What's my name?"},
             ],
-            max_tokens=50
+            max_tokens=50,
         )
 
         validate_chat_response(response, MODEL)
         content = response.choices[0].message.content
         assert_valid_content(content)
-        assert "alice" in content.lower(), \
-            "Response should contain the name from turn 1"
+        assert (
+            "alice" in content.lower()
+        ), "Response should contain the name from turn 1"
 
 
 @pytest.mark.integration
@@ -93,13 +94,13 @@ class TestResponseModelProperties:
         client = OpenAI(api_key=openai_api_key, http_client=http_client)
 
         response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         assert response.usage.prompt_tokens > 0, "prompt_tokens should be positive"
-        assert response.usage.completion_tokens > 0, "completion_tokens should be positive"
+        assert (
+            response.usage.completion_tokens > 0
+        ), "completion_tokens should be positive"
         assert response.usage.total_tokens > 0, "total_tokens should be positive"
         assert isinstance(response.usage.prompt_tokens, int)
         assert isinstance(response.usage.completion_tokens, int)
@@ -113,15 +114,14 @@ class TestResponseModelProperties:
         client = OpenAI(api_key=openai_api_key, http_client=http_client)
 
         response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         assert isinstance(response.id, str), "id should be a string"
         assert len(response.id) > 0, "id should not be empty"
-        assert response.id.startswith("chatcmpl-"), \
-            f"id should start with 'chatcmpl-', got: {response.id}"
+        assert response.id.startswith(
+            "chatcmpl-"
+        ), f"id should start with 'chatcmpl-', got: {response.id}"
 
     def test_model_and_finish_reason(self, openai_api_key):
         """Test model name and finish_reason fields."""
@@ -129,15 +129,16 @@ class TestResponseModelProperties:
         client = OpenAI(api_key=openai_api_key, http_client=http_client)
 
         response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
-        assert "gpt" in response.model, \
-            f"model should contain 'gpt', got: {response.model}"
-        assert response.choices[0].finish_reason in ("stop", "length"), \
-            f"Unexpected finish_reason: {response.choices[0].finish_reason}"
+        assert (
+            "gpt" in response.model
+        ), f"model should contain 'gpt', got: {response.model}"
+        assert response.choices[0].finish_reason in (
+            "stop",
+            "length",
+        ), f"Unexpected finish_reason: {response.choices[0].finish_reason}"
 
     def test_serialization_model_dump(self, openai_api_key):
         """Test response serialization to JSON and dict."""
@@ -145,9 +146,7 @@ class TestResponseModelProperties:
         client = OpenAI(api_key=openai_api_key, http_client=http_client)
 
         response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         # model_dump_json() should return valid JSON string
@@ -201,8 +200,9 @@ class TestToolCalling:
             max_tokens=100,
         )
 
-        assert response.choices[0].finish_reason == "stop", \
-            f"Expected finish_reason 'stop', got: {response.choices[0].finish_reason}"
+        assert (
+            response.choices[0].finish_reason == "stop"
+        ), f"Expected finish_reason 'stop', got: {response.choices[0].finish_reason}"
 
         tool_calls = response.choices[0].message.tool_calls
         assert tool_calls is not None, "Expected tool_calls in response"
@@ -211,8 +211,9 @@ class TestToolCalling:
         tool_call = tool_calls[0]
         assert tool_call.function.name == "get_weather"
         args = json.loads(tool_call.function.arguments)
-        assert "location" in args, \
-            f"Tool arguments should contain 'location', got: {args}"
+        assert (
+            "location" in args
+        ), f"Tool arguments should contain 'location', got: {args}"
 
     def test_tool_call_multi_turn(self, openai_api_key):
         """Test multi-turn tool call with tool result follow-up."""
@@ -263,11 +264,13 @@ class TestToolCalling:
             max_tokens=100,
         )
 
-        assert second_response.choices[0].finish_reason == "stop", \
-            f"Expected 'stop', got: {second_response.choices[0].finish_reason}"
+        assert (
+            second_response.choices[0].finish_reason == "stop"
+        ), f"Expected 'stop', got: {second_response.choices[0].finish_reason}"
         content = second_response.choices[0].message.content
-        assert content is not None and len(content) > 0, \
-            "Expected text content in final response"
+        assert (
+            content is not None and len(content) > 0
+        ), "Expected text content in final response"
 
 
 @pytest.mark.integration
@@ -314,8 +317,9 @@ class TestEmbeddings:
         embedding = response.data[0].embedding
         assert isinstance(embedding, list), "Embedding should be a list"
         assert len(embedding) > 0, "Embedding should not be empty"
-        assert all(isinstance(x, float) for x in embedding[:10]), \
-            "Embedding values should be floats"
+        assert all(
+            isinstance(x, float) for x in embedding[:10]
+        ), "Embedding values should be floats"
 
     def test_batch_embeddings(self, openai_api_key):
         """Test batch text embeddings."""
@@ -358,8 +362,7 @@ class TestModelsListing:
 
         model = client.models.retrieve(MODEL)
 
-        assert model.id == MODEL, \
-            f"Expected model id '{MODEL}', got: {model.id}"
+        assert model.id == MODEL, f"Expected model id '{MODEL}', got: {model.id}"
         assert hasattr(model, "created"), "Model should have 'created'"
 
 
@@ -376,7 +379,7 @@ class TestStreamingResponses:
             model=MODEL,
             messages=[{"role": "user", "content": "Say hello in one word"}],
             max_tokens=10,
-            stream=True
+            stream=True,
         )
 
         chunks = collect_stream_chunks(stream)
@@ -397,7 +400,7 @@ class TestStreamingResponses:
             model=MODEL,
             messages=[{"role": "user", "content": "Count to three"}],
             max_tokens=10,
-            stream=True
+            stream=True,
         )
 
         chunks = collect_stream_chunks(stream)
@@ -422,7 +425,7 @@ class TestAsyncOperations:
             response = await client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Say hello in one word"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
             validate_chat_response(response, MODEL)
@@ -441,7 +444,7 @@ class TestAsyncOperations:
                 model=MODEL,
                 messages=[{"role": "user", "content": "Say hello in one word"}],
                 max_tokens=10,
-                stream=True
+                stream=True,
             )
 
             chunks = await collect_async_stream_chunks(stream)
@@ -504,8 +507,7 @@ class TestRawResponseAccess:
             max_tokens=10,
         )
 
-        assert response.status_code == 200, \
-            f"Expected 200, got: {response.status_code}"
+        assert response.status_code == 200, f"Expected 200, got: {response.status_code}"
         assert response.headers is not None, "Headers should be accessible"
         # OpenAI returns request-id header
         request_id = response.headers.get("x-request-id")
@@ -590,8 +592,11 @@ class TestTimeoutConfiguration:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg, \
-            f"Expected timeout-related error, got: {error_msg}"
+        assert (
+            "timeout" in error_msg
+            or "timed out" in error_msg
+            or "connection" in error_msg
+        ), f"Expected timeout-related error, got: {error_msg}"
 
 
 @pytest.mark.integration
@@ -626,7 +631,9 @@ class TestParameterVariations:
 
         response = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "user", "content": "What is 2+2? Reply with just the number."}],
+            messages=[
+                {"role": "user", "content": "What is 2+2? Reply with just the number."}
+            ],
             max_tokens=10,
             temperature=0,
         )
@@ -643,12 +650,18 @@ class TestParameterVariations:
 
         response = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "user", "content": "Write a long essay about the history of computing."}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Write a long essay about the history of computing.",
+                }
+            ],
             max_tokens=1,
         )
 
-        assert response.choices[0].finish_reason == "length", \
-            f"Expected finish_reason 'length', got: {response.choices[0].finish_reason}"
+        assert (
+            response.choices[0].finish_reason == "length"
+        ), f"Expected finish_reason 'length', got: {response.choices[0].finish_reason}"
 
     def test_multiple_choices(self, openai_api_key):
         """Test n=2 for multiple choices."""
@@ -662,8 +675,9 @@ class TestParameterVariations:
             n=2,
         )
 
-        assert len(response.choices) == 2, \
-            f"Expected 2 choices, got: {len(response.choices)}"
+        assert (
+            len(response.choices) == 2
+        ), f"Expected 2 choices, got: {len(response.choices)}"
         for choice in response.choices:
             assert_valid_content(choice.message.content)
 
@@ -682,12 +696,15 @@ class TestErrorHandling:
             client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
         # Verify error message contains authentication-related text or status codes
         error_msg = str(exc_info.value).lower()
-        assert any(keyword in error_msg for keyword in ["authentication", "api key", "401", "403", "forbidden"])
+        assert any(
+            keyword in error_msg
+            for keyword in ["authentication", "api key", "401", "403", "forbidden"]
+        )
 
     def test_timeout_handling(self, openai_api_key):
         """Test timeout handling."""
@@ -700,9 +717,13 @@ class TestErrorHandling:
             client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
         # Verify it's a timeout-related error
         error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg
+        assert (
+            "timeout" in error_msg
+            or "timed out" in error_msg
+            or "connection" in error_msg
+        )

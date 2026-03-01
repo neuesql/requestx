@@ -391,7 +391,9 @@ class Client:
             if key in kwargs and kwargs[key] is not None:
                 supported_kwargs[key] = kwargs[key]
 
-        rust_request = self._client.build_request(method, merged_url, **supported_kwargs)
+        rust_request = self._client.build_request(
+            method, merged_url, **supported_kwargs
+        )
         # Create a wrapper that delegates to the Rust request but has our headers proxy
         wrapped = _WrappedRequest(rust_request, sync_stream=sync_stream)
         # Store per-request timeout on the wrapped request
