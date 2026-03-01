@@ -193,7 +193,7 @@ impl AsyncMockTransport {
 }
 
 /// HTTP transport using reqwest (the default transport)
-#[pyclass(name = "HTTPTransport")]
+#[pyclass(name = "HTTPTransport", from_py_object)]
 #[derive(Clone)]
 pub struct HTTPTransport {
     #[allow(dead_code)]
@@ -338,7 +338,7 @@ impl HTTPTransport {
 }
 
 /// Async HTTP transport using reqwest
-#[pyclass(name = "AsyncHTTPTransport")]
+#[pyclass(name = "AsyncHTTPTransport", from_py_object)]
 #[derive(Clone)]
 pub struct AsyncHTTPTransport {
     #[allow(dead_code)]

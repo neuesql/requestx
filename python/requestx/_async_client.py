@@ -565,6 +565,7 @@ class AsyncClient:
                 req_timeout = getattr(request, "_timeout", None)
                 if req_timeout is not None:
                     from ._client import _extract_timeout_seconds
+
                     send_kwargs["timeout"] = _extract_timeout_seconds(req_timeout)
                 result = await self._client.send(rust_request, **send_kwargs)
                 response = Response(result)

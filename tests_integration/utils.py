@@ -19,8 +19,9 @@ def validate_chat_response(response: Any, expected_model: str) -> None:
     assert len(response.choices) > 0, "Response has no choices"
 
     # Verify model (may have suffixes like -0125)
-    assert response.model.startswith(expected_model.split("-")[0]), \
-        f"Expected model {expected_model}, got {response.model}"
+    assert response.model.startswith(
+        expected_model.split("-")[0]
+    ), f"Expected model {expected_model}, got {response.model}"
 
 
 def collect_stream_chunks(stream) -> List[str]:

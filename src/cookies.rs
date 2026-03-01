@@ -15,7 +15,7 @@ struct CookieEntry {
 }
 
 /// HTTP Cookies jar with domain/path support
-#[pyclass(name = "Cookies", freelist = 64)]
+#[pyclass(name = "Cookies", freelist = 64, from_py_object)]
 #[derive(Clone, Debug, Default)]
 pub struct Cookies {
     entries: Vec<CookieEntry>,
@@ -464,7 +464,7 @@ impl Cookies {
 }
 
 /// A single Cookie object (for jar iteration)
-#[pyclass(name = "Cookie")]
+#[pyclass(name = "Cookie", from_py_object)]
 #[derive(Clone)]
 pub struct Cookie {
     #[pyo3(get)]

@@ -25,7 +25,7 @@ class TestBasicChatCompletion:
         response = client.messages.create(
             model=MODEL,
             messages=[{"role": "user", "content": "Say hello in one word"}],
-            max_tokens=10
+            max_tokens=10,
         )
 
         # Validate response structure
@@ -45,7 +45,7 @@ class TestBasicChatCompletion:
             model=MODEL,
             system="You are a helpful assistant.",
             messages=[{"role": "user", "content": "Say hello in one word"}],
-            max_tokens=10
+            max_tokens=10,
         )
 
         assert hasattr(response, "content"), "Response missing 'content'"
@@ -69,12 +69,13 @@ class TestMultiTurnConversation:
                 {"role": "assistant", "content": "Nice to meet you, Alice!"},
                 {"role": "user", "content": "What's my name?"},
             ],
-            max_tokens=50
+            max_tokens=50,
         )
 
         assert len(response.content) > 0, "Response has no content"
-        assert "alice" in response.content[0].text.lower(), \
-            "Response should contain the name from turn 1"
+        assert (
+            "alice" in response.content[0].text.lower()
+        ), "Response should contain the name from turn 1"
 
 
 @pytest.mark.integration
@@ -87,9 +88,7 @@ class TestResponseModelProperties:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         assert response.usage.input_tokens > 0, "input_tokens should be positive"
@@ -103,16 +102,15 @@ class TestResponseModelProperties:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         request_id = response._request_id
         assert isinstance(request_id, str), "request_id should be a string"
         assert len(request_id) > 0, "request_id should not be empty"
-        assert request_id.startswith("req_"), \
-            f"request_id should start with 'req_', got: {request_id}"
+        assert request_id.startswith(
+            "req_"
+        ), f"request_id should start with 'req_', got: {request_id}"
 
     def test_model_and_stop_reason(self, anthropic_api_key):
         """Test model name and stop reason fields."""
@@ -120,15 +118,18 @@ class TestResponseModelProperties:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
-        assert "claude" in response.model, \
-            f"model should contain 'claude', got: {response.model}"
-        assert response.stop_reason in ("end_turn", "max_tokens", "stop_sequence", "tool_use"), \
-            f"Unexpected stop_reason: {response.stop_reason}"
+        assert (
+            "claude" in response.model
+        ), f"model should contain 'claude', got: {response.model}"
+        assert response.stop_reason in (
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "tool_use",
+        ), f"Unexpected stop_reason: {response.stop_reason}"
         assert response.role == "assistant"
 
     def test_serialization_methods(self, anthropic_api_key):
@@ -137,9 +138,7 @@ class TestResponseModelProperties:
         client = Anthropic(api_key=anthropic_api_key, http_client=http_client)
 
         response = client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10
+            model=MODEL, messages=[{"role": "user", "content": "Hi"}], max_tokens=10
         )
 
         # to_json() should return valid JSON string
@@ -189,8 +188,9 @@ class TestTokenCounting:
             system="You are an extremely detailed and verbose assistant.",
         )
 
-        assert with_system.input_tokens > without_system.input_tokens, \
-            "Token count with system prompt should be higher"
+        assert (
+            with_system.input_tokens > without_system.input_tokens
+        ), "Token count with system prompt should be higher"
 
 
 @pytest.mark.integration
@@ -206,7 +206,7 @@ class TestStreamingResponses:
         with client.messages.stream(
             model=MODEL,
             messages=[{"role": "user", "content": "Say hello in one word"}],
-            max_tokens=10
+            max_tokens=10,
         ) as stream:
             for text in stream.text_stream:
                 chunks.append(text)
@@ -228,7 +228,7 @@ class TestStreamingResponses:
         with client.messages.stream(
             model=MODEL,
             messages=[{"role": "user", "content": "Count to three"}],
-            max_tokens=10
+            max_tokens=10,
         ) as stream:
             for text in stream.text_stream:
                 chunks.append(text)
@@ -257,12 +257,15 @@ class TestRawStreamingEvents:
             for event in stream:
                 event_types.append(event.type)
 
-        assert "message_start" in event_types, \
-            f"Expected 'message_start' in events, got: {event_types}"
-        assert "content_block_delta" in event_types, \
-            f"Expected 'content_block_delta' in events, got: {event_types}"
-        assert "message_stop" in event_types, \
-            f"Expected 'message_stop' in events, got: {event_types}"
+        assert (
+            "message_start" in event_types
+        ), f"Expected 'message_start' in events, got: {event_types}"
+        assert (
+            "content_block_delta" in event_types
+        ), f"Expected 'content_block_delta' in events, got: {event_types}"
+        assert (
+            "message_stop" in event_types
+        ), f"Expected 'message_stop' in events, got: {event_types}"
 
 
 @pytest.mark.integration
@@ -306,7 +309,9 @@ class TestStreamingHelpersFinalMessage:
 
             assert hasattr(final, "id"), "Final message missing 'id'"
             assert len(final.content) > 0, "Final message has no content"
-            assert final.usage.output_tokens > 0, "Final message should have output tokens"
+            assert (
+                final.usage.output_tokens > 0
+            ), "Final message should have output tokens"
         finally:
             await http_client.aclose()
 
@@ -325,7 +330,7 @@ class TestAsyncOperations:
             response = await client.messages.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Say hello in one word"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
             assert hasattr(response, "content"), "Response missing 'content'"
@@ -344,7 +349,7 @@ class TestAsyncOperations:
             async with client.messages.stream(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Say hello in one word"}],
-                max_tokens=10
+                max_tokens=10,
             ) as stream:
                 async for text in stream.text_stream:
                     chunks.append(text)
@@ -377,12 +382,15 @@ class TestAsyncRawStreaming:
                 async for event in stream:
                     event_types.append(event.type)
 
-            assert "message_start" in event_types, \
-                f"Expected 'message_start' in events, got: {event_types}"
-            assert "content_block_delta" in event_types, \
-                f"Expected 'content_block_delta' in events, got: {event_types}"
-            assert "message_stop" in event_types, \
-                f"Expected 'message_stop' in events, got: {event_types}"
+            assert (
+                "message_start" in event_types
+            ), f"Expected 'message_start' in events, got: {event_types}"
+            assert (
+                "content_block_delta" in event_types
+            ), f"Expected 'content_block_delta' in events, got: {event_types}"
+            assert (
+                "message_stop" in event_types
+            ), f"Expected 'message_stop' in events, got: {event_types}"
         finally:
             await http_client.aclose()
 
@@ -421,8 +429,9 @@ class TestToolUse:
             max_tokens=200,
         )
 
-        assert response.stop_reason == "tool_use", \
-            f"Expected stop_reason 'tool_use', got: {response.stop_reason}"
+        assert (
+            response.stop_reason == "tool_use"
+        ), f"Expected stop_reason 'tool_use', got: {response.stop_reason}"
 
         # Find the tool_use content block
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
@@ -430,8 +439,9 @@ class TestToolUse:
 
         tool_block = tool_use_blocks[0]
         assert tool_block.name == "get_weather"
-        assert "location" in tool_block.input, \
-            f"Tool input should contain 'location', got: {tool_block.input}"
+        assert (
+            "location" in tool_block.input
+        ), f"Tool input should contain 'location', got: {tool_block.input}"
 
     def test_tool_use_multi_turn(self, anthropic_api_key):
         """Test multi-turn tool use with tool_result follow-up."""
@@ -484,8 +494,9 @@ class TestToolUse:
             max_tokens=200,
         )
 
-        assert second_response.stop_reason == "end_turn", \
-            f"Expected 'end_turn', got: {second_response.stop_reason}"
+        assert (
+            second_response.stop_reason == "end_turn"
+        ), f"Expected 'end_turn', got: {second_response.stop_reason}"
         text_blocks = [b for b in second_response.content if b.type == "text"]
         assert len(text_blocks) > 0, "Expected a text content block in final response"
 
@@ -541,8 +552,7 @@ class TestRawResponseAccess:
             max_tokens=10,
         )
 
-        assert response.status_code == 200, \
-            f"Expected 200, got: {response.status_code}"
+        assert response.status_code == 200, f"Expected 200, got: {response.status_code}"
         assert response.headers is not None, "Headers should be accessible"
         assert isinstance(response.request_id, str)
         assert len(response.request_id) > 0
@@ -625,8 +635,11 @@ class TestTimeoutConfiguration:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg, \
-            f"Expected timeout-related error, got: {error_msg}"
+        assert (
+            "timeout" in error_msg
+            or "timed out" in error_msg
+            or "connection" in error_msg
+        ), f"Expected timeout-related error, got: {error_msg}"
 
 
 @pytest.mark.integration
@@ -664,12 +677,15 @@ class TestErrorHandling:
             client.messages.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
         # Verify error message contains authentication-related text or status codes
         error_msg = str(exc_info.value).lower()
-        assert any(keyword in error_msg for keyword in ["authentication", "api key", "401", "403", "forbidden"])
+        assert any(
+            keyword in error_msg
+            for keyword in ["authentication", "api key", "401", "403", "forbidden"]
+        )
 
     def test_timeout_handling(self, anthropic_api_key):
         """Test timeout handling."""
@@ -681,8 +697,12 @@ class TestErrorHandling:
             client.messages.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=10
+                max_tokens=10,
             )
 
         error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg
+        assert (
+            "timeout" in error_msg
+            or "timed out" in error_msg
+            or "connection" in error_msg
+        )

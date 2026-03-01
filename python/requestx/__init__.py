@@ -52,9 +52,9 @@ def _patch_httpx_isinstance():
     builtins.isinstance = patched_isinstance
 
 
-import http.cookiejar as _http_cookiejar  # noqa: F401  # Import for side effect (httpx compat)
+import http.cookiejar as _http_cookiejar  # noqa: F401, E402  # Import for side effect (httpx compat)
 
-from ._core import (  # noqa: F401
+from ._core import (  # noqa: F401, E402
     # Version info
     __version__,
     __title__,
@@ -79,7 +79,7 @@ from ._core import (  # noqa: F401
 )
 
 # Compatibility: sentinels, codes wrapper, SSL context, ExplicitPortURL
-from ._compat import (  # noqa: F401
+from ._compat import (  # noqa: F401, E402
     USE_CLIENT_DEFAULT,
     _AuthUnset,
     _AUTH_DISABLED,
@@ -89,7 +89,7 @@ from ._compat import (  # noqa: F401
 )
 
 # Exception hierarchy with request attribute support
-from ._exceptions import (  # noqa: F401
+from ._exceptions import (  # noqa: F401, E402
     RequestError,
     TransportError,
     TimeoutException,
@@ -118,14 +118,14 @@ from ._exceptions import (  # noqa: F401
 )
 
 # Stream classes
-from ._streams import (  # noqa: F401
+from ._streams import (  # noqa: F401, E402
     SyncByteStream,
     AsyncByteStream,
     ByteStream,
 )
 
 # Transport base classes and implementations
-from ._transports import (  # noqa: F401
+from ._transports import (  # noqa: F401, E402
     BaseTransport,
     AsyncBaseTransport,
     MockTransport,
@@ -134,7 +134,7 @@ from ._transports import (  # noqa: F401
 )
 
 # Top-level API functions
-from ._api import (  # noqa: F401
+from ._api import (  # noqa: F401, E402
     get,
     post,
     put,
@@ -147,13 +147,13 @@ from ._api import (  # noqa: F401
 )
 
 # Request wrapper
-from ._request import Request  # noqa: F401
+from ._request import Request  # noqa: F401, E402
 
 # Response wrapper (includes HTTPStatusError)
-from ._response import Response, HTTPStatusError  # noqa: F401
+from ._response import Response, HTTPStatusError  # noqa: F401, E402
 
 # Auth wrappers
-from ._auth import (  # noqa: F401
+from ._auth import (  # noqa: F401, E402
     Auth,
     BasicAuth,
     DigestAuth,
@@ -162,11 +162,11 @@ from ._auth import (  # noqa: F401
 )
 
 # Client classes
-from ._async_client import AsyncClient  # noqa: F401
-from ._client import Client  # noqa: F401
+from ._async_client import AsyncClient  # noqa: F401, E402
+from ._client import Client  # noqa: F401, E402
 
 # Import _utils module for utility functions
-from . import _utils  # noqa: F401
+from . import _utils  # noqa: F401, E402
 
 # Patch isinstance to make requestx.Client compatible with AI SDKs
 _patch_httpx_isinstance()
