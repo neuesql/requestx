@@ -1,5 +1,7 @@
 # RequestX
 
+[![gitcgr](https://gitcgr.com/badge/neuesql/requestx.svg)](https://gitcgr.com/neuesql/requestx)
+
 **Drop-in replacement for httpx, powered by Rust.** Up to 4x faster, scales linearly with concurrency.
 
 ```bash
